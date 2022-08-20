@@ -1175,7 +1175,7 @@ public class TD {
                 videoHeight = temp;
               }
               if (durationSeconds < 30 && info.knownSize < ByteUnit.MB.toBytes(10) && !metadata.hasAudio) {
-                return new TdApi.InputMessageAnimation(inputFile, null, null, durationSeconds, videoWidth, videoHeight, null);
+                return new TdApi.InputMessageAnimation(inputFile, null, null, durationSeconds, videoWidth, videoHeight, caption);
               } else if (durationSeconds > 0) {
                 return new TdApi.InputMessageVideo(inputFile, null, null, durationSeconds, videoWidth, videoHeight, U.canStreamVideo(inputFile), caption, 0);
               }
@@ -2748,6 +2748,11 @@ public class TD {
       if (sliceSize == 1) {
         functions.add(new TdApi.SendMessage(chatId, messageThreadId, functions.isEmpty() ? replyToMessageId : 0, options, null, slice[0]));
       } else {
+        for (TdApi.InputMessageContent inputContent : slice) {
+          if (inputContent.getConstructor() == TdApi.InputMessageDocument.CONSTRUCTOR) {
+            ((TdApi.InputMessageDocument) inputContent).disableContentTypeDetection = true;
+          }
+        }
         functions.add(new TdApi.SendMessageAlbum(chatId, messageThreadId, functions.isEmpty() ? replyToMessageId : 0, options, slice, false));
       }
 
@@ -3973,6 +3978,10 @@ public class TD {
     return msg != null ? getTextFromMessage(msg.content) : null;
   }
 
+  public static String getTextFromMessageSpoilerless (TdApi.Message msg) {
+    return msg != null ? getTextFromMessageSpoilerless(msg.content) : null;
+  }
+
   public static boolean suggestSharingContact (TdApi.User user) {
     return false; // TODO?
   }
@@ -4045,6 +4054,11 @@ public class TD {
   public static String getTextFromMessage (TdApi.MessageContent content) {
     TdApi.FormattedText formattedText = Td.textOrCaption(content);
     return formattedText != null ? formattedText.text : null;
+  }
+
+  public static String getTextFromMessageSpoilerless (TdApi.MessageContent content) {
+    TdApi.FormattedText formattedText = Td.textOrCaption(content);
+    return formattedText != null ? TD.toCharSequence(formattedText, false, false).toString() : null;
   }
 
   public static @TdApi.MessageContent.Constructors int convertToMessageContent (TdApi.WebPage webPage) {
@@ -5108,50 +5122,82 @@ public class TD {
     return -1;
   }
 
-  public static List<TdApi.SendMessage> sendTextMessage (long chatId, long messageThreadId, long replyToMessageId, TdApi.MessageSendOptions sendOptions, @NonNull TdApi.InputMessageContent content, int maxLength) {
+  public static List<TdApi.SendMessage> sendMessageText (long chatId, long messageThreadId, long replyToMessageId, TdApi.MessageSendOptions sendOptions, @NonNull TdApi.InputMessageContent content, int maxCodePointCount) {
+    List<TdApi.InputMessageContent> list = explodeText(content, maxCodePointCount);
+    List<TdApi.SendMessage> result = new ArrayList<>(list.size());
+    for (TdApi.InputMessageContent item : list) {
+      result.add(new TdApi.SendMessage(chatId, messageThreadId, replyToMessageId, sendOptions, null, item));
+    }
+    return result;
+  }
+
+  public static List<TdApi.InputMessageContent> explodeText (@NonNull TdApi.InputMessageContent content, int maxCodePointCount) {
     if (content.getConstructor() != TdApi.InputMessageText.CONSTRUCTOR) {
-      return Collections.singletonList(new TdApi.SendMessage(chatId, messageThreadId, replyToMessageId, sendOptions, null, content));
+      return Collections.singletonList(content);
     }
     TdApi.InputMessageText textContent = (TdApi.InputMessageText) content;
     TdApi.FormattedText text = textContent.text;
-    int textLength = text.text.length();
-    List<TdApi.SendMessage> list = new ArrayList<>();
-    if (textLength <= maxLength) {
+    final int codePointCount = text.text.codePointCount(0, text.text.length());
+    List<TdApi.InputMessageContent> list = new ArrayList<>();
+    if (codePointCount <= maxCodePointCount) {
       // Nothing to split, send as is
-      list.add(new TdApi.SendMessage(chatId, messageThreadId, replyToMessageId, sendOptions, null, textContent));
+      list.add(textContent);
       return list;
     }
-    int startIndex = 0;
-    while (startIndex < textLength) {
-      int length = Math.min(maxLength, textLength - startIndex);
-      int endIndex = startIndex + length;
-      if (length == maxLength) {
-        int lastSplitterIndex = Text.lastIndexOfSplitter(text.text, endIndex - length / 4 /*look only within the last quarter of the text*/, endIndex, null);
-        if (lastSplitterIndex != -1 && lastSplitterIndex > startIndex && lastSplitterIndex < endIndex) {
-          endIndex = lastSplitterIndex;
+    final int textLength = text.text.length();
+    int start = 0, end = 0;
+    int currentCodePointCount = 0;
+    while (start < textLength) {
+      final int codePoint = text.text.codePointAt(end);
+      currentCodePointCount++;
+      end += Character.charCount(codePoint);
+      if (currentCodePointCount == maxCodePointCount || end == textLength) {
+        TdApi.FormattedText substring;
+        if (end < textLength) {
+          // Find a good place to split message within last 33% of the text to avoid word breaking:
+          // If newline is present, text will be split at the last newline
+          // otherwise, if whitespace is present, text will be split at the last whitespace
+          // otherwise, text will be split at the last "splitter".
+          // otherwise, if none of the above found, maximum chunk that fits the limit will be sent.
+          int lastNewLineIndex = -1;
+          int lastWhitespaceIndex = -1;
+          int lastSplitterIndex = -1;
+          int subStart = end - (end - start) / 3;
+          int subEnd = end;
+          do {
+            subEnd = Text.lastIndexOfSplitter(text.text, subStart, subEnd, null);
+            if (subEnd != -1) {
+              int endCodePoint = text.text.codePointAt(subEnd);
+              if (lastSplitterIndex == -1) {
+                lastSplitterIndex = subEnd;
+              }
+              if (endCodePoint == (int) '\n') {
+                lastNewLineIndex = subEnd;
+                break;
+              } else if (lastWhitespaceIndex == -1 && Character.isWhitespace(endCodePoint)) {
+                lastWhitespaceIndex = subEnd;
+              }
+            }
+          } while (subEnd != -1 && subEnd > subStart);
+          if (lastNewLineIndex != -1) {
+            end = lastNewLineIndex;
+          } else if (lastWhitespaceIndex != -1) {
+            end = lastWhitespaceIndex;
+          } else if (lastSplitterIndex != -1) {
+            end = lastSplitterIndex;
+          }
         }
+        // Send chunk between start ... end
+        substring = Td.substring(text, start, end);
+        boolean first = list.isEmpty();
+        list.add(new TdApi.InputMessageText(substring, textContent.disableWebPagePreview, first && textContent.clearDraft));
+        // Reset loop state
+        start = end;
+        currentCodePointCount = 0;
       }
-      TdApi.FormattedText substring = Td.substring(text, startIndex, endIndex);
-      boolean first = startIndex == 0;
-      list.add(new TdApi.SendMessage(chatId, messageThreadId, replyToMessageId, sendOptions, null, new TdApi.InputMessageText(substring, first && textContent.disableWebPagePreview, first && textContent.clearDraft)));
-      startIndex += length;
     }
     return list;
   }
-
-  public static int getForwardDate (TdApi.MessageForwardInfo forward) {
-    return forward.date;
-  }
-
-  /*public static String addEmoji (Emoji emoji, int stringRes, String text) {
-    if (Strings.isEmpty(text)) {
-      return stringRes != 0 ? emoji + " " + Lang.getString(stringRes) : emoji.textRepresentation;
-    } else if (text.startsWith(emoji.textRepresentation)) {
-      return text;
-    } else {
-      return emoji + " " + text;
-    }
-  }*/
 
   public static class ContentPreview {
     public final @Nullable Emoji emoji, parentEmoji;

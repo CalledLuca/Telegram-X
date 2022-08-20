@@ -283,6 +283,14 @@ public class Settings {
   private static final @Deprecated String KEY_PUSH_USER_IDS = "push_user_ids";
   private static final @Deprecated String KEY_PUSH_USER_ID = "push_user_id";
   private static final String KEY_PUSH_DEVICE_TOKEN = "push_device_token";
+  private static final String KEY_PUSH_STATS_TOTAL_COUNT = "push_stats_total";
+  private static final String KEY_PUSH_STATS_CURRENT_APP_VERSION_COUNT = "push_stats_app";
+  private static final String KEY_PUSH_STATS_CURRENT_TOKEN_COUNT = "push_stats_token";
+  private static final String KEY_PUSH_LAST_RECEIVED_TIME = "push_last_received_time";
+  private static final String KEY_PUSH_LAST_SENT_TIME = "push_last_sent_time";
+  private static final String KEY_PUSH_LAST_TTL = "push_last_ttl";
+  private static final String KEY_PUSH_REPORTED_ERROR = "push_reported_error";
+  private static final String KEY_PUSH_REPORTED_ERROR_DATE = "push_reported_error_date";
   private static final String KEY_CRASH_DEVICE_ID = "crash_device_id";
   public static final String KEY_IS_EMULATOR = "is_emulator";
 
@@ -296,6 +304,11 @@ public class Settings {
   private static final String KEY_EMOJI_COLORS = "emoji_colors";
   private static final String KEY_EMOJI_OTHER_COLORS = "emoji_other_colors";
   private static final String KEY_EMOJI_DEFAULT_COLOR = "emoji_default";
+
+  private static final String KEY_QUICK_REACTION = "quick_reaction";
+  private static final String KEY_QUICK_REACTIONS = "quick_reactions";
+  private static final String KEY_BIG_REACTIONS_IN_CHANNELS = "big_reactions_in_channels";
+  private static final String KEY_BIG_REACTIONS_IN_CHATS = "big_reactions_in_chats";
 
   private static final String KEY_WALLPAPER_PREFIX = "wallpaper";
   private static final String KEY_WALLPAPER_CUSTOM = "_custom";
@@ -757,6 +770,7 @@ public class Settings {
     trackInstalledApkVersion();
     Log.i("Opened database in %dms", SystemClock.uptimeMillis() - ms);
     checkPendingPasscodeLocks();
+    applyLogSettings();
   }
 
   // Schedule
@@ -5670,19 +5684,17 @@ public class Settings {
 
   // Tdlib crash
 
-  private long startupMs = SystemClock.uptimeMillis();
+  private long getLastCrashId () {
+    return pmc.getLong(KEY_TDLIB_CRASH_PREFIX, 0) - 1;
+  }
 
   public Crash findRecoveryCrash () {
-    long lastCrashId = pmc.getLong(KEY_TDLIB_CRASH_PREFIX, 0) - 1;
+    long lastCrashId = getLastCrashId();
     return getCrash(lastCrashId, true);
   }
 
-  public void resetUptime () {
-    this.startupMs = SystemClock.uptimeMillis();
-  }
-
   public void storeTestCrash (Crash.Builder builder) {
-    resetUptime();
+    AppState.resetUptime();
     storeCrash(builder);
   }
 
@@ -5691,11 +5703,10 @@ public class Settings {
   }
 
   public void storeCrash (Crash.Builder crashBuilder) {
-    final long uptime = SystemClock.uptimeMillis() - startupMs;
     final long crashId = pmc.getLong(KEY_TDLIB_CRASH_PREFIX, 0);
     final Crash crash = crashBuilder
       .id(crashId)
-      .uptime(uptime)
+      .uptime(AppState.uptime())
       .appBuildInfo(Settings.instance().getCurrentBuildInformation())
       .build();
 
@@ -5721,12 +5732,61 @@ public class Settings {
 
   public void markCrashAsResolved (Crash info) {
     if (setCrashFlag(info, Crash.Flags.RESOLVED, true)) {
-      resetUptime();
+      AppState.resetUptime();
     }
   }
 
-  public void markCrashAsReported (Crash info) {
-    setCrashFlag(info, Crash.Flags.SENT, true);
+  public void markCrashAsSaved (Crash info) {
+    setCrashFlag(info, Crash.Flags.APPLICATION_LOG_EVENT_SAVED, true);
+  }
+
+  public @Nullable List<Crash> getCrashesToSave () {
+    final long lastCrashId = getLastCrashId();
+    if (lastCrashId < 0)
+      return null;
+
+    final long currentInstallationId = getCurrentBuildInformation().getInstallationId();
+    List<Crash> result = null;
+
+    AppBuildInfo crashedBuildInfo = null;
+
+    for (long crashId = lastCrashId; crashId >= 0; crashId--) {
+      final String keyPrefix = makeCrashPrefix(crashId);
+      @Crash.Flags int flags = Crash.restoreFlags(pmc, keyPrefix);
+      final long crashedInstallationId = Crash.restoreInstallationId(pmc, keyPrefix);
+      if (crashedInstallationId != currentInstallationId) {
+        if (crashedBuildInfo == null || crashedInstallationId != crashedBuildInfo.getInstallationId()) {
+          crashedBuildInfo = getBuildInformation(crashedInstallationId);
+        }
+        // Forget about crashes from previously installed versions, except if it's the same TDLib commit
+        String crashedTdlibCommit = crashedBuildInfo != null ? crashedBuildInfo.getTdlibCommitFull() : null;
+        if (StringUtils.isEmpty(crashedTdlibCommit) ||
+          !crashedTdlibCommit.equalsIgnoreCase(getCurrentBuildInformation().getTdlibCommitFull()) ||
+          !BitwiseUtils.getFlag(flags, Crash.Flags.SOURCE_TDLIB | Crash.Flags.SOURCE_TDLIB_PARAMETERS)) {
+          break;
+        }
+      }
+      if (!BitwiseUtils.getFlag(flags, Crash.Flags.SAVE_APPLICATION_LOG_EVENT)) {
+        continue;
+      }
+      if (BitwiseUtils.getFlag(flags, Crash.Flags.APPLICATION_LOG_EVENT_SAVED)) {
+        break;
+      }
+      Crash crash = getCrash(crashId, false);
+      if (crash != null) {
+        if (result == null) {
+          result = new ArrayList<>();
+        }
+        result.add(crash);
+      }
+    }
+
+    if (result != null) {
+      // Sort crashes from older to newer
+      Collections.reverse(result);
+    }
+
+    return result;
   }
 
   public Crash getCrash (long crashId, boolean forApplicationStart) {
@@ -5746,7 +5806,7 @@ public class Settings {
         return null;
       }
     }
-    Crash.Builder builder = new Crash.Builder();
+    Crash.Builder builder = new Crash.Builder().id(crashId);
     boolean nonEmpty = false;
     for (LevelDB.Entry entry : pmc.find(keyPrefix)) {
       if (builder.restoreField(entry, keyPrefix, this::getBuildInformation)) {
@@ -5772,10 +5832,12 @@ public class Settings {
   // Push token
 
   public void setDeviceToken (String token) {
-    if (StringUtils.isEmpty(token))
+    if (StringUtils.isEmpty(token)) {
       pmc.remove(KEY_PUSH_DEVICE_TOKEN);
-    else
+    } else if (!token.equals(getDeviceToken())) {
+      resetTokenPushMessageCount();
       pmc.putString(KEY_PUSH_DEVICE_TOKEN, token);
+    }
   }
 
   public String getDeviceToken () {
@@ -6006,6 +6068,39 @@ public class Settings {
     return hasFile ? (installedVersion == setting.date ? CloudSetting.STATE_INSTALLED : CloudSetting.STATE_UPDATE_NEEDED) : CloudSetting.STATE_NOT_INSTALLED;
   }
 
+  private String[] quickReactions;
+  public void setQuickReactions (String reactions[]) {
+    pmc.putStringArray(KEY_QUICK_REACTIONS, reactions);
+    quickReactions = reactions;
+  }
+
+  public String[] getQuickReactions () {
+    if (quickReactions == null) {
+      quickReactions = pmc.getStringArray(KEY_QUICK_REACTIONS);
+      if (quickReactions == null) {
+        quickReactions = new String[]{ "\uD83D\uDC4D" };
+      }
+    }
+
+    return quickReactions;
+  }
+
+  public void setBigReactionsInChannels (boolean inChannels) {
+    pmc.putBoolean(KEY_BIG_REACTIONS_IN_CHANNELS, inChannels);
+  }
+
+  public void setBigReactionsInChats (boolean inChats) {
+    pmc.putBoolean(KEY_BIG_REACTIONS_IN_CHATS, inChats);
+  }
+
+  public boolean getBigReactionsInChannels () {
+    return getBoolean(KEY_BIG_REACTIONS_IN_CHANNELS, true);
+  }
+
+  public boolean getBigReactionsInChats () {
+    return getBoolean(KEY_BIG_REACTIONS_IN_CHATS, true);
+  }
+
   public void markEmojiPackInstalled (EmojiPack emojiPack) {
     pmc.putInt(KEY_EMOJI_INSTALLED_PREFIX + emojiPack.identifier, emojiPack.date);
   }
@@ -6142,12 +6237,8 @@ public class Settings {
   }
 
   public void trackInstalledApkVersion () {
-    if (BuildConfig.DEBUG) {
-      // Track only published builds
-      return;
-    }
     final long knownCommitDate = pmc.getLong(KEY_APP_COMMIT_DATE, 0);
-    if (AppBuildInfo.maxCommitDate() <= knownCommitDate) {
+    if (AppBuildInfo.maxBuiltInCommitDate() <= knownCommitDate) {
       // Track only updates with more recent commits.
       return;
     }
@@ -6159,6 +6250,7 @@ public class Settings {
     buildInfo.saveTo(pmc, KEY_APP_INSTALLATION_PREFIX + installationId);
     pmc.apply();
     this.currentBuildInformation = buildInfo;
+    resetAppVersionPushMessageCount();
   }
 
   public AppBuildInfo getFirstBuildInformation () {
@@ -6169,11 +6261,7 @@ public class Settings {
   public AppBuildInfo getCurrentBuildInformation () {
     if (currentBuildInformation == null) {
       long installationId = pmc.getLong(KEY_APP_INSTALLATION_ID, 0);
-      if (BuildConfig.DEBUG) {
-        this.currentBuildInformation = new AppBuildInfo(0);
-      } else {
-        this.currentBuildInformation = AppBuildInfo.restoreFrom(pmc, installationId, KEY_APP_INSTALLATION_PREFIX + installationId);
-      }
+      this.currentBuildInformation = AppBuildInfo.restoreFrom(pmc, installationId, KEY_APP_INSTALLATION_PREFIX + installationId);
     }
     return this.currentBuildInformation;
   }
@@ -6188,5 +6276,98 @@ public class Settings {
     AppBuildInfo currentBuild = getCurrentBuildInformation();
     long previousInstallationId = (currentBuild.getInstallationId() - 1);
     return getBuildInformation(previousInstallationId);
+  }
+
+  public String getPushMessageStats () {
+    return
+      "total: " + getReceivedPushMessageCountTotal() + " " +
+      "by_token: " + getReceivedPushMessageCountByToken() + " " +
+      "by_app_version: " + getReceivedPushMessageCountByAppVersion() + " ";
+  }
+
+  public long getReceivedPushMessageCountTotal () {
+    return pmc.getLong(KEY_PUSH_STATS_TOTAL_COUNT, 0);
+  }
+
+  public long getReceivedPushMessageCountByAppVersion () {
+    return pmc.getLong(KEY_PUSH_STATS_CURRENT_APP_VERSION_COUNT, 0);
+  }
+
+  public long getReceivedPushMessageCountByToken () {
+    return pmc.getLong(KEY_PUSH_STATS_CURRENT_TOKEN_COUNT, 0);
+  }
+
+  public long getLastReceivedPushMessageSentTime () {
+    return pmc.getLong(KEY_PUSH_LAST_SENT_TIME, 0);
+  }
+
+  public long getLastReceivedPushMessageReceivedTime () {
+    return pmc.getLong(KEY_PUSH_LAST_RECEIVED_TIME, 0);
+  }
+
+  public int getLastReceivedPushMessageTtl () {
+    return pmc.getInt(KEY_PUSH_LAST_TTL, 0);
+  }
+
+  public interface PushStatsListener {
+    void onNewPushReceived ();
+  }
+
+  private final ReferenceList<PushStatsListener> pushStatsListeners = new ReferenceList<>(true);
+
+  public void addPushStatsListener (PushStatsListener listener) {
+    pushStatsListeners.add(listener);
+  }
+
+  public void removePushStatsListener (PushStatsListener listener) {
+    pushStatsListeners.remove(listener);
+  }
+
+  public void trackPushMessageReceived (long sentTime, long receivedTime, int ttl) {
+    final long totalReceivedCount = getReceivedPushMessageCountTotal() + 1;
+    final long currentVersionReceivedCount = getReceivedPushMessageCountByAppVersion() + 1;
+    final long currentTokenReceivedCount = getReceivedPushMessageCountByToken() + 1;
+    pmc.edit()
+      .putLong(KEY_PUSH_STATS_TOTAL_COUNT, totalReceivedCount)
+      .putLong(KEY_PUSH_STATS_CURRENT_APP_VERSION_COUNT, currentVersionReceivedCount)
+      .putLong(KEY_PUSH_STATS_CURRENT_TOKEN_COUNT, currentTokenReceivedCount)
+      .putLong(KEY_PUSH_LAST_SENT_TIME, sentTime)
+      .putLong(KEY_PUSH_LAST_RECEIVED_TIME, receivedTime)
+      .putInt(KEY_PUSH_LAST_TTL, ttl)
+      .apply();
+    for (PushStatsListener listener : pushStatsListeners) {
+      listener.onNewPushReceived();
+    }
+  }
+
+  public void resetAppVersionPushMessageCount () {
+    pmc.remove(KEY_PUSH_STATS_CURRENT_APP_VERSION_COUNT);
+  }
+
+  public void resetTokenPushMessageCount () {
+    pmc.remove(KEY_PUSH_STATS_CURRENT_TOKEN_COUNT);
+  }
+
+  public void setReportedPushServiceError (@Nullable String error) {
+    if (!StringUtils.isEmpty(error)) {
+      pmc.edit()
+        .putString(KEY_PUSH_REPORTED_ERROR, error)
+        .putLong(KEY_PUSH_REPORTED_ERROR_DATE, System.currentTimeMillis())
+        .apply();
+    } else {
+      pmc.edit()
+        .remove(KEY_PUSH_REPORTED_ERROR)
+        .remove(KEY_PUSH_REPORTED_ERROR_DATE)
+        .apply();
+    }
+  }
+
+  @Nullable
+  public String getReportedPushServiceError () {
+    return pmc.getString(KEY_PUSH_REPORTED_ERROR, null);
+  }
+
+  public long getReportedPushServiceErrorDate () {
+    return pmc.getLong(KEY_PUSH_REPORTED_ERROR_DATE, 0);
   }
 }
