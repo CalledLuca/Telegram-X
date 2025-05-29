@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,16 +18,16 @@ import android.graphics.Canvas;
 import android.text.TextUtils;
 import android.view.MotionEvent;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.chat.MessageView;
 import org.thunderdog.challegram.component.chat.MessagesManager;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibCache;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
@@ -44,9 +44,8 @@ public class TGMessageContact extends TGMessage implements TdlibCache.UserDataCh
   private TdApi.User user;
 
   private ImageFile avatar;
-  private @ThemeColorId
-  int avatarColorId;
-  private Letters letters;
+  private final TdlibAccentColor accentColor;
+  private final Letters letters;
 
   private String tName;
   private String tPhone;
@@ -70,7 +69,10 @@ public class TGMessageContact extends TGMessage implements TdlibCache.UserDataCh
 
     if (contact.userId != 0) {
       this.user = tdlib.cache().user(contact.userId);
+      this.accentColor = tdlib.cache().userAccentColor(contact.userId);
       tdlib.cache().addUserDataListener(contact.userId, this);
+    } else {
+      this.accentColor = tdlib.accentColorForString(phone);
     }
   }
 
@@ -88,7 +90,7 @@ public class TGMessageContact extends TGMessage implements TdlibCache.UserDataCh
         TGMessageContact.this.user = user;
         buildAvatar();
         // buildName();
-        invalidateContent();
+        invalidateContent(this);
         invalidate();
       }
     });
@@ -117,7 +119,6 @@ public class TGMessageContact extends TGMessage implements TdlibCache.UserDataCh
   private void buildAvatar () {
     if (user == null || TD.isPhotoEmpty(user.profilePhoto)) {
       avatar = null;
-      avatarColorId = TD.getAvatarColorId(TD.isUserDeleted(user) ? -1 : userId, tdlib.myUserId());
     } else {
       avatar = new ImageFile(tdlib, user.profilePhoto.small);
       avatar.setSize(avatarSize);
@@ -132,8 +133,8 @@ public class TGMessageContact extends TGMessage implements TdlibCache.UserDataCh
     }
     startY += Screen.dp(1f);
     if (avatar == null) {
-      c.drawCircle(startX + avatarRadius, startY + avatarRadius, avatarRadius, Paints.fillingPaint(Theme.getColor(avatarColorId)));
-      Paints.drawLetters(c, letters, startX + avatarRadius - (int) (lettersWidth / 2f), startY + lettersTop, LETTERS_SIZE);
+      c.drawCircle(startX + avatarRadius, startY + avatarRadius, avatarRadius, Paints.fillingPaint(accentColor.getPrimaryColor()));
+      c.drawText(letters.text, startX + avatarRadius - (int) (lettersWidth / 2f), startY + lettersTop, Paints.getMediumTextPaint(LETTERS_SIZE, accentColor.getPrimaryContentColor(), letters.needFakeBold));
     } else {
       receiver.setBounds(startX, startY, startX + avatarSize, startY + avatarSize);
       if (receiver.needPlaceholder()) {

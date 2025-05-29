@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.unsorted.Settings;
 
-import me.vkryl.td.ChatPosition;
+import tgx.td.ChatPosition;
 
 public class TdlibBadgeCounter {
   private int count;
@@ -39,9 +39,15 @@ public class TdlibBadgeCounter {
   }
 
   void add (TdlibBadgeCounter counter) {
-    this.count += counter.count;
-    if (!counter.isMuted)
-      this.isMuted = false;
+    if (counter.count > 0) {
+      if (this.count == 0) {
+        this.isMuted = counter.isMuted;
+      }
+      this.count += counter.count;
+      if (!counter.isMuted) {
+        this.isMuted = false;
+      }
+    }
   }
 
   boolean reset (TdlibCounter counter, @Nullable TdlibCounter archiveCounter) {

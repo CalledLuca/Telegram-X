@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,13 +24,17 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.PopupWindow;
 
+import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
+import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.config.Device;
 import org.thunderdog.challegram.core.Lang;
@@ -39,8 +43,10 @@ import org.thunderdog.challegram.navigation.ActivityResultHandler;
 import org.thunderdog.challegram.navigation.BackListener;
 import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.MenuMoreWrap;
+import org.thunderdog.challegram.navigation.MenuMoreWrapAbstract;
 import org.thunderdog.challegram.navigation.OptionsLayout;
 import org.thunderdog.challegram.navigation.RootDrawable;
+import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Keyboard;
@@ -54,6 +60,7 @@ import org.thunderdog.challegram.util.SensitiveContentContainer;
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.widget.FrameLayoutFix;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.lambda.Destroyable;
 
@@ -262,13 +269,56 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
     }
   }
 
-  public static void patchPopupWindow (PopupWindow popupWindow) {
-    View container = popupWindow.getContentView().getRootView();
-    Context context = popupWindow.getContentView().getContext();
-    WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+  public boolean dismissOtherPopUps = true;
+
+  public void setDismissOtherPopUps (boolean dismissOtherPopUps) {
+    this.dismissOtherPopUps = dismissOtherPopUps;
+  }
+
+  public boolean needDismissOtherPopUps () {
+    return dismissOtherPopUps;
+  }
+
+  private static boolean patchPopupWindow (View container, boolean needFullScreen, boolean disallowScreenshots) {
     WindowManager.LayoutParams p = (WindowManager.LayoutParams) container.getLayoutParams();
-    p.flags |= WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
-    wm.updateViewLayout(container, p);
+    int newFlags = p.flags;
+    newFlags = BitwiseUtils.setFlag(newFlags, WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, needFullScreen);
+    newFlags = BitwiseUtils.setFlag(newFlags, WindowManager.LayoutParams.FLAG_SECURE, disallowScreenshots);
+    if (p.flags != newFlags) {
+      p.flags = newFlags;
+      return true;
+    }
+    return false;
+  }
+
+  public void checkWindowFlags () {
+    if (isHidden || isDismissed || windowAnchorView == null || isTemporarilyHidden)
+      return;
+    if (window != null) {
+      View rootView = window.getContentView().getRootView();
+      ViewGroup.LayoutParams layoutParams = rootView.getLayoutParams();
+      boolean disallowScreenShots = shouldDisallowScreenshots();
+      if (!(layoutParams instanceof WindowManager.LayoutParams)) {
+        // TODO: analyze in what situations container parameters become `android.widget.FrameLayout$LayoutParams`
+        // after that, uncomment code below, if it's caused by root view, not by window detachment
+        /*int windowFlags =
+          (needFullScreen ? WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS : 0) |
+          (disallowScreenShots ? WindowManager.LayoutParams.FLAG_SECURE : 0);
+        if (windowFlags != 0) {
+          final BaseActivity context = UI.getContext(getContext());
+          WindowManager.LayoutParams newParams = new WindowManager.LayoutParams();
+          newParams.flags = windowFlags;
+          // WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);?
+          context.getWindowManager().updateViewLayout(rootView, newParams);
+        }*/
+        return;
+      }
+      if (patchPopupWindow(rootView, needFullScreen, disallowScreenShots)) {
+        final BaseActivity context = UI.getContext(getContext());
+        // WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);?
+        context.getWindowManager().updateViewLayout(rootView, rootView.getLayoutParams());
+      }
+    }
   }
 
   private void showSystemWindow (View anchorView) {
@@ -287,18 +337,20 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
         return;
       }
       int state = context.getActivityState();
-      if (state == UI.STATE_RESUMED) {
+      if (state == UI.State.RESUMED) {
         try {
           window.showAtLocation(windowAnchorView = anchorView, Gravity.NO_GRAVITY, 0, 0);
           window.setBackgroundDrawable(new RootDrawable(UI.getContext(getContext())));
-          if (needFullScreen) {
-            patchPopupWindow(window);
-          }
-          if (Build.VERSION.SDK_INT >= 28) {
-            View view = window.getContentView().getRootView();
-            WindowManager.LayoutParams lp = (WindowManager.LayoutParams) view.getLayoutParams();
+          View rootView = window.getContentView().getRootView();
+          boolean updated = patchPopupWindow(rootView, needFullScreen, shouldDisallowScreenshots());
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams lp = (WindowManager.LayoutParams) rootView.getLayoutParams();
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            context.getWindowManager().updateViewLayout(view, lp);
+            updated = true;
+          }
+          if (updated) {
+            // WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);?
+            context.getWindowManager().updateViewLayout(rootView, rootView.getLayoutParams());
           }
           return;
         } catch (Throwable t) {
@@ -313,7 +365,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
             context.removeSimpleStateListener(this);
             return;
           }
-          if (newState == UI.STATE_RESUMED) {
+          if (newState == UI.State.RESUMED) {
             context.removeSimpleStateListener(this);
             if (!isTemporarilyHidden) {
               showSystemWindow(anchorView);
@@ -375,8 +427,15 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
     }
   }
 
+  private boolean isDestroyed;
+
+  public boolean isDestroyed () {
+    return isDestroyed;
+  }
+
   @Override
   public void performDestroy () {
+    isDestroyed = true;
     for (int i = getChildCount() - 1; i >= 0; i--) {
       View view = getChildAt(i);
       if (view instanceof Destroyable) {
@@ -466,7 +525,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
     return boundView;
   }
 
-  public void showMoreView (MenuMoreWrap menuWrap) {
+  public void showMoreView (MenuMoreWrapAbstract menuWrap) {
     if (menuWrap == null) {
       throw new IllegalArgumentException();
     }
@@ -475,6 +534,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
       ((ViewGroup) menuWrap.getParent()).removeView(menuWrap);
     }
 
+    final boolean anchorCenter = menuWrap.getAnchorMode() == MenuMoreWrap.ANCHOR_MODE_CENTER;
     final boolean anchorRight = menuWrap.getAnchorMode() == MenuMoreWrap.ANCHOR_MODE_RIGHT;
     final int padding = Screen.dp(8f);
     final int itemsWidth = menuWrap.getItemsWidth();
@@ -501,7 +561,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
   }
 
   private void hideMoreWrap () {
-    MenuMoreWrap menuWrap = (MenuMoreWrap) getContentChild();
+    MenuMoreWrapAbstract menuWrap = (MenuMoreWrapAbstract) getContentChild();
 
     if (menuWrap == null) {
       return;
@@ -593,7 +653,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
 
   @Override
   protected View getMeasureTarget () {
-    return boundController != null ? boundController.get() : this;
+    return boundController != null ? boundController.getValue() : this;
   }
 
   private static final int ANIMATION_TYPE_NONE = -1;
@@ -630,13 +690,17 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
             }
           };
 
-          MenuMoreWrap menuWrap = (MenuMoreWrap) getContentChild();
+          MenuMoreWrapAbstract menuWrap = (MenuMoreWrapAbstract) getContentChild();
 
           if (menuWrap == null) {
             return;
           }
 
           if (animationType == ANIMATION_TYPE_MORE_SCALE) {
+            if (menuWrap.getAnchorMode() == MenuMoreWrap.ANCHOR_MODE_CENTER) {
+              final int itemsWidth = menuWrap.getItemsWidth();
+              menuWrap.setPivotX(itemsWidth / 2f);
+            }
             menuWrap.scaleIn(listener);
             return;
           }
@@ -766,7 +830,7 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
     animator.animateTo(toFactor);
   }
 
-  private View getContentChild () {
+  public View getContentChild () {
     int count = getChildCount();
     for (int i = 0; i < count; i++) {
       View view = getChildAt(i);
@@ -867,6 +931,51 @@ public class PopupLayout extends RootFrameLayout implements FactorAnimator.Targe
 
   public void addStatusBar () {
     useStatusBar = true;
+  }
+
+  private @Nullable TooltipOverlayView tooltipOverlayView;
+
+  public TooltipOverlayView tooltipManager () {
+    if (tooltipOverlayView == null) {
+      tooltipOverlayView = new TooltipOverlayView(getContext());
+      tooltipOverlayView.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+      tooltipOverlayView.setAvailabilityListener((overlayView, hasChildren) -> {
+        if (hasChildren) {
+          if (tooltipOverlayView.getParent() != null)
+            return;
+          addView(tooltipOverlayView);
+        } else {
+          removeView(tooltipOverlayView);
+        }
+      });
+    }
+    return tooltipOverlayView;
+  }
+
+  public final TooltipOverlayView.TooltipInfo showErrorTooltip (ViewController<?> context, View view, CharSequence text) {
+    return showTooltip(context, view, R.drawable.baseline_error_24, text);
+  }
+
+  public final TooltipOverlayView.TooltipInfo showWarningTooltip (ViewController<?> context, View view, CharSequence text) {
+    return showTooltip(context, view, R.drawable.baseline_warning_24, text);
+  }
+
+  public final TooltipOverlayView.TooltipInfo showInfoTooltip (ViewController<?> context, View view, CharSequence text) {
+    return showTooltip(context, view, R.drawable.baseline_info_24, text);
+  }
+
+  public final TooltipOverlayView.TooltipInfo showTooltip (ViewController<?> context, View view, @DrawableRes int icon, CharSequence text) {
+    return tooltipManager()
+      .builder(view)
+      .show(context, null, icon, text);
+  }
+
+  public static PopupLayout parentOf (View view) {
+    ViewParent parent = view.getParent();
+    while (parent != null && !(parent instanceof PopupLayout)) {
+      parent = parent.getParent();
+    }
+    return (PopupLayout) parent;
   }
 
   // Drawing

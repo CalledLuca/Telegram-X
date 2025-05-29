@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@ import android.os.Build;
 import android.view.View;
 
 import org.thunderdog.challegram.data.TGMessage;
+import org.thunderdog.challegram.data.TGMessageVideo;
 
 public class MessageOverlayView extends View {
   private MessageView boundView;
@@ -51,7 +52,13 @@ public class MessageOverlayView extends View {
       if (msg != null) {
         msg.buildLayout(getMeasuredWidth());
       }
-      heightMeasureSpec = MeasureSpec.makeMeasureSpec(msg != null ? msg.getHeight() : 0, MeasureSpec.EXACTLY);
+
+      int height = msg != null ? msg.getHeight() : 0;
+      if (msg instanceof TGMessageVideo) {
+        height = ((TGMessageVideo) msg).getVideoMessageTargetHeight(true);
+      }
+
+      heightMeasureSpec = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
       setMeasuredDimension(widthMeasureSpec, heightMeasureSpec);
     }
   }

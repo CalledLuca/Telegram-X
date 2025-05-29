@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import androidx.annotation.Nullable;
+
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.chat.MessageView;
 import org.thunderdog.challegram.component.chat.MessagesAdapter;
@@ -33,27 +35,40 @@ import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.util.text.TextWrapper;
 
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class TGMessageBotInfo extends TGMessage {
   private TextWrapper titleWrapper;
   private TextWrapper textWrapper;
+  private TdApi.FormattedText description;
 
   private Drawable icon;
 
-  public TGMessageBotInfo (MessagesManager context, long chatId, TdApi.FormattedText description) {
-    super(context, TD.newFakeMessage(chatId, context.controller().tdlib().sender(chatId), new TdApi.MessageText(description, null)));
+  public TGMessageBotInfo (MessagesManager context, long chatId, String description) {
+    this(context, chatId, new TdApi.FormattedText(description, Text.findEntities(description, Text.ENTITY_FLAGS_ALL)));
+  }
+
+  private TGMessageBotInfo (MessagesManager context, long chatId, TdApi.FormattedText description) {
+    super(context, TD.newFakeMessage(chatId, context.controller().tdlib().sender(chatId), new TdApi.MessageText(description, null, null)));
 
     if (!tdlib().isRepliesChat(ChatId.fromUserId(getSender().getUserId()))) {
       String text = Lang.getString(R.string.WhatThisBotCanDo);
-      this.titleWrapper = new TextWrapper(text, getTextStyleProvider(), getTextColorSet(), null).addTextFlags(Text.FLAG_ALL_BOLD);
+      this.titleWrapper = new TextWrapper(text, getTextStyleProvider(), getTextColorSet()).addTextFlags(Text.FLAG_ALL_BOLD);
       this.titleWrapper.setViewProvider(currentViews);
     }
 
-    this.textWrapper = new TextWrapper(description.text, getTextStyleProvider(), getTextColorSet(), TextEntity.valueOf(tdlib, description, null)).setClickCallback(clickCallback());
+    this.textWrapper = new TextWrapper(description.text, getTextStyleProvider(), getTextColorSet())
+      .setEntities(TextEntity.valueOf(tdlib, description, null), null)
+      .setClickCallback(clickCallback());
     this.textWrapper.setViewProvider(currentViews);
+    this.description = description;
 
     icon = Drawables.get(context.controller().context().getResources(), R.drawable.baseline_help_24);
+  }
+
+  @Override
+  public boolean canSwipe () {
+    return false;
   }
 
   @Override
@@ -78,6 +93,11 @@ public class TGMessageBotInfo extends TGMessage {
 
   @Override
   public boolean canBeSaved () {
+    return true;
+  }
+
+  @Override
+  public boolean isFakeMessage () {
     return true;
   }
 
@@ -187,5 +207,11 @@ public class TGMessageBotInfo extends TGMessage {
   public boolean performLongPress (View view, float x, float y) {
     boolean res = super.performLongPress(view, x, y);
     return textWrapper.performLongPress(view) || res;
+  }
+
+  @Nullable
+  @Override
+  public TdApi.FormattedText getTextToTranslateImpl () {
+    return description;
   }
 }

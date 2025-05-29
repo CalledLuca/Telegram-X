@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@ import android.view.View;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.user.SimpleUsersAdapter;
 import org.thunderdog.challegram.data.TD;
@@ -53,7 +53,7 @@ public class MediaBottomInlineBotsController extends MediaBottomBaseController<V
 
   protected void displayBots (final List<TGUser> users) {
     if (users.isEmpty()) {
-      showError(R.string.NothingFound, true);
+      showError(R.string.NothingFound, 0, null, true);
     } else {
       hideProgress(() -> {
         adapter.setUsers(users);
@@ -99,7 +99,7 @@ public class MediaBottomInlineBotsController extends MediaBottomBaseController<V
   public void onResult (TdApi.Object object) {
     switch (object.getConstructor()) {
       case TdApi.Error.CONSTRUCTOR: {
-        dispatchError(TD.toErrorString(object), true);
+        dispatchError(TD.toErrorString(object), null, null, true);
         break;
       }
       case TdApi.Chat.CONSTRUCTOR: {

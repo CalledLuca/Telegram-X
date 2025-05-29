@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,8 +34,9 @@ import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.RippleSupport;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Fonts;
@@ -92,7 +93,7 @@ public class MediaLocationPlaceView extends FrameLayoutFix implements AttachDele
       if (themeProvider != null) {
         themeProvider.removeThemeListenerByTarget(titleView);
       }
-      int colorId = isRed ? R.id.theme_color_textNegative : R.id.theme_color_text;
+      int colorId = isRed ? ColorId.textNegative : ColorId.text;
       titleView.setTextColor(Theme.getColor(colorId));
       if (themeProvider != null) {
         themeProvider.addThemeTextColorListener(titleView, colorId);
@@ -168,7 +169,7 @@ public class MediaLocationPlaceView extends FrameLayoutFix implements AttachDele
     timerView.setListener(this);
     timerView.setTextColor(Theme.progressColor());
     if (themeProvider != null) {
-      themeProvider.addThemeTextColorListener(timerView, R.id.theme_color_progress);
+      themeProvider.addThemeTextColorListener(timerView, ColorId.progress);
     }
     timerView.setLayoutParams(params);
     addView(timerView);
@@ -214,19 +215,19 @@ public class MediaLocationPlaceView extends FrameLayoutFix implements AttachDele
 
   // Data
 
-  private int circleColorId = R.id.theme_color_fileAttach;
+  private TdlibAccentColor accentColor;
   private Letters letters;
   private float lettersWidth;
 
-  public void setLocation (String title, String subtitle, @ThemeColorId int circleColorId, Letters letters, boolean isFaded, int livePeriod, long expiresAt) {
+  public void setLocation (String title, String subtitle, TdlibAccentColor accentColor, Letters letters, boolean isFaded, int livePeriod, long expiresAt) {
     clearLiveLocation();
     setIsFaded(isFaded);
     timerView.setLivePeriod(livePeriod, expiresAt);
     titleView.setText(title);
     addressView.setText(subtitle);
     boolean needInvalidate = false;
-    if (this.circleColorId != circleColorId) {
-      this.circleColorId = circleColorId;
+    if (this.accentColor != accentColor) {
+      this.accentColor = accentColor;
       needInvalidate = true;
     }
     if (!StringUtils.equalsOrBothEmpty(this.letters != null ? this.letters.text : null, letters != null ? letters.text : null)) {
@@ -361,17 +362,17 @@ public class MediaLocationPlaceView extends FrameLayoutFix implements AttachDele
 
   @Override
   protected void onDraw (Canvas c) {
-    int cx = receiver.getCenterX();
-    int cy = receiver.getCenterY();
+    int cx = receiver.centerX();
+    int cy = receiver.centerY();
 
     float alpha = (flags & FLAG_FADED) != 0 ? .6f : 1f;
 
     if ((flags & FLAG_LIVE_LOCATION) != 0) {
       float progressFactor = progressAnimator != null ? progressAnimator.getFloatValue() : 0f;
-      c.drawCircle(cx, cy, Screen.dp(IMAGE_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(alpha, Theme.getColor(R.id.theme_color_fileRed))));
+      c.drawCircle(cx, cy, Screen.dp(IMAGE_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(alpha, Theme.getColor(ColorId.fileRed))));
 
       if (progressFactor < 1f) {
-        Paint bitmapPaint = Paints.getPorterDuffPaint(0xffffffff);
+        Paint bitmapPaint = Paints.whitePorterDuffPaint();
         bitmapPaint.setAlpha((int) (255f * (1f - progressFactor) * alpha));
         Drawables.draw(c, iconSmall, cx - iconSmall.getMinimumWidth() / 2, cy - iconSmall.getMinimumHeight() / 2, bitmapPaint);
         bitmapPaint.setAlpha(255);
@@ -397,14 +398,14 @@ public class MediaLocationPlaceView extends FrameLayoutFix implements AttachDele
       return;
     }
 
-    c.drawCircle(cx, cy, Screen.dp(IMAGE_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(alpha, Theme.getColor(circleColorId))));
+    c.drawCircle(cx, cy, Screen.dp(IMAGE_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(alpha, accentColor != null ? accentColor.getPrimaryColor() : Theme.getColor(ColorId.fileAttach))));
     if (letters != null) {
       Paints.drawLetters(c, letters, cx - lettersWidth / 2, cy + Screen.dp(6f), 17f, alpha);
     }
     if (letters == null || receiver.getCurrentFile() != null) {
       if (receiver.needPlaceholder()) {
         float iconAlpha = alpha - receiver.getDisplayAlpha();
-        Paint paint = Paints.getPorterDuffPaint(0xffffffff);
+        Paint paint = Paints.whitePorterDuffPaint();
         paint.setAlpha((int) (255f * iconAlpha));
         Drawables.draw(c, iconBig, cx - iconBig.getMinimumWidth() / 2, cy - iconBig.getMinimumHeight() / 2, paint);
         paint.setAlpha(255);

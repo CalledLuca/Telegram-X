@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,13 +14,16 @@
  */
 package org.thunderdog.challegram.mediaview.data;
 
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.view.MotionEvent;
 import android.view.View;
 
+import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
@@ -33,10 +36,12 @@ import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.data.TGMessageMedia;
 import org.thunderdog.challegram.data.TdApiExt;
 import org.thunderdog.challegram.filegen.PhotoGenerationInfo;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageFileLocal;
 import org.thunderdog.challegram.loader.ImageFilteredFile;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
+import org.thunderdog.challegram.loader.ImageReader;
 import org.thunderdog.challegram.loader.ImageVideoThumbFile;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifFileLocal;
@@ -46,6 +51,7 @@ import org.thunderdog.challegram.mediaview.paint.PaintState;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.tool.TGMimeType;
 import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.util.DrawableProvider;
 import org.thunderdog.challegram.util.MessageSourceProvider;
@@ -53,16 +59,21 @@ import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.widget.FileProgressComponent;
 
 import java.io.File;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import me.vkryl.android.util.InvalidateContentProvider;
 import me.vkryl.android.util.MultipleViewProvider;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
+import tgx.td.data.HlsVideo;
 
-public class MediaItem implements MessageSourceProvider, MultipleViewProvider.InvalidateContentProvider {
+public class MediaItem implements MessageSourceProvider, InvalidateContentProvider {
   public static final int TYPE_PHOTO = 0;
   public static final int TYPE_VIDEO = 1;
   public static final int TYPE_GIF = 2;
@@ -76,7 +87,7 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   private ImageFile miniThumbnail;
 
   // Remote stuff
-  private ImageFile previewImageFile;
+  private ImageFile previewImageFile, blurredPreviewImageFile;
   private TdApi.File targetFile;
   private FileProgressComponent fileProgress;
   private boolean needCreateGalleryFileProgress;
@@ -87,6 +98,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   private int sourceDate;
   private TdApi.Photo sourcePhoto;
   private TdApi.Video sourceVideo;
+  private TdApi.AlternativeVideo[] sourceAlternativeVideos;
+  private TdApi.Photo sourceCover;
+  private TdApi.Document sourceDocument;
   private TdApi.VideoNote sourceVideoNote;
   private TdApi.Animation sourceAnimation;
   private ImageGalleryFile sourceGalleryFile;
@@ -99,6 +113,8 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   private TdApi.FormattedText caption;
   private ImageFile targetImage;
   private GifFile targetGif;
+
+  private boolean showCaptionAboveMedia, hasSpoiler;
 
   public static MediaItem copyOf (MediaItem item) {
     return copyOf(item, true);
@@ -115,34 +131,135 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
         copy.sourceDate = item.sourceDate;
         copy.caption = item.caption;
         copy.msg = item.msg;
+        copy.copyOptions(item);
         return copy;
       }
       case TYPE_GIF: {
-        return new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.sourceSender, item.sourceDate, item.sourceAnimation, item.caption).setMessage(item.msg);
+        MediaItem copy = new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.sourceSender, item.sourceDate, item.sourceAnimation, item.caption).setMessage(item.msg);
+        copy.copyOptions(item);
+        return copy;
       }
       case TYPE_VIDEO: {
-        return new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.sourceSender, item.sourceDate, item.sourceVideo, item.caption, allowIcon).setMessage(item.msg);
+        MediaItem copy = new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.sourceSender, item.sourceDate, item.sourceVideo, item.sourceAlternativeVideos, item.sourceCover, item.caption, allowIcon).setMessage(item.msg);
+        copy.copyOptions(item);
+        return copy;
       }
       case TYPE_USER_PROFILE: {
         return new MediaItem(item.context, item.tdlib, ((TdApi.MessageSenderUser) item.sourceSender).userId, item.profilePhoto);
       }
       case TYPE_CHAT_PROFILE: {
-        return new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.chatPhoto);
+        return new MediaItem(item.context, item.tdlib, item.sourceChatId, item.sourceMessageId, item.chatPhoto, item.isFullPhoto);
       }
     }
     return null;
   }
 
   public MediaItem (BaseActivity context, Tdlib tdlib, TdApi.Photo photo, TdApi.FormattedText caption) {
-    this(context, tdlib, 0, 0, photo, false);
+    this(context, tdlib, 0, 0, photo, false, false);
     this.caption = caption;
   }
 
   public MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.Photo photo) {
-    this(context, tdlib, sourceChatId, sourceMessageId, photo, false);
+    this(context, tdlib, sourceChatId, sourceMessageId, photo, false, false);
   }
 
-  public MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.Photo photo, boolean isWebp) {
+  public MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.Document document, @Nullable BitmapFactory.Options options, boolean isRotated, U.MediaMetadata mediaMetadata) {
+    this.context = context;
+    this.tdlib = tdlib;
+    this.sourceChatId = sourceChatId;
+    this.sourceMessageId = sourceMessageId;
+
+    int documentType = getMediaDocumentType(document);
+    switch (documentType) {
+      case DocumentType.IMAGE: {
+        TdApi.Photo photo = TD.convertToPhoto(document, options, isRotated);
+        this.type = TYPE_PHOTO;
+        setPhoto(photo, "image/webp".equals(document.mimeType), true);
+        break;
+      }
+      case DocumentType.GIF: {
+        TdApi.Animation animation = TD.convertToAnimation(document, options, isRotated, mediaMetadata);
+        this.type = TYPE_GIF;
+        setAnimation(animation, true);
+        break;
+      }
+      case DocumentType.VIDEO: {
+        TdApi.Video video = TD.convertToVideo(document, options, isRotated, mediaMetadata);
+        this.type = TYPE_VIDEO;
+        setVideo(video, null, null, true, true);
+        break;
+      }
+      case DocumentType.UNKNOWN:
+      default: {
+        throw new UnsupportedOperationException(document.mimeType);
+      }
+    }
+    this.sourceDocument = document;
+    this.targetFile = document.document;
+  }
+
+  @IntDef({
+    DocumentType.UNKNOWN, DocumentType.IMAGE, DocumentType.VIDEO, DocumentType.GIF
+  })
+  @Retention(RetentionPolicy.SOURCE)
+  public @interface DocumentType {
+    int UNKNOWN = 0, IMAGE = 1, VIDEO = 2, GIF = 3;
+  }
+
+  @DocumentType
+  public static int getMediaDocumentType (@Nullable TdApi.Document document) {
+    if (document != null) {
+      @DocumentType int documentType = getMediaDocumentType(document.mimeType);
+      if (documentType != DocumentType.UNKNOWN) {
+        return documentType;
+      }
+      String extension = U.getExtension(document.fileName);
+      if (!StringUtils.isEmpty(extension)) {
+        extension = extension.toLowerCase();
+      }
+      String alternateMimeType = TGMimeType.mimeTypeForExtension(extension);
+      if (!StringUtils.isEmpty(alternateMimeType) && !alternateMimeType.equals(document.mimeType)) {
+        documentType = getMediaDocumentType(alternateMimeType);
+        if (documentType != DocumentType.UNKNOWN) {
+          return documentType;
+        }
+      }
+    }
+    return DocumentType.UNKNOWN;
+  }
+
+  @DocumentType
+  public static int getMediaDocumentType (@NonNull String mimeType) {
+    if (isImageDocument(mimeType)) {
+      if ("image/gif".equals(mimeType)) {
+        return DocumentType.GIF;
+      } else {
+        return DocumentType.IMAGE;
+      }
+    }
+    if (isVideoDocument(mimeType)) {
+      return DocumentType.VIDEO;
+    }
+    return DocumentType.UNKNOWN;
+  }
+
+  public static boolean isMediaDocument (@Nullable TdApi.Document document) {
+    return getMediaDocumentType(document) != DocumentType.UNKNOWN;
+  }
+
+  public static boolean isVideoDocument (@NonNull String mimeType) {
+    return TGMimeType.isVideoMimeType(mimeType) || mimeType.startsWith("video/");
+  }
+
+  public static boolean isImageDocument (@NonNull String mimeType) {
+    if ("image/svg+xml".equals(mimeType)) {
+      // Unsupported image types
+      return false;
+    }
+    return TGMimeType.isImageMimeType(mimeType) || mimeType.startsWith("image/");
+  }
+
+  public MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.Photo photo, boolean isWebp, boolean isDocument) {
     this.type = TYPE_PHOTO;
     this.context = context;
     this.tdlib = tdlib;
@@ -151,8 +268,38 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     this.sourceChatId = sourceChatId;
     this.sourceMessageId = sourceMessageId;
 
-    final TdApi.PhotoSize previewSize = MediaWrapper.buildPreviewSize(photo.sizes);
-    final TdApi.PhotoSize targetSize = MediaWrapper.buildTargetFile(photo.sizes, previewSize);
+    setPhoto(photo, isWebp, isDocument);
+  }
+
+  private void setPhoto (TdApi.Photo photo, boolean isWebp, boolean isDocument) {
+    this.sourcePhoto = photo;
+    TdApi.PhotoSize previewSize, targetSize;
+    if (isDocument) {
+      if (photo.sizes.length == 2) {
+        previewSize = photo.sizes[0];
+        targetSize = photo.sizes[1];
+      } else {
+        previewSize = Td.findSmallest(photo);
+        targetSize = Td.findBiggest(photo);
+      }
+      if (targetSize == previewSize) {
+        previewSize = null;
+      }
+    } else {
+      previewSize = MediaWrapper.buildPreviewSize(photo.sizes);
+      targetSize = MediaWrapper.buildTargetFile(photo.sizes, previewSize);
+      if (previewSize == null) {
+        TdApi.PhotoSize smallestSize = Td.findSmallest(photo.sizes);
+        if (smallestSize != null && targetSize != null && smallestSize != targetSize && smallestSize.width <= targetSize.width && smallestSize.height <= targetSize.height) {
+          previewSize = smallestSize;
+        }
+      }
+    }
+
+    if (isDocument && targetSize == null && previewSize != null) {
+      targetSize = previewSize;
+      previewSize = null;
+    }
 
     if (targetSize != null) {
       width = targetSize.width;
@@ -195,7 +342,7 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     }
 
     if (targetSize != null) {
-      this.fileProgress = new FileProgressComponent(context, tdlib, TdlibFilesManager.DOWNLOAD_FLAG_PHOTO, true, sourceChatId, sourceMessageId);
+      this.fileProgress = new FileProgressComponent(context, tdlib, isDocument ? TdlibFilesManager.DOWNLOAD_FLAG_FILE : TdlibFilesManager.DOWNLOAD_FLAG_PHOTO, true, sourceChatId, sourceMessageId);
       this.fileProgress.setUseStupidInvalidate();
       this.fileProgress.setFile(targetSize.photo);
     }
@@ -206,10 +353,21 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     this.sourceSender = sourceSender;
     this.sourceDate = sourceDate;
     this.caption = photo.caption;
+    setShowCaptionAboveMedia(photo.showCaptionAboveMedia);
+    setHasSpoiler(photo.hasSpoiler);
+  }
+
+  private MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.MessageSender sourceSender, int sourceDate, TdApi.MessageDocument document) {
+    this(context, tdlib, sourceChatId, sourceMessageId, document.document, null, false, null);
+    this.sourceSender = sourceSender;
+    this.sourceDate = sourceDate;
+    this.caption = document.caption;
   }
 
   private MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.MessageSender sourceSender, int sourceDate, TdApi.MessageAnimation animation) {
     this(context, tdlib, sourceChatId, sourceMessageId, sourceSender, sourceDate, animation.animation, animation.caption);
+    setShowCaptionAboveMedia(animation.showCaptionAboveMedia);
+    setHasSpoiler(animation.hasSpoiler);
   }
 
   public MediaItem (BaseActivity context, Tdlib tdlib, TdApi.Animation animation, TdApi.FormattedText caption) {
@@ -221,23 +379,37 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     this.tdlib = tdlib;
     this.type = TYPE_GIF;
     this.caption = caption;
-    this.sourceAnimation = animation;
     this.sourceChatId = sourceChatId;
     this.sourceMessageId = sourceMessageId;
     this.sourceSender = sourceSender;
     this.sourceDate = sourceDate;
+    setAnimation(animation, false);
+  }
 
-    setMiniThumbnail(animation.minithumbnail);
-    this.previewImageFile = TD.toImageFile(tdlib, animation.thumbnail); // TODO MPEG4 thumbnail support
+  private void setThumbnail (TdApi.Thumbnail thumbnail) {
+    this.previewImageFile = TD.toImageFile(tdlib, thumbnail); // TODO MPEG4 thumbnail support
     if (previewImageFile != null) {
       this.previewImageFile.setScaleType(ImageFile.FIT_CENTER);
       this.previewImageFile.setNeedCancellation(true);
     }
+    this.blurredPreviewImageFile = TD.toImageFile(tdlib, thumbnail);
+    if (this.blurredPreviewImageFile != null) {
+      this.blurredPreviewImageFile.setScaleType(ImageFile.FIT_CENTER);
+      this.blurredPreviewImageFile.setNeedCancellation(true);
+      this.blurredPreviewImageFile.setIsPrivate();
+    }
+  }
+
+  private void setAnimation (TdApi.Animation animation, boolean isDocument) {
+    this.sourceAnimation = animation;
     this.targetFile = animation.animation;
+
+    setMiniThumbnail(animation.minithumbnail);
+    setThumbnail(animation.thumbnail);
 
     this.targetGif = new GifFile(tdlib, animation);
     this.targetGif.setScaleType(GifFile.FIT_CENTER);
-    if (sourceChatId != 0 && sourceMessageId != 0 && !Settings.instance().needAutoplayGIFs()) {
+    if (sourceChatId != 0 && sourceMessageId != 0 && (!Settings.instance().needAutoplayGIFs() && !isDocument)) {
       this.targetGif.setIsStill(true);
     }
 
@@ -248,7 +420,7 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
       width = height = Screen.dp(100f);
     }
 
-    this.fileProgress = new FileProgressComponent(context, tdlib, TdlibFilesManager.DOWNLOAD_FLAG_GIF, true, sourceChatId, sourceMessageId);
+    this.fileProgress = new FileProgressComponent(context, tdlib, isDocument ? TdlibFilesManager.DOWNLOAD_FLAG_FILE : TdlibFilesManager.DOWNLOAD_FLAG_GIF, true, sourceChatId, sourceMessageId);
     this.fileProgress.setUseStupidInvalidate();
     this.fileProgress.setFile(targetFile);
   }
@@ -292,31 +464,61 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     this.fileProgress.setFile(targetFile);
   }
 
-  public MediaItem (BaseActivity context, Tdlib tdlib, TdApi.Video video, TdApi.FormattedText caption, boolean allowIcon) {
-    this(context, tdlib, 0, 0, null, 0, video, caption, allowIcon);
+  public MediaItem (BaseActivity context, Tdlib tdlib, TdApi.Video video, TdApi.AlternativeVideo[] alternativeVideos, @Nullable TdApi.Photo cover, TdApi.FormattedText caption, boolean allowIcon) {
+    this(context, tdlib, 0, 0, null, 0, video, alternativeVideos, cover, caption, allowIcon);
   }
 
-  private MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.MessageSender sourceSender, int sourceDate, TdApi.Video video, TdApi.FormattedText caption, boolean allowIcon) {
+  private MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.MessageSender sourceSender, int sourceDate, TdApi.Video video, TdApi.AlternativeVideo[] alternativeVideos, @Nullable TdApi.Photo cover, TdApi.FormattedText caption, boolean allowIcon) {
+    this.type = TYPE_VIDEO;
     this.context = context;
     this.tdlib = tdlib;
-    this.type = TYPE_VIDEO;
     this.caption = caption;
-    this.sourceVideo = video;
+
     this.sourceChatId = sourceChatId;
     this.sourceMessageId = sourceMessageId;
     this.sourceSender = sourceSender;
     this.sourceDate = sourceDate;
 
-    setMiniThumbnail(video.minithumbnail);
-    this.previewImageFile = TD.toImageFile(tdlib, video.thumbnail); // TODO MPEG4 support
-    if (previewImageFile != null) {
-      this.previewImageFile.setScaleType(ImageFile.FIT_CENTER);
-      this.previewImageFile.setNeedCancellation(true);
+    setVideo(video, alternativeVideos, cover, allowIcon, false);
+  }
+
+  @Nullable
+  public HlsVideo getHslVideo () {
+    if (sourceAlternativeVideos != null && sourceAlternativeVideos.length > 0) {
+      return new HlsVideo(sourceVideo, sourceAlternativeVideos);
+    } else {
+      return null;
+    }
+  }
+
+  private void setVideo (TdApi.Video video, TdApi.AlternativeVideo[] alternativeVideos, @Nullable TdApi.Photo cover, boolean allowIcon, boolean isDocument) {
+    this.sourceVideo = video;
+    this.sourceAlternativeVideos = alternativeVideos;
+
+    if (cover != null) {
+      setMiniThumbnail(cover.minithumbnail);
+      TdApi.PhotoSize previewSize = MediaWrapper.buildPreviewSize(cover.sizes);
+      TdApi.PhotoSize targetSize = MediaWrapper.buildTargetFile(cover.sizes, previewSize);
+      if (previewSize == null) {
+        previewSize = targetSize;
+        targetSize = null;
+      }
+      setThumbnail(Td.toThumbnail(previewSize));
+      if (targetSize != null) {
+        this.targetImage = new ImageFile(tdlib, targetSize.photo);
+        this.targetImage.setScaleType(ImageFile.FIT_CENTER);
+        this.targetImage.setNoBlur();
+        this.targetImage.setNeedCancellation(true);
+        MediaWrapper.applyMaxSize(this.targetImage, targetSize);
+      }
+    } else {
+      setMiniThumbnail(video.minithumbnail);
+      setThumbnail(video.thumbnail);
+
+      this.targetImage = MediaWrapper.createThumbFile(tdlib, video.video);
+      this.targetImage.setScaleType(ImageFile.FIT_CENTER);
     }
     this.targetFile = video.video;
-
-    this.targetImage = MediaWrapper.createThumbFile(tdlib, video.video);
-    this.targetImage.setScaleType(ImageFile.FIT_CENTER);
 
     this.width = video.width;
     this.height = video.height;
@@ -325,7 +527,7 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
       width = height = Screen.dp(100f);
     }
 
-    this.fileProgress = new FileProgressComponent(context, tdlib, TdlibFilesManager.DOWNLOAD_FLAG_VIDEO, true, sourceChatId, sourceMessageId);
+    this.fileProgress = new FileProgressComponent(context, tdlib, isDocument ? TdlibFilesManager.DOWNLOAD_FLAG_FILE : TdlibFilesManager.DOWNLOAD_FLAG_VIDEO, true, sourceChatId, sourceMessageId);
     this.fileProgress.setUseStupidInvalidate();
 
     if (allowIcon) {
@@ -347,6 +549,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     }
     if (previewImageFile != null) {
       previewImageFile.setScaleType(scaleType);
+    }
+    if (blurredPreviewImageFile != null) {
+      blurredPreviewImageFile.setScaleType(scaleType);
     }
     if (targetImage != null) {
       targetImage.setScaleType(scaleType);
@@ -375,7 +580,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   }
 
   private MediaItem (BaseActivity context, Tdlib tdlib, long sourceChatId, long sourceMessageId, TdApi.MessageSender sourceSender, int sourceDate, TdApi.MessageVideo video, boolean allowIcon) {
-    this(context, tdlib, sourceChatId, sourceMessageId, sourceSender, sourceDate, video.video, video.caption, allowIcon);
+    this(context, tdlib, sourceChatId, sourceMessageId, sourceSender, sourceDate, video.video, video.alternativeVideos, video.cover, video.caption, allowIcon);
+    setShowCaptionAboveMedia(video.showCaptionAboveMedia);
+    setHasSpoiler(video.hasSpoiler);
   }
 
   public MediaItem (BaseActivity context, Tdlib tdlib, long userId, TdApi.ProfilePhoto profilePhoto) {
@@ -386,6 +593,8 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     this.profilePhoto = profilePhoto;
 
     this.width = this.height = Screen.dp(640f);
+
+    setMiniThumbnail(profilePhoto.minithumbnail);
 
     if (profilePhoto.small != null) {
       this.previewImageFile = new ImageFile(tdlib, profilePhoto.small);
@@ -408,9 +617,17 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
 
   private TdApi.ProfilePhoto profilePhoto;
   private TdApi.ChatPhoto chatPhoto;
+  private boolean isFullPhoto;
 
   public MediaItem setSourceDate (int sourceDate) {
     this.sourceDate = sourceDate;
+    return this;
+  }
+
+  public MediaItem setChatPhoto (TdApi.ChatPhoto chatPhoto) {
+    this.chatPhoto = chatPhoto;
+    this.isFullPhoto = true;
+    setSourceDate(chatPhoto.addedDate);
     return this;
   }
 
@@ -440,7 +657,6 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     }
     throw new UnsupportedOperationException();
   }
-
   public int getBigFileId () {
     return targetFile != null ? targetFile.id : 0;
   }
@@ -455,14 +671,20 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
         new TdApi.PhotoSize("m", chatPhoto.big, 640, 640, null)
       },
       null,
+      null,
       null
-    ));
+    ), false);
   }
 
   public MediaItem (BaseActivity context, Tdlib tdlib, long chatId, long messageId, TdApi.ChatPhoto photo) {
+    this(context, tdlib, chatId, messageId, photo, true);
+  }
+
+  private MediaItem (BaseActivity context, Tdlib tdlib, long chatId, long messageId, TdApi.ChatPhoto photo, boolean isFullPhoto) {
     this.context = context;
     this.tdlib = tdlib;
     this.type = TYPE_CHAT_PROFILE;
+    this.isFullPhoto = isFullPhoto;
     this.sourceChatId = chatId;
     this.sourceMessageId = messageId;
     this.sourceSender = ChatId.isUserChat(chatId) ? new TdApi.MessageSenderUser(tdlib.chatUserId(chatId)) : new TdApi.MessageSenderChat(chatId);
@@ -482,18 +704,23 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     }
 
     if (big != null) {
-      this.targetFile = big.photo;
       this.targetImage = new ImageFile(tdlib, big.photo);
       this.targetImage.setNeedCancellation(true);
       this.targetImage.setScaleType(ImageFile.FIT_CENTER);
+
+      this.targetFile = photo.animation != null ? photo.animation.file : photo.smallAnimation != null ? photo.smallAnimation.file : big.photo;
       this.fileProgress = new FileProgressComponent(context, tdlib, TdlibFilesManager.DOWNLOAD_FLAG_PHOTO, true, sourceChatId, messageId);
       this.fileProgress.setUseStupidInvalidate();
-      this.fileProgress.setFile(big.photo);
+      this.fileProgress.setFile(targetFile);
     }
 
     this.width = this.height = 640;
 
     setSourceSender(tdlib.sender(chatId));
+  }
+
+  public TdApi.ChatPhoto getChatPhoto () {
+    return chatPhoto;
   }
 
   public static int maxDisplaySize () {
@@ -675,35 +902,90 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return new MediaItem(context, tdlib, photo, caption);
   }
 
-  public static MediaItem valueOf (BaseActivity context, Tdlib tdlib, TdApi.Video video, TdApi.FormattedText caption) {
-    return new MediaItem(context, tdlib, video, caption, true);
+  public static MediaItem valueOf (BaseActivity context, Tdlib tdlib, TdApi.Video video, TdApi.AlternativeVideo[] alternativeVideos, @Nullable TdApi.Photo cover, TdApi.FormattedText caption) {
+    return new MediaItem(context, tdlib, video, alternativeVideos, cover, caption, true);
   }
 
   public static MediaItem valueOf (BaseActivity context, Tdlib tdlib, TdApi.Animation animation, TdApi.FormattedText caption) {
     return new MediaItem(context, tdlib, animation, caption);
   }
 
+  public static MediaItem valueOf (BaseActivity context, Tdlib tdlib, TdApi.Document document, TdApi.FormattedText caption) {
+    @DocumentType int documentType = getMediaDocumentType(document);
+    if (documentType != DocumentType.UNKNOWN) {
+      BitmapFactory.Options options = null;
+      U.MediaMetadata mediaMetadata = null;
+      boolean isRotated = false;
+      int width, height;
+      if (TD.isFileLoaded(document.document) && document.thumbnail == null) {
+        switch (documentType) {
+          case DocumentType.IMAGE:
+          case DocumentType.GIF: {
+            String filePath = document.document.local.path;
+            options = ImageReader.getImageSize(filePath);
+            isRotated = U.isExifRotated(filePath);
+            width = isRotated ? options.outHeight : options.outWidth;
+            height = isRotated ? options.outWidth : options.outHeight;
+            if (width <= 0 || height <= 0) {
+              return null;
+            }
+            break;
+          }
+          case DocumentType.VIDEO: {
+            mediaMetadata = U.getMediaMetadata(document.document.local.path);
+            if (mediaMetadata == null || !mediaMetadata.hasVideo) {
+              return null;
+            }
+            isRotated = mediaMetadata.isRotated();
+            width = isRotated ? mediaMetadata.height : mediaMetadata.width;
+            height = isRotated ? mediaMetadata.width : mediaMetadata.height;
+            if (width <= 0 || height <= 0) {
+              return null;
+            }
+            break;
+          }
+          case DocumentType.UNKNOWN:
+          default:
+            throw new UnsupportedOperationException();
+        }
+      }
+      return new MediaItem(context, tdlib, 0, 0, document, options, isRotated, mediaMetadata).setCaption(caption);
+    }
+    return null;
+  }
+
   public static MediaItem valueOf (BaseActivity context, Tdlib tdlib, TdApi.Message msg) {
     if (msg == null) {
       return null;
     }
+    //noinspection SwitchIntDef
     switch (msg.content.getConstructor()) {
       case TdApiExt.MessageChatEvent.CONSTRUCTOR: {
         TdApiExt.MessageChatEvent event = ((TdApiExt.MessageChatEvent) msg.content);
-        if (event.isFull) {
-          switch (event.event.action.getConstructor()) {
-            case TdApi.ChatEventPhotoChanged.CONSTRUCTOR: {
-              TdApi.ChatEventPhotoChanged changedPhoto = (TdApi.ChatEventPhotoChanged) event.event.action;
-              if (changedPhoto.oldPhoto != null || changedPhoto.newPhoto != null) {
-                return new MediaItem(context, tdlib, msg.chatId, 0, changedPhoto.newPhoto != null ? changedPhoto.newPhoto : changedPhoto.oldPhoto).setSourceSender(new TdApi.MessageSenderUser(Td.getSenderUserId(event.event.memberId))).setSourceDate(event.event.date);
-              }
+        //noinspection SwitchIntDef
+        switch (event.event.action.getConstructor()) {
+          case TdApi.ChatEventPhotoChanged.CONSTRUCTOR: {
+            TdApi.ChatEventPhotoChanged changedPhoto = (TdApi.ChatEventPhotoChanged) event.event.action;
+            if (changedPhoto.oldPhoto != null || changedPhoto.newPhoto != null) {
+              return new MediaItem(context, tdlib, msg.chatId, 0, changedPhoto.newPhoto != null ? changedPhoto.newPhoto : changedPhoto.oldPhoto).setSourceSender(event.event.memberId).setSourceDate(event.event.date);
             }
+          }
+          default: {
+            Td.assertChatEventAction_53b6b01e();
+            break;
           }
         }
         break;
       }
       case TdApi.MessagePhoto.CONSTRUCTOR: {
         return new MediaItem(context, tdlib, msg.chatId, msg.id, msg.senderId, msg.date, (TdApi.MessagePhoto) msg.content).setMessage(msg);
+      }
+      case TdApi.MessageDocument.CONSTRUCTOR: {
+        TdApi.Document document = ((TdApi.MessageDocument) msg.content).document;
+        if (isMediaDocument(document)) {
+          return new MediaItem(context, tdlib, msg.chatId, msg.id, msg.senderId, msg.date, (TdApi.MessageDocument) msg.content).setMessage(msg);
+        }
+        break;
       }
       case TdApi.MessageVideo.CONSTRUCTOR: {
         return new MediaItem(context, tdlib, msg.chatId, msg.id, msg.senderId, msg.date, (TdApi.MessageVideo) msg.content, true).setMessage(msg);
@@ -717,20 +999,46 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
       case TdApi.MessageVideoNote.CONSTRUCTOR: {
         return new MediaItem(context, tdlib, msg.chatId, msg.id, msg.senderId, msg.date, (TdApi.MessageVideoNote) msg.content).setMessage(msg);
       }
+      case TdApi.MessageText.CONSTRUCTOR: {
+        TdApi.LinkPreview linkPreview = ((TdApi.MessageText) msg.content).linkPreview;
+        if (linkPreview != null) {
+          if (Td.getSticker(linkPreview.type) != null) {
+            TdApi.Sticker sticker = Td.getSticker(linkPreview.type);
+            return new MediaItem(context, tdlib, msg.chatId, msg.id, TD.convertToPhoto(sticker), true, false).setSourceMessage(msg);
+          } else if (Td.getVideo(linkPreview.type) != null) {
+            // TODO: TDLib/server missing alternativeVideos in
+            return new MediaItem(context, tdlib, Td.getVideo(linkPreview.type), null, Td.getPhoto(linkPreview.type), new TdApi.FormattedText("", null), true).setSourceMessage(msg);
+          } else if (Td.getAnimation(linkPreview.type) != null) {
+            return new MediaItem(context, tdlib, Td.getAnimation(linkPreview.type), null).setSourceMessage(msg);
+          } else {
+            TdApi.Photo photo = Td.getPhoto(linkPreview.type);
+            if (photo != null) {
+              return new MediaItem(context, tdlib, msg.chatId, msg.id, photo).setSourceMessage(msg);
+            }
+          }
+        }
+        break;
+      }
     }
     return null;
   }
+
+  // TODO: rework entirely the rendering the legacy mess
 
   public boolean isRotated () {
     return isGalleryType(type) && U.isRotated(sourceGalleryFile.getRotation());
   }
 
+  public boolean isVideoRenderRotated (boolean allowCrop) {
+    return isVideo() && isGalleryType(type) && U.isRotated(sourceGalleryFile.getRotation() + (allowCrop && sourceGalleryFile.getCropState() != null ? sourceGalleryFile.getCropState().getRotateBy() : 0));
+  }
+
   public boolean isPostRotated () {
-    return isGalleryType(type) && U.isRotated(getPostRotation());
+    return isGalleryType(type) && U.isRotated(getPostRotate());
   }
 
   public boolean isFinallyRotated () {
-    return isGalleryType(type) && U.isRotated(sourceGalleryFile.getRotation() + getPostRotation());
+    return isGalleryType(type) && U.isRotated(sourceGalleryFile.getRotation() + getPostRotate());
   }
 
   public int getFileId () {
@@ -818,7 +1126,7 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   }
 
   public FiltersState getFiltersState () {
-    return sourceGalleryFile.getFiltersState();
+    return sourceGalleryFile != null ? sourceGalleryFile.getFiltersState() : null;
   }
 
   /*Crop*/
@@ -837,6 +1145,21 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     }
     if (previewImageFile != null) {
       previewImageFile.setCropState(state);
+    }
+    if (miniThumbnail != null) {
+      miniThumbnail.setCropState(state);
+    }
+    if (blurredPreviewImageFile != null) {
+      blurredPreviewImageFile.setCropState(state);
+    }
+    if (thumbImageMiniThumb != null) {
+      thumbImageMiniThumb.setCropState(state);
+    }
+    if (thumbImageFile != null) {
+      thumbImageFile.setCropState(state);
+    }
+    if (thumbImageFileNoScale != null) {
+      thumbImageFileNoScale.setCropState(state);
     }
   }
 
@@ -870,8 +1193,8 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
 
   /*Video rotation*/
 
-  public float getPostRotation () {
-    return sourceGalleryFile != null ? sourceGalleryFile.getPostRotate() : 0f;
+  public int getPostRotate () {
+    return sourceGalleryFile != null ? sourceGalleryFile.getPostRotate() : 0;
   }
 
   public int postRotateBy90Degrees () {
@@ -915,8 +1238,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   public long getTrimEndUs () {
     if (needTrim()) {
       return sourceGalleryFile.getEndTimeUs();
+    } else {
+      return -1;
     }
-    return -1;
   }
 
   public long getTotalDurationUs () {
@@ -926,13 +1250,13 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return -1;
   }
 
-  public int getTTL () {
-    return sourceGalleryFile != null ? sourceGalleryFile.getTTL() : 0;
+  public @Nullable TdApi.MessageSelfDestructType getSelfDestructType () {
+    return sourceGalleryFile != null ? sourceGalleryFile.getSelfDestructType() : null;
   }
 
-  public void setTTL (int ttl) {
+  public void setSelfDestructType (@Nullable TdApi.MessageSelfDestructType selfDestructType) {
     if (sourceGalleryFile != null) {
-      sourceGalleryFile.setTTL(ttl);
+      sourceGalleryFile.setSelfDestructType(selfDestructType);
     }
   }
 
@@ -973,6 +1297,44 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return isGifType() && isVideo();
   }
 
+  public boolean isAnimatedAvatar () {
+    switch (type) {
+      case TYPE_CHAT_PROFILE:
+      case TYPE_USER_PROFILE:
+        return chatPhoto != null && (chatPhoto.animation != null || chatPhoto.smallAnimation != null);
+    }
+    return false;
+  }
+
+  public boolean isAvatar () {
+    switch (type) {
+      case TYPE_CHAT_PROFILE:
+        return chatPhoto != null && (isFullPhoto || Td.getSenderId(sourceSender) != 0);
+      case TYPE_USER_PROFILE:
+        return (chatPhoto != null && isFullPhoto) || Td.getSenderUserId(sourceSender) != 0;
+    }
+    return false;
+  }
+
+  public void requestAvatar (AvatarReceiver avatarReceiver, boolean fullSize) {
+    switch (type) {
+      case TYPE_CHAT_PROFILE:
+      case TYPE_USER_PROFILE: {
+        @AvatarReceiver.Options int options = AvatarReceiver.Options.FORCE_ANIMATION | BitwiseUtils.optional(AvatarReceiver.Options.FULL_SIZE, fullSize);
+        if (chatPhoto != null && isFullPhoto) {
+          avatarReceiver.requestSpecific(tdlib, new AvatarReceiver.FullChatPhoto(chatPhoto, Td.getSenderId(sourceSender)), options);
+        } else {
+          avatarReceiver.requestMessageSender(tdlib, sourceSender, options | AvatarReceiver.Options.NO_UPDATES);
+        }
+        break;
+      }
+      default: {
+        avatarReceiver.clear();
+        break;
+      }
+    }
+  }
+
   public boolean isGif () {
     switch (type) {
       case TYPE_GIF:
@@ -981,6 +1343,14 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
       }
     }
     return false;
+  }
+
+  public boolean canSeekVideo () {
+    return isVideo();
+  }
+
+  public boolean isVideoOrGif () {
+    return isVideo() || isGif();
   }
 
   public boolean isVideo () {
@@ -994,6 +1364,10 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
       }
     }
     return false;
+  }
+
+  public boolean mayBeTransparent () {
+    return sourceDocument != null && TGMimeType.isTransparentImageMimeType(sourceDocument.mimeType);
   }
 
   public boolean isRemoteVideo () {
@@ -1103,6 +1477,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   public <T extends View & DrawableProvider> void drawComponents (T view, Canvas c, int left, int top, int right, int bottom) {
     if (fileProgress != null) {
       fileProgress.setBounds(left, top, right, bottom);
+      if (hasSpoiler) {
+        fileProgress.setRequestedAlpha(0f, 1f);
+      }
       fileProgress.draw(view, c);
     }
   }
@@ -1158,9 +1535,19 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return secretPhoto != null;
   }
 
-  public void viewSecretContent () {
-    if (secretPhoto != null) {
-      secretPhoto.readContent();
+  public boolean isViewOnce () {
+    return msg != null && msg.selfDestructType != null && msg.selfDestructType.getConstructor() == TdApi.MessageSelfDestructTypeImmediately.CONSTRUCTOR;
+  }
+
+  public void viewContent (boolean isClosed) {
+    if (isClosed) {
+      if (isViewOnce()) {
+        tdlib.send(new TdApi.OpenMessageContent(msg.chatId, msg.id), tdlib.typedOkHandler());
+      }
+    } else {
+      if (secretPhoto != null) {
+        secretPhoto.readContent();
+      }
     }
   }
 
@@ -1203,6 +1590,10 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return sourceVideo;
   }
 
+  public TdApi.Document getSourceDocument () {
+    return sourceDocument;
+  }
+
   // Files-related stuff
 
   public void download (boolean force) {
@@ -1212,6 +1603,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
           break;
         }
         default: {
+          if (isVideoOrGif()) {
+            return;
+          }
           if (sourceChatId != 0 && !force) {
             if (!TD.isFileLoaded(targetFile)) {
               fileProgress.downloadAutomatically(sourceChatId);
@@ -1241,6 +1635,10 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
 
   public @Nullable ImageFile getPreviewImageFile () {
     return previewImageFile;
+  }
+
+  public @Nullable ImageFile getBlurredPreviewImageFile () {
+    return blurredPreviewImageFile;
   }
 
   public TdApi.File getTargetFile () {
@@ -1301,9 +1699,14 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return false;
   }
 
+  private TdApi.MessageProperties lastProperties;
+
   public boolean canBeShared () {
-    if (msg != null)
-      return msg.canBeForwarded;
+    if (msg != null) {
+      TdApi.MessageProperties properties = lastProperties != null ? lastProperties : tdlib.getMessagePropertiesSync(msg);
+      lastProperties = properties;
+      return properties.canBeForwarded;
+    }
     return getShareFile() != null;
   }
 
@@ -1339,23 +1742,36 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return null;
   }
 
-  public TdApi.InputMessageContent createShareContent (TdApi.FormattedText caption) {
+  public TdApi.InputMessageContent createShareContent () {
+    return createShareContent(null, false);
+  }
+
+  public TdApi.InputMessageContent createShareContent (TdApi.FormattedText caption, boolean showCaptionAboveMedia) {
     TdApi.InputFile file;
     if (type == TYPE_CHAT_PROFILE || type == TYPE_USER_PROFILE || (sourceChatId != 0 && ChatId.isSecret(sourceChatId))) {
       file = TD.createFileCopy(targetFile);
+    } else if (type == TYPE_GALLERY_PHOTO) {
+      file = PhotoGenerationInfo.newFile(sourceGalleryFile);
     } else {
       file = new TdApi.InputFileId(targetFile.id);
     }
     switch (type) {
       case TYPE_CHAT_PROFILE:
       case TYPE_USER_PROFILE:
-        return new TdApi.InputMessagePhoto(file, null, null, 640, 640, caption, 0);
+        if (isAnimatedAvatar()) {
+          TdApi.AnimatedChatPhoto targetFile = chatPhoto.animation != null ? chatPhoto.animation : chatPhoto.smallAnimation;
+          if (targetFile != null) {
+            return new TdApi.InputMessageAnimation(file, null, null, 3, targetFile.length, targetFile.length, caption, showCaptionAboveMedia, false);
+          }
+        }
+        return new TdApi.InputMessagePhoto(file, null, null, 640, 640, caption, showCaptionAboveMedia, null, false);
       case TYPE_PHOTO:
-        return new TdApi.InputMessagePhoto(file, null, null, width, height, caption, 0);
+      case TYPE_GALLERY_PHOTO:
+        return new TdApi.InputMessagePhoto(file, null, null, width, height, caption, showCaptionAboveMedia, null, type == TYPE_GALLERY_PHOTO && hasSpoiler);
       case TYPE_VIDEO:
-        return new TdApi.InputMessageVideo(file, null, null, sourceVideo.duration, sourceVideo.width, sourceVideo.height, sourceVideo.supportsStreaming, caption, 0);
+        return new TdApi.InputMessageVideo(file, null, null, 0, null, sourceVideo.duration, sourceVideo.width, sourceVideo.height, sourceVideo.supportsStreaming, caption, showCaptionAboveMedia, null, false);
       case TYPE_GIF:
-        return new TdApi.InputMessageAnimation(file, null, null, sourceAnimation.duration, sourceAnimation.width, sourceAnimation.height, caption);
+        return new TdApi.InputMessageAnimation(file, null, null, sourceAnimation.duration, sourceAnimation.width, sourceAnimation.height, caption, showCaptionAboveMedia, false);
     }
     return null;
   }
@@ -1365,44 +1781,47 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   }
 
   @Override
-  public void invalidateContent () {
+  public boolean invalidateContent (Object cause) {
+    int successCount = 0;
     if (currentViews != null) {
       ReferenceList<View> views = currentViews.getViewsList();
       for (View view : views) {
         if (view instanceof MediaSmallView) {
           ((MediaSmallView) view).invalidateContent(this);
+          successCount++;
         } else if (view.getParent() instanceof MediaCellView) {
           ((MediaCellView) view.getParent()).invalidateContent(this);
+          successCount++;
         }
       }
     }
     if (thumbViewHolder != null) {
       ReferenceList<View> views = thumbViewHolder.getViewsList();
       for (View view : views) {
-        if (view instanceof MultipleViewProvider.InvalidateContentProvider) {
-          ((MultipleViewProvider.InvalidateContentProvider) view).invalidateContent();
+        if (view instanceof InvalidateContentProvider) {
+          ((InvalidateContentProvider) view).invalidateContent(cause);
+          successCount++;
         }
       }
     }
+    return successCount > 0;
   }
 
   // Image-related stuff
 
-  public boolean setDimensions (int width, int height) {
-    boolean rotated;
-    if (sourceGalleryFile != null) {
-      rotated = U.isRotated(sourceGalleryFile.getRotation());
-    } else if (targetImage instanceof ImageVideoThumbFile) {
-      rotated = U.isRotated(((ImageVideoThumbFile) targetImage).getVideoRotation());
-    } else {
-      rotated = false;
-    }
+  public boolean setDimensions (int width, int height, int unappliedRotationDegrees) {
+    boolean rotated = U.isRotated(unappliedRotationDegrees);
     if (rotated) {
       int temp = width;
       width = height;
       height = temp;
     }
     if (this.width != width || this.height != height) {
+      Log.i("videoSizeChanged: %dx%d -> %dx%d (rotation: %d)",
+        this.width, this.height,
+        width, height,
+        unappliedRotationDegrees
+      );
       this.width = width;
       this.height = height;
       // TODO
@@ -1412,8 +1831,16 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
   }
 
   public int getWidth () {
-    if (sourceGalleryFile != null && sourceGalleryFile.getCropState() != null) {
-      CropState cropState = sourceGalleryFile.getCropState();
+    return getWidth(true);
+  }
+
+  public int getHeight () {
+    return getHeight(true);
+  }
+
+  public int getWidth (boolean allowCrop) {
+    CropState cropState = getCropState();
+    if (allowCrop && cropState != null) {
       if (U.isRotated(cropState.getRotateBy())) {
         return (int) (height * cropState.getRegionWidth());
       } else {
@@ -1423,9 +1850,9 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
     return width;
   }
 
-  public int getHeight () {
-    if (sourceGalleryFile != null && sourceGalleryFile.getCropState() != null) {
-      CropState cropState = sourceGalleryFile.getCropState();
+  public int getHeight (boolean allowCrop) {
+    CropState cropState = getCropState();
+    if (allowCrop && cropState != null) {
       if (U.isRotated(cropState.getRotateBy())) {
         return (int) (width * cropState.getRegionWidth());
       } else {
@@ -1437,5 +1864,29 @@ public class MediaItem implements MessageSourceProvider, MultipleViewProvider.In
 
   public int getCropRotateBy () {
     return sourceGalleryFile != null && sourceGalleryFile.getCropState() != null ? sourceGalleryFile.getCropState().getRotateBy() : 0;
+  }
+
+  public void setHasSpoiler (boolean hasSpoiler) {
+    if (this.hasSpoiler != hasSpoiler) {
+      this.hasSpoiler = hasSpoiler;
+      // TODO need change any imageFile?
+    }
+  }
+
+  public boolean hasSpoiler () {
+    return hasSpoiler;
+  }
+
+  public void setShowCaptionAboveMedia (boolean showCaptionAboveMedia) {
+    this.showCaptionAboveMedia = showCaptionAboveMedia;
+  }
+
+  public boolean showCaptionAboveMedia () {
+    return showCaptionAboveMedia;
+  }
+
+  private void copyOptions (MediaItem from) {
+    setShowCaptionAboveMedia(from.showCaptionAboveMedia);
+    setHasSpoiler(from.hasSpoiler);
   }
 }

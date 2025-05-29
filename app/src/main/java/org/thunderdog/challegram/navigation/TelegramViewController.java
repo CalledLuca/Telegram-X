@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.attach.CustomItemAnimator;
 import org.thunderdog.challegram.component.dialogs.SearchManager;
@@ -39,7 +39,9 @@ import org.thunderdog.challegram.data.TGFoundChat;
 import org.thunderdog.challegram.data.TGFoundMessage;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibMessageViewer;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
@@ -68,8 +70,10 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
   // Search chats
 
   private CustomRecyclerView chatSearchView;
+  private TdlibMessageViewer.Viewport chatSearchViewport;
   private SettingsAdapter chatSearchAdapter;
   private SearchManager chatSearchManager;
+  private boolean chatSearchDisallowScreenshots;
 
   /**
    * @return true, if event is consumed. False, if chat should be handled with default action (open)
@@ -112,6 +116,8 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
 
   protected void modifyFoundChat (TGFoundChat chat) { }
 
+  protected void modifyFoundChatView (ListItem item, int position, BetterChatView chatView) { }
+
   protected boolean needChatSearchManagerPreparation () {
     // Disable if it's not needed
     return true;
@@ -120,7 +126,7 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
   private static final boolean DEBUG_CHATS_SEARCH_ADAPTER = false;
 
   private void removeSuggestedChat (final TGFoundChat chat) {
-    showOptions(Lang.getStringBold(R.string.ChatHintsDelete, chat.getTitle()), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[]{OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_delete_sweep_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+    showOptions(Lang.getStringBold(R.string.ChatHintsDelete, chat.getTitle()), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[]{OptionColor.RED, OptionColor.NORMAL}, new int[]{R.drawable.baseline_delete_sweep_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
       if (id == R.id.btn_delete) {
         chatSearchManager.removeTopChat(chat.getId());
       }
@@ -129,7 +135,7 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
   }
 
   private void removeRecentChat (final TGFoundChat chat) {
-    showOptions(Lang.getStringBold(R.string.DeleteXFromRecents, chat.getTitle()), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[]{OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+    showOptions(Lang.getStringBold(R.string.DeleteXFromRecents, chat.getTitle()), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[]{OptionColor.RED, OptionColor.NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
       if (id == R.id.btn_delete) {
         chatSearchManager.removeRecentlyFoundChat(chat);
       }
@@ -139,36 +145,64 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
 
   protected final CustomRecyclerView generateChatSearchView (@Nullable ViewGroup parent) {
     final boolean noChatSearch = (getChatSearchFlags() & SearchManager.FLAG_NO_CHATS) != 0;
+    chatSearchViewport = tdlib.messageViewer().createViewport(new TdApi.MessageSourceSearch(), this);
+    chatSearchViewport.addIgnoreLock(() -> !this.isSearchContentVisible);
     chatSearchView = (CustomRecyclerView) Views.inflate(context(), R.layout.recycler_custom, parent);
     Views.setScrollBarPosition(chatSearchView);
+    tdlib.ui().attachViewportToRecyclerView(chatSearchViewport, chatSearchView);
     chatSearchView.addOnScrollListener(new RecyclerView.OnScrollListener() {
       @Override
-      public void onScrollStateChanged (RecyclerView recyclerView, int newState) {
+      public void onScrollStateChanged (@NonNull RecyclerView recyclerView, int newState) {
         if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
           hideSoftwareKeyboard();
         }
       }
 
+      private int firstVisiblePosition = -1, lastVisiblePosition = -1;
+
       @Override
-      public void onScrolled (RecyclerView recyclerView, int dx, int dy) {
+      public void onScrolled (@NonNull RecyclerView recyclerView, int dx, int dy) {
         if (dy != 0) {
           /*
            * (((LinearLayoutManager) recyclerView.getLayoutManager()).findFirstVisibleItemPosition() > 0) || ((LinearLayoutManager) recyclerView.getLayoutManager()).findLastVisibleItemPosition() < recyclerView.getAdapter().getItemCount() - 1
            * */
           hideSoftwareKeyboard();
         }
+        int first = ((LinearLayoutManager) recyclerView.getLayoutManager()).findFirstVisibleItemPosition();
         int last = ((LinearLayoutManager) recyclerView.getLayoutManager()).findLastVisibleItemPosition();
+        if (this.firstVisiblePosition != first || this.lastVisiblePosition != last) {
+          this.firstVisiblePosition = first;
+          this.lastVisiblePosition = last;
+
+          boolean shouldDisallowScreenshots = false;
+          for (int i = first; i <= last; i++) {
+            ListItem item = chatSearchAdapter.getItem(i);
+            if (item != null && item.getData() instanceof TGFoundMessage) {
+              TdApi.Message message = ((TGFoundMessage) item.getData()).getMessage();
+              if (!message.canBeSaved) {
+                shouldDisallowScreenshots = true;
+                break;
+              }
+            }
+          }
+          if (chatSearchDisallowScreenshots != shouldDisallowScreenshots) {
+            chatSearchDisallowScreenshots = shouldDisallowScreenshots;
+            context().checkDisallowScreenshots();
+          }
+        }
         if (last + 5 >= chatSearchAdapter.getItems().size()) {
           chatSearchManager.loadMoreMessages();
         }
       }
     });
     chatSearchView.setBackgroundColor(Theme.backgroundColor());
-    addThemeBackgroundColorListener(chatSearchView, R.id.theme_color_background);
+    addThemeBackgroundColorListener(chatSearchView, ColorId.background);
     chatSearchView.setLayoutManager(new LinearLayoutManager(context(), RecyclerView.VERTICAL, false));
     if (parent != null) {
       chatSearchView.setAlpha(0f);
       chatSearchView.setScrollDisabled(true);
+    } else {
+      isSearchContentVisible = true;
     }
     chatSearchView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -187,55 +221,49 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
         context.setExcludeHeader(true);
       }
 
-      switch (item.getId()) {
-        case R.id.search_chat_local:
-        case R.id.search_chat_top: {
-          if (Config.CALL_FROM_PREVIEW && canInteractWithFoundChat && tdlib.cache().userGeneral(chat.getUserId())) {
-            ids.append(R.id.btn_phone_call);
-            strings.append(R.string.Call);
-            icons.append(R.drawable.baseline_call_24);
-          }
-          boolean chatAvailable = tdlib.chatAvailable(chat.getChat());
-          if (chatAvailable) {
-            ids.append(R.id.btn_notifications);
-            boolean hasNotifications = tdlib.chatNotificationsEnabled(chat.getId());
-            strings.append(hasNotifications ? R.string.Mute : R.string.Unmute);
-            icons.append(hasNotifications ? R.drawable.baseline_notifications_off_24 : R.drawable.baseline_notifications_24);
-            if (canInteractWithFoundChat) {
-              if (chat.getList() != null) {
-                boolean isPinned = tdlib.chatPinned(chat.getList(), chat.getId());
-                ids.append(R.id.btn_pinUnpinChat);
-                strings.append(isPinned ? R.string.Unpin : R.string.Pin);
-                icons.append(isPinned ? R.drawable.deproko_baseline_pin_undo_24 : R.drawable.deproko_baseline_pin_24);
-                if (tdlib.canArchiveChat(chat.getList(), chat.getChat())) {
-                  boolean isArchived = tdlib.chatArchived(chat.getId());
-                  ids.append(R.id.btn_archiveUnarchiveChat);
-                  strings.append(isArchived ? R.string.Unarchive : R.string.Archive);
-                  icons.append(isArchived ? R.drawable.baseline_unarchive_24 : R.drawable.baseline_archive_24);
-                }
-              }
-              boolean canRead = tdlib.canMarkAsRead(chat.getChat());
-              ids.append(canRead ? R.id.btn_markChatAsRead : R.id.btn_markChatAsUnread);
-              strings.append(canRead ? R.string.MarkAsRead : R.string.MarkAsUnread);
-              icons.append(canRead ? Config.ICON_MARK_AS_READ : Config.ICON_MARK_AS_UNREAD);
-              if (chat.hasHighlight()) {
-                ids.append(R.id.btn_removeChatFromListOrClearHistory);
-                strings.append(R.string.Delete);
-                icons.append(R.drawable.baseline_delete_24);
+      final int itemId = item.getId();
+      if (itemId == R.id.search_chat_local || itemId == R.id.search_chat_top) {
+        if (Config.CALL_FROM_PREVIEW && canInteractWithFoundChat && tdlib.cache().userGeneral(chat.getUserId())) {
+          ids.append(R.id.btn_phone_call);
+          strings.append(R.string.Call);
+          icons.append(R.drawable.baseline_call_24);
+        }
+        boolean chatAvailable = tdlib.chatAvailable(chat.getChat());
+        if (chatAvailable) {
+          ids.append(R.id.btn_notifications);
+          boolean hasNotifications = tdlib.chatNotificationsEnabled(chat.getId());
+          strings.append(hasNotifications ? R.string.Mute : R.string.Unmute);
+          icons.append(hasNotifications ? R.drawable.baseline_notifications_off_24 : R.drawable.baseline_notifications_24);
+          if (canInteractWithFoundChat) {
+            if (chat.getList() != null) {
+              boolean isPinned = tdlib.chatPinned(chat.getList(), chat.getId());
+              ids.append(R.id.btn_pinUnpinChat);
+              strings.append(isPinned ? R.string.Unpin : R.string.Pin);
+              icons.append(isPinned ? R.drawable.deproko_baseline_pin_undo_24 : R.drawable.deproko_baseline_pin_24);
+              if (tdlib.canArchiveOrUnarchiveChat(chat.getChat())) {
+                boolean isArchived = tdlib.chatArchived(chat.getId());
+                ids.append(R.id.btn_archiveUnarchiveChat);
+                strings.append(isArchived ? R.string.Unarchive : R.string.Archive);
+                icons.append(isArchived ? R.drawable.baseline_unarchive_24 : R.drawable.baseline_archive_24);
               }
             }
+            boolean canRead = tdlib.canMarkAsRead(chat.getChat());
+            ids.append(canRead ? R.id.btn_markChatAsRead : R.id.btn_markChatAsUnread);
+            strings.append(canRead ? R.string.MarkAsRead : R.string.MarkAsUnread);
+            icons.append(canRead ? Config.ICON_MARK_AS_READ : Config.ICON_MARK_AS_UNREAD);
+            if (chat.hasHighlight()) {
+              ids.append(R.id.btn_removeChatFromListOrClearHistory);
+              strings.append(R.string.Delete);
+              icons.append(R.drawable.baseline_delete_24);
+            }
           }
-          if (!chat.hasHighlight()) {
-            ids.append(R.id.btn_delete);
-            strings.append(R.string.Remove);
-            icons.append(R.drawable.baseline_delete_sweep_24);
-          }
-          break;
         }
-        case R.id.search_chat_global: {
-          // Nothing?
-          break;
+        if (!chat.hasHighlight()) {
+          ids.append(R.id.btn_delete);
+          strings.append(R.string.Remove);
+          icons.append(R.drawable.baseline_delete_sweep_24);
         }
+      } else if (itemId == R.id.search_chat_global) {// Nothing?
       }
 
       if (canSelectFoundChat(chat)) {
@@ -247,37 +275,18 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
       return new ForceTouchView.ActionListener() {
         @Override
         public void onForceTouchAction (ForceTouchView.ForceTouchContext context, int actionId, Object arg) {
-          switch (actionId) {
-            case R.id.btn_phone_call: {
-              tdlib.context().calls().makeCallDelayed(TelegramViewController.this, chat.getUserId(), null, true);
-              break;
-            }
-            case R.id.btn_pinUnpinChat:
-            case R.id.btn_archiveUnarchiveChat:
-            case R.id.btn_notifications:
-            case R.id.btn_markChatAsRead:
-            case R.id.btn_markChatAsUnread:
-            case R.id.btn_removeChatFromListOrClearHistory:
-            case R.id.btn_removePsaChatFromList: {
-              tdlib.ui().processChatAction(TelegramViewController.this, chat.getList(), chat.getChatId(), chat.getMessageThread(), actionId, null);
-              break;
-            }
-            case R.id.btn_selectChat: {
-              onFoundChatClick(v, chat);
-              break;
-            }
-            case R.id.btn_delete: {
-              switch (item.getId()) {
-                case R.id.search_chat_top: {
-                  removeSuggestedChat(chat);
-                  break;
-                }
-                case R.id.search_chat_local: {
-                  removeRecentChat(chat);
-                  break;
-                }
-              }
-              break;
+          if (actionId == R.id.btn_phone_call) {
+            tdlib.context().calls().makeCallDelayed(TelegramViewController.this, chat.getUserId(), null, true);
+          } else if (actionId == R.id.btn_pinUnpinChat || actionId == R.id.btn_archiveUnarchiveChat || actionId == R.id.btn_notifications || actionId == R.id.btn_markChatAsRead || actionId == R.id.btn_markChatAsUnread || actionId == R.id.btn_removeChatFromListOrClearHistory || actionId == R.id.btn_removePsaChatFromList) {
+            tdlib.ui().processChatAction(TelegramViewController.this, chat.getList(), chat.getChatId(), chat.getMessageThread(), new TdApi.MessageSourceSearch(), actionId, null);
+          } else if (actionId == R.id.btn_selectChat) {
+            onFoundChatClick(v, chat);
+          } else if (actionId == R.id.btn_delete) {
+            final int itemId = item.getId();
+            if (itemId == R.id.search_chat_top) {
+              removeSuggestedChat(chat);
+            } else if (itemId == R.id.search_chat_local) {
+              removeRecentChat(chat);
             }
           }
         }
@@ -291,13 +300,11 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
 
     final SettingsAdapter topChatsAdapter = new SettingsAdapter(this, v -> {
       ListItem item = (ListItem) v.getTag();
-      switch (item.getId()) {
-        case R.id.search_chat_top: {
-          final TGFoundChat chat = (TGFoundChat) item.getData();
-          if (chat.getId() != 0 && !onFoundChatClick(v, chat)) {
-            tdlib.ui().openChat(TelegramViewController.this, chat.getId(), null);
-          }
-          break;
+      final int itemId = item.getId();
+      if (itemId == R.id.search_chat_top) {
+        final TGFoundChat chat = (TGFoundChat) item.getData();
+        if (chat.getId() != 0 && !onFoundChatClick(v, chat)) {
+          tdlib.ui().openChat(TelegramViewController.this, chat.getId(), null);
         }
       }
     }, this) {
@@ -309,71 +316,64 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
     };
     topChatsAdapter.setOnLongClickListener(v -> {
       final ListItem item = (ListItem) v.getTag();
-      switch (item.getId()) {
-        case R.id.search_chat_top: {
-          final TGFoundChat chat = (TGFoundChat) item.getData();
-          removeSuggestedChat(chat);
-          return true;
-        }
+      int itemId = item.getId();
+      if (itemId == R.id.search_chat_top) {
+        final TGFoundChat chat = (TGFoundChat) item.getData();
+        removeSuggestedChat(chat);
+        return true;
       }
       return false;
     });
 
     chatSearchAdapter = new SettingsAdapter(this, v -> {
       ListItem listItem = (ListItem) v.getTag();
-      switch (listItem.getId()) {
-        case R.id.search_section_local: {
-          if (!chatSearchManager.areLocalChatsRecent()) {
-            return;
-          }
-          showOptions(Lang.getString(R.string.ClearRecentsHint), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Clear), Lang.getString(R.string.Cancel)}, new int[]{OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
-            if (id == R.id.btn_delete) {
-              chatSearchManager.clearRecentlyFoundChats();
-            }
-            return true;
-          });
-          break;
+      int listItemId = listItem.getId();
+      if (listItemId == R.id.search_section_local) {
+        if (!chatSearchManager.areLocalChatsRecent()) {
+          return;
         }
-        case R.id.search_chat_local:
-        case R.id.search_chat_global: {
-          final TGFoundChat chat = (TGFoundChat) listItem.getData();
-          if (listItem.getId() == R.id.search_chat_global) {
-            preventLeavingSearchMode();
+        showOptions(Lang.getString(R.string.ClearRecentsHint), new int[] {R.id.btn_delete, R.id.btn_cancel}, new String[] {Lang.getString(R.string.Clear), Lang.getString(R.string.Cancel)}, new int[] {OptionColor.RED, OptionColor.NORMAL}, new int[] {R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+          if (id == R.id.btn_delete) {
+            chatSearchManager.clearRecentlyFoundChats();
           }
-          if (chat.getId() != 0) {
+          return true;
+        });
+      } else if (listItemId == R.id.search_chat_local || listItemId == R.id.search_chat_global) {
+        final TGFoundChat chat = (TGFoundChat) listItem.getData();
+        if (listItem.getId() == R.id.search_chat_global) {
+          preventLeavingSearchMode();
+        }
+        if (chat.getId() != 0) {
+          chatSearchManager.addRecentlyFoundChat(chat);
+          if (!onFoundChatClick(v, chat)) {
+            tdlib.ui().openChat(TelegramViewController.this, chat.getId(), null);
+          }
+        } else if (chat.getUserId() != 0) {
+          tdlib.ui().openPrivateChat(TelegramViewController.this, chat.getUserId(), new TdlibUi.ChatOpenParameters().noOpen().after(createdChatId -> {
+            chat.setCreatedChatId(createdChatId);
             chatSearchManager.addRecentlyFoundChat(chat);
             if (!onFoundChatClick(v, chat)) {
-              tdlib.ui().openChat(TelegramViewController.this, chat.getId(), null);
+              tdlib.ui().openChat(TelegramViewController.this, createdChatId, null);
             }
-          } else if (chat.getUserId() != 0) {
-            tdlib.ui().openPrivateChat(TelegramViewController.this, chat.getUserId(), new TdlibUi.ChatOpenParameters().noOpen().after(createdChatId -> {
-              chat.setCreatedChatId(createdChatId);
-              chatSearchManager.addRecentlyFoundChat(chat);
-              if (!onFoundChatClick(v, chat)) {
-                tdlib.ui().openChat(TelegramViewController.this, createdChatId, null);
-              }
-            }));
-          }
-          break;
+          }));
         }
-        case R.id.search_message: {
-          TGFoundMessage message = (TGFoundMessage) listItem.getData();
-          TdApi.Message rawMessage = message.getMessage();
-          preventLeavingSearchMode();
-          tdlib.ui().openChat(TelegramViewController.this, rawMessage.chatId, new TdlibUi.ChatOpenParameters().highlightMessage(rawMessage).keepStack());
-          break;
-        }
+      } else if (listItemId == R.id.search_message) {
+        TGFoundMessage message = (TGFoundMessage) listItem.getData();
+        TdApi.Message rawMessage = message.getMessage();
+        preventLeavingSearchMode();
+        String query = getLastSearchInput();
+        tdlib.ui().openChat(TelegramViewController.this, rawMessage.chatId, new TdlibUi.ChatOpenParameters().foundMessage(query, rawMessage).keepStack());
       }
     }, this) {
       @Override
-      public void onEmojiPartLoaded () {
+      public void onEmojiUpdated (boolean isPackSwitch) {
         for (RecyclerView parentView : parentViews) {
           LinearLayoutManager manager = (LinearLayoutManager) parentView.getLayoutManager();
           final int first = manager.findFirstVisibleItemPosition();
           final int last = manager.findLastVisibleItemPosition();
           for (int i = first; i <= last; i++) {
             View view = manager.findViewByPosition(i);
-            if (view != null && view instanceof BetterChatView && ((BetterChatView) view).hasComplexText()) {
+            if (view instanceof BetterChatView) {
               view.invalidate();
             }
           }
@@ -388,13 +388,11 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
 
       @Override
       protected void setRecyclerViewData(ListItem item, RecyclerView recyclerView, boolean isInitialization) {
-        switch (item.getId()) {
-          case R.id.search_top: {
-            if (recyclerView.getAdapter() != topChatsAdapter) {
-              recyclerView.setItemAnimator(new CustomItemAnimator(AnimatorUtils.DECELERATE_INTERPOLATOR, 180l));
-              recyclerView.setAdapter(topChatsAdapter);
-            }
-            break;
+        int itemId = item.getId();
+        if (itemId == R.id.search_top) {
+          if (recyclerView.getAdapter() != topChatsAdapter) {
+            recyclerView.setItemAnimator(new CustomItemAnimator(AnimatorUtils.DECELERATE_INTERPOLATOR, 180l));
+            recyclerView.setAdapter(topChatsAdapter);
           }
         }
       }
@@ -402,17 +400,13 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
       @Override
       protected void setChatData (ListItem item, int position, BetterChatView chatView) {
         chatView.setPreviewActionListProvider(previewProvider);
-        switch (item.getId()) {
-          case R.id.search_chat_local:
-          case R.id.search_chat_global: {
-            chatView.setChat((TGFoundChat) item.getData());
-            break;
-          }
-          case R.id.search_message: {
-            chatView.setMessage((TGFoundMessage) item.getData());
-            break;
-          }
+        int itemId = item.getId();
+        if (itemId == R.id.search_chat_local || itemId == R.id.search_chat_global) {
+          chatView.setChat((TGFoundChat) item.getData());
+        } else if (itemId == R.id.search_message) {
+          chatView.setMessage((TGFoundMessage) item.getData());
         }
+        TelegramViewController.this.modifyFoundChatView(item, position, chatView);
       }
 
       @Override
@@ -426,21 +420,20 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
     };
     TGLegacyManager.instance().addEmojiListener(chatSearchAdapter);
     chatSearchAdapter.setOnLongClickListener(v -> {
-      switch (v.getId()) {
-        case R.id.search_chat_local: {
-          ListItem item = (ListItem) v.getTag();
-          if (!item.getBoolValue()) {
-            return false;
-          }
-          final TGFoundChat chat = (TGFoundChat) item.getData();
-          showOptions(Lang.getStringBold(R.string.DeleteXFromRecents, chat.getTitle()), new int[]{R.id.btn_delete, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[]{OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
-            if (id == R.id.btn_delete) {
-              chatSearchManager.removeRecentlyFoundChat(chat);
-            }
-            return true;
-          });
-          return true;
+      final int chatViewId = v.getId();
+      if (chatViewId == R.id.search_chat_local) {
+        ListItem item = (ListItem) v.getTag();
+        if (!item.getBoolValue()) {
+          return false;
         }
+        final TGFoundChat chat = (TGFoundChat) item.getData();
+        showOptions(Lang.getStringBold(R.string.DeleteXFromRecents, chat.getTitle()), new int[] {R.id.btn_delete, R.id.btn_cancel}, new String[] {Lang.getString(R.string.Delete), Lang.getString(R.string.Cancel)}, new int[] {OptionColor.RED, OptionColor.NORMAL}, new int[] {R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+          if (id == R.id.btn_delete) {
+            chatSearchManager.removeRecentlyFoundChat(chat);
+          }
+          return true;
+        });
+        return true;
       }
       return false;
     });
@@ -894,12 +887,18 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
     }
   }
 
+  protected final boolean isSearchAntagonistHidden () {
+    return isSearchAntagonistHidden;
+  }
+
   private boolean isSearchContentVisible;
 
   private void setSearchContentVisible (boolean isVisible) {
     if (this.isSearchContentVisible != isVisible) {
       this.isSearchContentVisible = isVisible;
       chatSearchView.setScrollDisabled(!isVisible);
+      chatSearchViewport.notifyLockValueChanged();
+      context().checkDisallowScreenshots();
     }
   }
 
@@ -1085,7 +1084,13 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
 
   @Override
   public int getRootColorId () {
-    return (getSearchTransformFactor() != 0f && chatSearchManager != null) ? R.id.theme_color_background : super.getRootColorId();
+    return (getSearchTransformFactor() != 0f && chatSearchManager != null) ? ColorId.background : super.getRootColorId();
+  }
+
+  @Override
+  @CallSuper
+  public boolean shouldDisallowScreenshots () {
+    return (isSearchContentVisible && chatSearchDisallowScreenshots) || super.shouldDisallowScreenshots();
   }
 
   protected final void invalidateChatSearchResults () {
@@ -1133,6 +1138,9 @@ public abstract class TelegramViewController<T> extends ViewController<T> {
     if (chatSearchManager != null) {
       TGLegacyManager.instance().removeEmojiListener(chatSearchAdapter);
       Views.destroyRecyclerView(chatSearchView);
+    }
+    if (chatSearchViewport != null) {
+      chatSearchViewport.performDestroy();
     }
   }
 }

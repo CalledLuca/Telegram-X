@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,15 +14,17 @@
  */
 package org.thunderdog.challegram.component.chat;
 
-import android.app.AlertDialog;
 import android.content.ClipDescription;
 import android.content.Context;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.text.Editable;
+import android.text.InputFilter;
+import android.text.Layout;
 import android.text.NoCopySpan;
 import android.text.Spannable;
 import android.text.SpannableString;
@@ -31,32 +33,30 @@ import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.text.style.CharacterStyle;
-import android.text.style.ImageSpan;
-import android.text.style.SuggestionSpan;
+import android.text.style.StyleSpan;
 import android.text.style.URLSpan;
-import android.text.style.UnderlineSpan;
 import android.util.TypedValue;
 import android.view.ActionMode;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.LinearLayout;
 
+import androidx.annotation.DrawableRes;
+import androidx.annotation.IdRes;
+import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.core.view.inputmethod.InputConnectionCompat;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
@@ -66,6 +66,8 @@ import org.thunderdog.challegram.component.sticker.TGStickerObj;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Background;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.data.ComplexMediaHolder;
+import org.thunderdog.challegram.data.ComplexMediaItem;
 import org.thunderdog.challegram.data.InlineResult;
 import org.thunderdog.challegram.data.InlineResultCommand;
 import org.thunderdog.challegram.data.InlineResultEmojiSuggestion;
@@ -73,52 +75,84 @@ import org.thunderdog.challegram.data.InlineResultHashtag;
 import org.thunderdog.challegram.data.InlineResultMention;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.data.ThreadInfo;
+import org.thunderdog.challegram.emoji.CustomEmojiSurfaceProvider;
 import org.thunderdog.challegram.emoji.Emoji;
+import org.thunderdog.challegram.emoji.EmojiFilter;
 import org.thunderdog.challegram.emoji.EmojiInfo;
-import org.thunderdog.challegram.emoji.EmojiInputConnection;
 import org.thunderdog.challegram.emoji.EmojiSpan;
+import org.thunderdog.challegram.emoji.EmojiUpdater;
+import org.thunderdog.challegram.emoji.PreserveCustomEmojiFilter;
 import org.thunderdog.challegram.filegen.PhotoGenerationInfo;
+import org.thunderdog.challegram.helper.FoundUrls;
 import org.thunderdog.challegram.helper.InlineSearchContext;
+import org.thunderdog.challegram.helper.editable.EditableHelper;
+import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.navigation.LocaleChanger;
 import org.thunderdog.challegram.navigation.RtlCheckListener;
 import org.thunderdog.challegram.navigation.ViewController;
-import org.thunderdog.challegram.telegram.TGLegacyManager;
+import org.thunderdog.challegram.receiver.RefreshRateLimiter;
+import org.thunderdog.challegram.telegram.RightId;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Fonts;
+import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.PorterDuffPaint;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.ui.MessagesController;
 import org.thunderdog.challegram.unsorted.Settings;
+import org.thunderdog.challegram.util.CharacterStyleFilter;
+import org.thunderdog.challegram.util.ExternalEmojiFilter;
+import org.thunderdog.challegram.util.FinalNewLineFilter;
+import org.thunderdog.challegram.util.TextSelection;
 import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextColorSets;
+import org.thunderdog.challegram.util.text.quotes.QuoteSpan;
 import org.thunderdog.challegram.widget.InputWrapperWrapper;
 import org.thunderdog.challegram.widget.NoClipEditText;
 
 import java.io.InputStream;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
+import me.vkryl.android.AnimatorUtils;
+import me.vkryl.android.animator.BoolAnimator;
+import me.vkryl.android.animator.ListAnimator;
+import me.vkryl.android.animator.ReplaceAnimator;
+import me.vkryl.android.text.CodePointCountFilter;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
-public class InputView extends NoClipEditText implements InlineSearchContext.Callback, InlineResultsWrap.PickListener, Comparator<Object>, Emoji.Callback, RtlCheckListener, TGLegacyManager.EmojiLoadListener, Destroyable {
+public class InputView extends NoClipEditText implements InlineSearchContext.Callback, InlineResultsWrap.PickListener, RtlCheckListener, FinalNewLineFilter.Callback, CustomEmojiSurfaceProvider, Destroyable {
   public static final boolean USE_ANDROID_SELECTION_FIX = true;
-  // private static final int HINT_TEXT_COLOR = 0xffa1aab3;
+  private final TextPaint paint;
 
+  private Text placeholderTitle;
+  private Text placeholderSubTitle;
+  private Drawable placeholderIcon;
+
+  private CharSequence placeholderTitleText;
+  private CharSequence placeholderSubtitleText;
+
+  private final BoolAnimator showPlaceholder = new BoolAnimator(0, (a, b, c, d) -> invalidate(), AnimatorUtils.DECELERATE_INTERPOLATOR, 180L);
+  private final BoolAnimator hasSubPlaceholder = new BoolAnimator(0, (a, b, c, d) -> invalidate(), AnimatorUtils.DECELERATE_INTERPOLATOR, 180L);
+  private final ReplaceAnimator<Text> subtitleReplaceAnimator = new ReplaceAnimator<>(a -> invalidate(), AnimatorUtils.DECELERATE_INTERPOLATOR, 180L);
+
+  // TODO: get rid of chat-related logic inside of InputView
   private @Nullable MessagesController controller;
-
   private boolean ignoreDraft;
-  private TextPaint paint;
 
   private String suffix = "", prefix = "", displaySuffix = "";
-  private int prefixWidth, suffixWidth, suffixLeft/*, suffixTop*/;
-  private final int verticalPadding;
+  private int prefixWidth, suffixWidth;
 
   private final Tdlib tdlib;
   private final InlineSearchContext inlineContext;
@@ -126,7 +160,6 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   public interface InputListener {
     boolean canSearchInline (InputView v);
     void onInputChanged (InputView v, String input);
-
     long provideInlineSearchChatId (InputView v);
     TdApi.Chat provideInlineSearchChat (InputView v);
     long provideInlineSearchChatUserId (InputView v);
@@ -134,641 +167,574 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     void addInlineResults (InputView v, ArrayList<InlineResult<?>> items);
   }
 
-  @Override
-  public final TdApi.FormattedText getOutputText (boolean applyMarkdown) {
-    /*if (lastInputConnection != null) {
-      lastInputConnection.finishComposingText();
-    }*/
-    SpannableStringBuilder text = new SpannableStringBuilder(getText());
-    BaseInputConnection.removeComposingSpans(text);
-    if (USE_LAYOUT_DIRECTION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      if (getLayoutDirection() == LAYOUT_DIRECTION_RTL && getLayout() != null) {
-        SpannableStringBuilder b = new SpannableStringBuilder(text);
-        int startIndex = 0;
-        int endIndex;
-        do {
-          endIndex = StringUtils.indexOf(b, "\n", startIndex);
-          if (endIndex == -1)
-            endIndex = b.length();
-          if (Strings.getTextDirection(b, startIndex, endIndex) == Strings.DIRECTION_NEUTRAL) {
-            b.insert(startIndex, "\u200F");
-            endIndex++;
-          }
-          startIndex = endIndex + 1;
-        } while (endIndex < b.length());
-        text = b;
-      }
-    }
-    TdApi.FormattedText result = new TdApi.FormattedText(text.toString(), TD.toEntities(text, false));
-    if (applyMarkdown) {
-      Td.parseMarkdown(result);
-    }
-    return result;
-  }
-
   private InputListener inputListener;
+  private final RefreshRateLimiter refreshRateLimiter;
+  private final ViewController<?> boundController;
 
-  private boolean isSecret;
-
-  public void setIsSecret (boolean isSecret) {
-    if (this.isSecret != isSecret) {
-      this.isSecret = isSecret;
-      int imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI;
-      if (isSecret) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          imeOptions |= EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
-        } else {
-          imeOptions |= 0x1000000;
-        }
-      }
-      setImeOptions(imeOptions);
-    }
+  public interface SelectionChangeListener {
+    void onInputSelectionExistChanged (InputView v, boolean hasSelection);
+    void onInputSelectionChanged (InputView v, int start, int end);
   }
 
-  private static String parseEmojiCode (String source) {
-    if (StringUtils.isEmpty(source))
-      return null;
+  private SelectionChangeListener selectionChangeListener;
+  private boolean actionModeVisibility = true;
+  private ActionMode currentActionMode;
+  private boolean hasSelection;
 
-    int i;
-
-    // https://abs.twimg.com/emoji/v2/72x72/1f600.png
-    i = source.indexOf("twimg.com/emoji/v2/");
-    if (i != -1) {
-      i = source.lastIndexOf('/');
-      int j = source.lastIndexOf('.');
-      if (j <= i) {
-        j = -1;
-      }
-      if (j != -1) {
-        source = source.substring(i + 1, j);
-      } else {
-        source = source.substring(i + 1);
-      }
-      source = fillZero(source, 8);
-      return Emoji.parseCode(source, "UTF-32BE");
-    }
-
-    // https://m.vk.com/images/emoji/D83DDE0C_2x.png
-    i = source.indexOf("vk.com/images/emoji/");
-    if (i != -1) {
-      i += "vk.com/images/emoji/".length();
-      int sourceEnd = source.length();
-      if (source.endsWith("_2x.png")) {
-        sourceEnd -= "_2x.png".length();
-      } else if (source.endsWith(".png")) {
-        sourceEnd -= ".png".length();
-      } else {
-        sourceEnd = -1;
-      }
-      if (i < sourceEnd) {
-        source = fillZero(source.substring(i, sourceEnd), 8);
-        return Emoji.parseCode(source, "UTF-16");
-      }
-    }
-    // https://static.xx.fbcdn.net/images/emoji.php/v9/ffb/1/24/1f61a.png
-    // do nothing
-
-    return null;
-  }
-
-  private static class EditedSpan implements NoCopySpan { }
-
-  private static String fillZero (String source, int count) {
-    int remaining = count - source.length() % count;
-    if (remaining != 0) {
-      StringBuilder b = new StringBuilder(source.length() + remaining);
-      for (int j = 0; j < remaining; j++) {
-        b.append('0');
-      }
-      b.append(source);
-      return b.toString();
-    }
-    return source;
-  }
-
-  private static final boolean USE_LAYOUT_DIRECTION = false;
-
-  public static boolean isSupportedSpan (Spanned spanned, CharacterStyle span) {
-    if (span instanceof NoCopySpan || span instanceof EmojiSpan || span instanceof UnderlineSpan)
-      return true;
-    if (TD.canConvertToEntityType(span)) {
-      if (span instanceof URLSpan) {
-        int start = spanned.getSpanStart(span);
-        int end = spanned.getSpanEnd(span);
-        String text = spanned.subSequence(start, end).toString();
-        String url = ((URLSpan) span).getURL();
-        if (text.equals(url)) // <a href="example.com">example.com</a>
-          return false;
-        if (Strings.isValidLink(text)) {
-          if (Strings.hostsEqual(url, text))
-            return true;
-          // Hosts are different. Most likely some <a href="https://youtube.com/redirect?v=${real_url}">${real_url}</a>
-          // TODO lookup for this domain in GET arguments? Decision for now: no, because redirects could be like t.co/${id} without real url
-          return false;
-        }
-      }
-      return true;
-    }
-    return false;
-  }
-
-  @Override
-  public boolean onKeyDown (int keyCode, KeyEvent event) {
-    if (keyCode == KeyEvent.KEYCODE_ENTER && qualifiesForKeySend()) {
-      // default: enter -> newline, ctrl+enter -> send
-      // alternative: enter -> send, ctrl+enter -> newline
-
-      boolean needSendByEnter = Settings.instance().needSendByEnter();
-      boolean clearKey = event.hasNoModifiers();
-      boolean ctrlPressed = event.hasModifiers(KeyEvent.META_CTRL_ON); // for example, Alt + Ctrl + Enter should be ignored
-      boolean shouldSend = (ctrlPressed && !needSendByEnter) || (clearKey && needSendByEnter);
-
-      if (shouldSend && controller != null) {
-        controller.pickDateOrProceed(false, null, (forceDisableNotification, schedulingState, disableMarkdown) -> controller.sendText(true, forceDisableNotification, schedulingState));
-        return true;
-      } else {
-        return super.onKeyDown(keyCode, event);
-      }
-    } else {
-      return super.onKeyDown(keyCode, event);
-    }
-  }
-
-  private static boolean shouldRemoveSpan (Spanned spanned, CharacterStyle span) {
-    return !isSupportedSpan(spanned, span) && !(span instanceof SuggestionSpan) && (spanned.getSpanFlags(span) & Spanned.SPAN_COMPOSING) == 0;
-  }
-
-  public InputView (Context context, Tdlib tdlib) {
+  public InputView (Context context, Tdlib tdlib, ViewController<?> boundController) {
     super(context);
     this.tdlib = tdlib;
-    this.inlineContext = new InlineSearchContext(UI.getContext(context), tdlib, this);
+    this.refreshRateLimiter = new RefreshRateLimiter(this, Config.MAX_ANIMATED_EMOJI_REFRESH_RATE);
+    this.mediaHolder = new ComplexMediaHolder<>(this);
+    this.mediaHolder.setUpdateListener((usages, displayMediaKey) ->
+      refreshRateLimiter.invalidate()
+    );
+    this.inlineContext = new InlineSearchContext(UI.getContext(context), tdlib, this, boundController);
+    this.boundController = boundController;
     this.paint = new TextPaint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
     this.paint.setColor(Theme.textPlaceholderColor());
     this.paint.setTypeface(Fonts.getRobotoRegular());
     this.paint.setTextSize(Screen.sp(18f));
     setGravity(Lang.gravity() | Gravity.TOP);
-    if (USE_LAYOUT_DIRECTION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      setLayoutDirection(Lang.rtl() ? LAYOUT_DIRECTION_RTL : LAYOUT_DIRECTION_LTR);
-    }
     setTypeface(Fonts.getRobotoRegular());
     setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f);
-    verticalPadding = Screen.dp(12f);
-    if (Lang.isRtl) {
-      setPadding(Screen.dp(55f), verticalPadding, this.suffixLeft = Screen.dp(60f), verticalPadding);
+    final int verticalPadding = Screen.dp(12f);
+    if (Lang.rtl()) {
+      setPadding(Screen.dp(55f), verticalPadding, Screen.dp(60f), verticalPadding);
     } else {
-      setPadding(this.suffixLeft = Screen.dp(60f), verticalPadding, Screen.dp(55f), verticalPadding);
+      setPadding(Screen.dp(60f), verticalPadding, Screen.dp(55f), verticalPadding);
     }
     setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
     setInputType(getInputType() | EditorInfo.TYPE_TEXT_FLAG_CAP_SENTENCES | EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE);
     setSingleLine(false);
     setMaxLines(8);
     setMinimumHeight(Screen.dp(49f));
-    // setMovementMethod(LinkMovementMethod.getInstance());
-
-    /*setTextIsSelectable(true);
-    setFocusable(true);
-    setFocusableInTouchMode(true);*/
-
     setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     Views.clearCursorDrawable(this);
+    setMaxCodePointCount(0);
     addTextChangedListener(new TextWatcher() {
       @Override
       public void beforeTextChanged (CharSequence s, int start, int count, int after) { }
 
-      private void addEditedSpan (Spannable sp, int start, int end) {
-        int count = end - start;
-        if (count <= 0)
-          return;
-        boolean onlyLetters = true;
-        for (int i = 0; i < count; ) {
-          int codePoint = Character.codePointAt(sp, start + i);
-          if (!(Character.isLetterOrDigit(codePoint) || Character.isWhitespace(codePoint) || Text.needsFill(codePoint))) {
-            onlyLetters = false;
-            break;
-          }
-          int size = Character.charCount(codePoint);
-          i += size;
-        }
-        if (onlyLetters) {
-          CharacterStyle[] spans = sp.getSpans(start, start + count, CharacterStyle.class);
-          boolean hasRudimentarySpans = false;
-          if (spans != null && spans.length > 0) {
-            for (CharacterStyle span : spans) {
-              if (shouldRemoveSpan(sp, span)) {
-                hasRudimentarySpans = true;
-                break;
-              }
-            }
-          }
-          if (!hasRudimentarySpans)
-            return;
-        }
-        sp.setSpan(new EditedSpan(), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-      }
-
       @Override
       public void onTextChanged (CharSequence s, int start, int before, int count) {
-        if (ignoreAnyChanges) {
-          changesText = s;
-          return;
-        }
-        processTextChange(s);
-        if (count > 0 && s instanceof Spannable) {
-          Spannable sp = (Spannable) s;
-          EmojiSpan[] spans = sp.getSpans(start, start + count, EmojiSpan.class);
-          int startIndex = start;
-          if (spans != null && spans.length > 0) {
-            for (EmojiSpan span : spans) {
-              int spanStart = sp.getSpanStart(span);
-              int spanEnd = sp.getSpanEnd(span);
-              if (startIndex < spanStart) {
-                addEditedSpan(sp, startIndex, spanStart);
-              }
-              startIndex = spanEnd;
-            }
-          }
-          int endIndex = start + count;
-          if (startIndex < endIndex) {
-            addEditedSpan(sp, startIndex, endIndex);
-          }
-        }
-      }
-
-      private void handleEmojiChanges (final Editable s) {
-        EditedSpan[] editedRegions = s.getSpans(0, s.length(), EditedSpan.class);
-        if (editedRegions == null || editedRegions.length == 0)
-          return;
-        List<Object> spansToProcess = null;
-
-        pendingSortSpannable = s;
-        for (EditedSpan editedRegion : editedRegions) {
-          int editedRegionStart = s.getSpanStart(editedRegion);
-          int editedRegionEnd = s.getSpanEnd(editedRegion);
-          s.removeSpan(editedRegion);
-
-          if (editedRegionStart == -1 || editedRegionEnd == -1)
-            continue;
-
-          CharacterStyle[] spans = s.getSpans(editedRegionStart, editedRegionEnd, CharacterStyle.class);
-          if (spans != null && spans.length > 0) {
-            for (CharacterStyle span : spans) {
-              if (span instanceof ImageSpan) {
-                int spanStart = s.getSpanStart(span);
-                int spanEnd = s.getSpanEnd(span);
-                EmojiSpan newSpan = Emoji.instance().newSpan(parseEmojiCode(((ImageSpan) span).getSource()), null);
-                if (newSpan != null) {
-                  s.removeSpan(span);
-                  s.setSpan(newSpan, spanStart, spanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                  if (spansToProcess == null)
-                    spansToProcess = new ArrayList<>();
-                  spansToProcess.add(newSpan);
-                  continue;
-                } else if (spanEnd > spanStart) {
-                  if (spansToProcess == null)
-                    spansToProcess = new ArrayList<>();
-                  spansToProcess.add(span);
-                  continue;
-                }
-              }
-              if (shouldRemoveSpan(s, span)) {
-                s.removeSpan(span);
-              }
-            }
-          }
-
-          Emoji.instance().replaceEmoji(s, editedRegionStart, editedRegionEnd, null, InputView.this);
-
-          if (spansToProcess != null && !spansToProcess.isEmpty()) {
-            Collections.sort(spansToProcess, InputView.this);
-            int selectionStart = getSelectionStart();
-            int selectionEnd = getSelectionEnd();
-            for (int i = spansToProcess.size() - 1; i >= 0; i--) {
-              Object span = spansToProcess.get(i);
-              int spanStart = s.getSpanStart(span);
-              int spanEnd = s.getSpanEnd(span);
-              if (spanStart == -1 || spanEnd == -1)
-                continue;
-              int spanLen = spanEnd - spanStart;
-              if (span instanceof EmojiSpan) {
-                String replacement = ((EmojiSpan) span).getEmojiCode().toString();
-                s.replace(spanStart, spanEnd, replacement);
-                int newLen = replacement.length();
-                if (newLen == spanLen) {
-                  continue;
-                }
-                int diff = newLen - spanLen;
-                if (selectionStart >= spanStart)
-                  selectionStart += diff;
-                if (selectionEnd >= spanStart)
-                  selectionEnd += diff;
-              } else {
-                s.delete(spanStart, spanEnd);
-                if (selectionStart >= spanStart)
-                  selectionStart -= spanLen;
-                if (selectionEnd >= spanStart)
-                  selectionEnd -= spanLen;
-              }
-            }
-            if (selectionStart != -1 && selectionEnd != -1) {
-              int len = s.length();
-              if (selectionStart >= selectionEnd) {
-                Views.setSelection(InputView.this, Math.min(selectionStart, len));
-              } else {
-                Views.setSelection(InputView.this, Math.min(selectionStart, len), Math.max(selectionEnd, len));
-              }
-            }
-            spansToProcess.clear();
-          }
-        }
+        processTextChange(s, !isSettingText || settingByUserAction);
       }
 
       @Override
-      public void afterTextChanged (Editable s) {
-        if (ignoreChanges || ignoreAnyChanges) {
-          return;
-        }
-        if (ignoreDraft) {
-          ignoreChanges = true;
-          handleEmojiChanges(s);
-          ignoreChanges = false;
-          ignoreDraft = false;
-        } else if (s.length() > 0) {
-          ignoreChanges = true;
-          pendingSortSpannable = s;
-
-          handleEmojiChanges(s);
-
-          if (controller != null) {
-            controller.updateSendButton(s, true);
-          }
-
-          ignoreChanges = false;
-        } else {
-          if (controller != null) {
-            controller.updateSendButton("", true);
-          }
-        }
-      }
+      public void afterTextChanged (Editable s) { }
     });
 
-    if (Config.USE_CUSTOM_INPUT_STYLING) {
-      setCustomSelectionActionModeCallback(new ActionMode.Callback() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      setCustomInsertionActionModeCallback(new ActionMode.Callback() {
         @Override
-        public boolean onCreateActionMode (ActionMode mode, Menu menu) {
-          MenuInflater inflater = mode.getMenuInflater();
-          if (inflater == null) {
-            return true;
-          }
-          inflater.inflate(R.menu.text, menu);
-          try {
-            for (int i = 0; i < menu.size(); i++) {
-              MenuItem item = menu.getItem(i);
-              int overrideResId;
-              TdApi.TextEntityType type;
-              switch (item.getItemId()) {
-                case R.id.btn_bold: {
-                  overrideResId = R.string.TextFormatBold;
-                  type = new TdApi.TextEntityTypeBold();
-                  break;
-                }
-                case R.id.btn_italic: {
-                  overrideResId = R.string.TextFormatItalic;
-                  type = new TdApi.TextEntityTypeItalic();
-                  break;
-                }
-                case R.id.btn_spoiler: {
-                  overrideResId = R.string.TextFormatSpoiler;
-                  type = new TdApi.TextEntityTypeSpoiler();
-                  break;
-                }
-                case R.id.btn_underline: {
-                  overrideResId = R.string.TextFormatUnderline;
-                  type = new TdApi.TextEntityTypeUnderline();
-                  break;
-                }
-                case R.id.btn_strikethrough: {
-                  overrideResId = R.string.TextFormatStrikethrough;
-                  type = new TdApi.TextEntityTypeStrikethrough();
-                  break;
-                }
-                case R.id.btn_monospace: {
-                  overrideResId = R.string.TextFormatMonospace;
-                  type = new TdApi.TextEntityTypeCode();
-                  break;
-                }
-                case R.id.btn_link: {
-                  overrideResId = R.string.TextFormatLink;
-                  type = null;
-                  break;
-                }
-                default: {
-                  if (BuildConfig.DEBUG) {
-                    Log.i("Menu item: %s %s",  UI.getAppContext().getResources().getResourceName(item.getItemId()), item.getTitle());
-                  }
-                  continue;
-                }
-              }
-              item.setTitle(type != null ? Lang.wrap(Lang.getString(overrideResId), Lang.entityCreator(type)) : Lang.getString(overrideResId));
-            }
-            final int start = getSelectionStart();
-            final int end = getSelectionEnd();
-            final String str = getText().toString();
-            if (Text.needFakeBoldFull(str, start, end)) {
-              menu.removeItem(R.id.btn_monospace);
-            }
-          } catch (Throwable ignored) { }
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            menu.removeItem(android.R.id.shareText);
-          }
+        public boolean onCreateActionMode (ActionMode actionMode, Menu menu) {
+          currentActionMode = actionMode;
           return true;
         }
 
         @Override
-        public boolean onPrepareActionMode (ActionMode mode, Menu menu) {
+        public boolean onPrepareActionMode (ActionMode actionMode, Menu menu) {
+          updateMenuVisibility(menu);
+          return true;
+        }
+
+        @Override
+        public boolean onActionItemClicked (ActionMode actionMode, MenuItem menuItem) {
           return false;
         }
 
         @Override
-        public boolean onActionItemClicked (ActionMode mode, MenuItem item) {
-          return setSpan(item.getItemId());
-        }
-
-        @Override
-        public void onDestroyActionMode (ActionMode mode) {
-
+        public void onDestroyActionMode (ActionMode actionMode) {
+          if (currentActionMode == actionMode) {
+            currentActionMode = null;
+          }
         }
       });
     }
 
-    TGLegacyManager.instance().addEmojiListener(this);
+    setCustomSelectionActionModeCallback(new ActionMode.Callback() {
+      @Override
+      public boolean onCreateActionMode (ActionMode mode, Menu menu) {
+        currentActionMode = mode;
+        if (!Config.USE_CUSTOM_INPUT_STYLING) {
+          return true;
+        }
+
+        MenuInflater inflater = mode.getMenuInflater();
+        if (inflater == null) {
+          return true;
+        }
+        inflater.inflate(R.menu.text, menu);
+        try {
+          for (int i = 0; i < menu.size(); i++) {
+            MenuItem item = menu.getItem(i);
+            final int overrideResId;
+            final TdApi.TextEntityType type;
+            final int itemId = item.getItemId();
+            if (itemId == R.id.btn_plain) {
+              overrideResId = R.string.TextFormatClear;
+              type = null;
+            } else if (itemId == R.id.btn_bold) {
+              overrideResId = R.string.TextFormatBold;
+              type = new TdApi.TextEntityTypeBold();
+            } else if (itemId == R.id.btn_italic) {
+              overrideResId = R.string.TextFormatItalic;
+              type = new TdApi.TextEntityTypeItalic();
+            } else if (itemId == R.id.btn_spoiler) {
+              overrideResId = R.string.TextFormatSpoiler;
+              type = new TdApi.TextEntityTypeSpoiler();
+            } else if (itemId == R.id.btn_underline) {
+              overrideResId = R.string.TextFormatUnderline;
+              type = new TdApi.TextEntityTypeUnderline();
+            } else if (itemId == R.id.btn_strikethrough) {
+              overrideResId = R.string.TextFormatStrikethrough;
+              type = new TdApi.TextEntityTypeStrikethrough();
+            } else if (itemId == R.id.btn_monospace) {
+              overrideResId = R.string.TextFormatMonospace;
+              type = new TdApi.TextEntityTypeCode();
+            } else if (itemId == R.id.btn_link) {
+              overrideResId = R.string.TextFormatLink;
+              type = null;
+            } else if (itemId == R.id.btn_quote) {
+              overrideResId = R.string.TextFormatQuote;
+              type = new TdApi.TextEntityTypeBlockQuote();
+            } else {
+              if (BuildConfig.DEBUG) {
+                Log.i("Menu item: %s %s", UI.getAppContext().getResources().getResourceName(item.getItemId()), item.getTitle());
+              }
+              continue;
+            }
+            item.setTitle(type != null ? Lang.wrap(Lang.getString(overrideResId), Lang.entityCreator(type)) : Lang.getString(overrideResId));
+          }
+        } catch (Throwable ignored) { }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+          menu.removeItem(android.R.id.shareText);
+        }
+        if (!canClearTextFormat()) {
+          menu.removeItem(R.id.btn_plain);
+        }
+        return true;
+      }
+
+      @Override
+      public boolean onPrepareActionMode (ActionMode mode, Menu menu) {
+        updateMenuVisibility(menu);
+        return true;
+      }
+
+      @Override
+      public boolean onActionItemClicked (ActionMode mode, MenuItem item) {
+        return setSpan(item.getItemId());
+      }
+
+      @Override
+      public void onDestroyActionMode (ActionMode mode) {
+        if (currentActionMode == mode) {
+          currentActionMode = null;
+        }
+      }
+    });
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+        ((BaseActivity) getContext()).updateEmojiSuggestionsPosition(false);
+      });
+    }
+
+    showPlaceholder.setValue(true, false);
   }
 
-  @Override
-  public void invalidate () {
-    super.invalidate();
-  }
-
-  @Override
-  public void onEmojiPartLoaded () {
-    Editable editable = getText();
-    if (editable == null || editable.length() == 0)
-      return;
-    EmojiSpan[] spans = editable.getSpans(0, editable.length(), EmojiSpan.class);
-    if (spans == null || spans.length == 0)
-      return;
-    for (EmojiSpan span : spans) {
-      if (span.needRefresh()) {
-        int spanStart = editable.getSpanStart(span);
-        int spanEnd = editable.getSpanEnd(span);
-        editable.removeSpan(span);
-        editable.setSpan(span, spanStart, spanEnd, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        break;
+  private void updateMenuVisibility (Menu menu) {
+    final int menuSize = menu.size();
+    for (int i = 0; i < menuSize; i++) {
+      MenuItem item = menu.getItem(i);
+      if (item != null) {
+        item.setVisible(actionModeVisibility);
       }
     }
+  }
+
+  @Override
+  public EmojiSpan onCreateNewSpan (CharSequence emojiCode, EmojiInfo info, long customEmojiId) {
+    return Emoji.instance().newCustomSpan(emojiCode, info, this, tdlib, customEmojiId);
+  }
+
+  @Override
+  public void onInvalidateSpan (EmojiSpan span, boolean requiresLayoutUpdate) {
+    if (requiresLayoutUpdate) {
+      EmojiUpdater.invalidateEmojiSpan(this, span);
+    }
+    invalidate();
+  }
+
+  private final ComplexMediaHolder<EmojiSpan> mediaHolder;
+
+  @Override
+  public ComplexReceiver provideComplexReceiverForSpan (EmojiSpan span) {
+    return mediaHolder.receiver;
+  }
+
+  @Override
+  public int getDuplicateMediaItemCount (EmojiSpan span, ComplexMediaItem mediaItem) {
+    return mediaHolder.getMediaUsageCount(mediaItem);
+  }
+
+  @Override
+  public long attachToReceivers (EmojiSpan span, ComplexMediaItem mediaItem) {
+    return mediaHolder.attachMediaUsage(mediaItem, span);
+  }
+
+  @Override
+  public void detachFromReceivers (EmojiSpan span, ComplexMediaItem mediaItem, long mediaKey) {
+    mediaHolder.detachMediaUsage(mediaItem, span, mediaKey);
   }
 
   @Override
   public void performDestroy () {
-    TGLegacyManager.instance().removeEmojiListener(this);
+    super.performDestroy();
+    mediaHolder.performDestroy();
   }
 
-  public boolean setSpan (int id) {
-    final int selectionStart = getSelectionStart();
-    final int selectionEnd = getSelectionEnd();
-    if (selectionStart == selectionEnd) {
+  public boolean setSpan (@IdRes int id) {
+    TextSelection selection = getTextSelection();
+    if (selection == null || selection.isEmpty()) {
       return false;
     }
     TdApi.TextEntityType type;
-    switch (id) {
-      case R.id.btn_bold:
-        type = new TdApi.TextEntityTypeBold();
-        break;
-      case R.id.btn_italic:
-        type = new TdApi.TextEntityTypeItalic();
-        break;
-      case R.id.btn_spoiler:
-        type = new TdApi.TextEntityTypeSpoiler();
-        break;
-      case R.id.btn_strikethrough:
-        type = new TdApi.TextEntityTypeStrikethrough();
-        break;
-      case R.id.btn_underline:
-        type = new TdApi.TextEntityTypeUnderline();
-        break;
-      case R.id.btn_monospace:
-        type = new TdApi.TextEntityTypeCode();
-        break;
-      case R.id.btn_link: {
-        URLSpan[] existingSpans = getText().getSpans(selectionStart, selectionEnd, URLSpan.class);
-        URLSpan existingSpan = existingSpans != null && existingSpans.length > 0 ? existingSpans[0] : null;
-        createTextUrl(existingSpan, selectionStart, selectionEnd);
-        return true;
-      }
-      default: {
-        return false;
-      }
+    if (id == R.id.btn_plain) {
+      clearSpans(selection.start, selection.end);
+      return true;
+    } else if (id == R.id.btn_quote) {
+      type = new TdApi.TextEntityTypeBlockQuote();
+    } else if (id == R.id.btn_bold) {
+      type = new TdApi.TextEntityTypeBold();
+    } else if (id == R.id.btn_italic) {
+      type = new TdApi.TextEntityTypeItalic();
+    } else if (id == R.id.btn_spoiler) {
+      type = new TdApi.TextEntityTypeSpoiler();
+    } else if (id == R.id.btn_strikethrough) {
+      type = new TdApi.TextEntityTypeStrikethrough();
+    } else if (id == R.id.btn_underline) {
+      type = new TdApi.TextEntityTypeUnderline();
+    } else if (id == R.id.btn_monospace) {
+      type = new TdApi.TextEntityTypeCode();
+    } else if (id == R.id.btn_link) {
+      URLSpan[] existingSpans = getText().getSpans(selection.start, selection.end, URLSpan.class);
+      URLSpan existingSpan = existingSpans != null && existingSpans.length > 0 ? existingSpans[0] : null;
+      createTextUrl(existingSpan, selection.start, selection.end);
+      return true;
+    } else {
+      return false;
     }
-    setSpan(selectionStart, selectionEnd, type);
+    setSpan(selection.start, selection.end, type);
     return true;
   }
 
-  private void setSpan (int start, int end, TdApi.TextEntityType type) {
-    CharacterStyle span = TD.toSpan(type);
-    if (span == null)
-      return;
-    boolean canBeNested = true;
-    switch (type.getConstructor()) {
-      case TdApi.TextEntityTypePre.CONSTRUCTOR:
-      case TdApi.TextEntityTypePreCode.CONSTRUCTOR:
-      case TdApi.TextEntityTypeCode.CONSTRUCTOR:
-        canBeNested = false;
-        break;
+  public boolean setSpanLink (String link) {
+    TextSelection selection = getTextSelection();
+    if (selection == null || selection.isEmpty()) {
+      return false;
     }
-    boolean addSpan = true;
-    CharacterStyle[] existingSpans = getText().getSpans(start, end, CharacterStyle.class);
-    if (existingSpans != null) {
-      for (CharacterStyle existingSpan : existingSpans) {
-        TdApi.TextEntityType[] existingTypes = TD.toEntityType(existingSpan);
-        if (existingTypes == null || existingTypes.length == 0)
-          continue;
-        for (TdApi.TextEntityType existingType : existingTypes) {
-          if (Td.equalsTo(existingType, type)) {
-            int existingSpanStart = getText().getSpanStart(existingSpan);
-            int existingSpanEnd = getText().getSpanEnd(existingSpan);
-            SpannableStringBuilder sb = new SpannableStringBuilder(getText());
-            sb.removeSpan(existingSpan);
-            // Check start
-            if (existingSpanStart < start) {
-              for (TdApi.TextEntityType copyType : existingTypes) {
-                sb.setSpan(TD.toSpan(copyType), existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-              }
-            }
 
-            // Check end
-            if (existingSpanEnd > end) {
-              for (TdApi.TextEntityType copyType : existingTypes) {
-                sb.setSpan(TD.toSpan(copyType), end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-              }
-            }
+    URLSpan[] existingSpans = getText().getSpans(selection.start, selection.end, URLSpan.class);
+    URLSpan existingSpan = existingSpans != null && existingSpans.length > 0 ? existingSpans[0] : null;
+    createTextUrl(existingSpan, link, selection.start, selection.end);
 
-            setText(SpannableString.valueOf(sb));
-            addSpan = false;
-            break;
-          }
-        }
-      }
+    return true;
+  }
+
+  public void removeSpan (TdApi.TextEntityType type) {
+    TextSelection selection = getTextSelection();
+    if (selection != null && !selection.isEmpty()) {
+      clearSpans(selection.start, selection.end, type);
     }
-    if (addSpan) {
-      if (existingSpans != null && existingSpans.length > 0) {
-        SpannableStringBuilder sb = null;
+  }
 
-        for (CharacterStyle existingSpan : existingSpans) {
-          TdApi.TextEntityType[] existingTypes = TD.toEntityType(existingSpan);
-          if (existingTypes == null || existingTypes.length == 0)
+  public boolean canClearTextFormat () {
+    TextSelection selection = getTextSelection();
+    if (selection != null && !selection.isEmpty()) {
+      Editable editable = getText();
+      Object[] spans = editable.getSpans(selection.start, selection.end, Object.class);
+      if (spans != null) {
+        for (Object span : spans) {
+          if (span instanceof NoCopySpan || span instanceof EmojiSpan || isComposingSpan(editable, span) || !TD.canConvertToEntityType(span)) {
             continue;
-          int existingSpanStart = getText().getSpanStart(existingSpan);
-          int existingSpanEnd = getText().getSpanEnd(existingSpan);
-          boolean removeSpan = !canBeNested;
-          if (!removeSpan) {
-            for (TdApi.TextEntityType existingType : existingTypes) {
-              switch (existingType.getConstructor()) {
-                case TdApi.TextEntityTypeCode.CONSTRUCTOR:
-                case TdApi.TextEntityTypePreCode.CONSTRUCTOR:
-                case TdApi.TextEntityTypePre.CONSTRUCTOR:
-                  removeSpan = true;
-                  break;
-                case TdApi.TextEntityTypeTextUrl.CONSTRUCTOR:
-                  removeSpan = type.getConstructor() == TdApi.TextEntityTypeTextUrl.CONSTRUCTOR;
-                  break;
-              }
-              if (removeSpan)
+          }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private void clearSpans (int start, int end) {
+    clearSpans(start, end, null);
+  }
+
+  private void clearSpans (int start, int end, @Nullable TdApi.TextEntityType typeForRemove) {
+    Editable editable = getText();
+    Object[] spans = editable.getSpans(start, end, Object.class);
+    boolean updated = false;
+    boolean updateQuotes = false;
+    if (spans != null) {
+      for (Object existingSpan : spans) {
+        if (existingSpan instanceof NoCopySpan || existingSpan instanceof EmojiSpan || isComposingSpan(editable, existingSpan) || !TD.canConvertToEntityType(existingSpan)) {
+          continue;
+        }
+
+        if (typeForRemove != null) {
+          boolean needContinue = true;
+          TdApi.TextEntityType[] textEntityTypes = TD.toEntityType(existingSpan);
+          if (textEntityTypes != null) {
+            for (TdApi.TextEntityType textEntityType : textEntityTypes) {
+              if (textEntityType.getConstructor() == typeForRemove.getConstructor()) {
+                needContinue = false;
                 break;
+              }
             }
           }
-          if (removeSpan) {
-            if (sb == null)
-              sb = new SpannableStringBuilder(getText());
-            sb.removeSpan(existingSpan);
-            if (existingSpanStart < start || existingSpanEnd > end) {
-              for (TdApi.TextEntityType copyType : existingTypes) {
-                if (existingSpanStart < start)
-                  sb.setSpan(TD.toSpan(copyType), existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                if (existingSpanEnd > end)
-                  sb.setSpan(TD.toSpan(copyType), end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-              }
+          if (needContinue) {
+            continue;
+          }
+        }
+
+        int existingSpanStart = editable.getSpanStart(existingSpan);
+        int existingSpanEnd = editable.getSpanEnd(existingSpan);
+        boolean reused = false;
+
+        EditableHelper.removeSpan(editable, existingSpan);
+
+        final boolean isQuoteSpan = QuoteSpan.isQuoteSpan(existingSpan);
+        boolean keepSpanBeforeStart = !isQuoteSpan && start > existingSpanStart;
+        boolean keepSpanAfterEnd = !isQuoteSpan && existingSpanEnd > end;
+
+        if (keepSpanBeforeStart && keepSpanAfterEnd) {
+          editable.setSpan(TD.cloneSpan(existingSpan), existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          editable.setSpan(TD.cloneSpan(existingSpan), end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        } else if (keepSpanBeforeStart) {
+          editable.setSpan(existingSpan, existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          reused = true;
+        } else if (keepSpanAfterEnd) {
+          editable.setSpan(existingSpan, end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          reused = true;
+        }
+
+        if (existingSpan instanceof Destroyable && !reused) {
+          ((Destroyable) existingSpan).performDestroy();
+        }
+        updated = true;
+        updateQuotes |= isQuoteSpan;
+      }
+    }
+    setSelection(start, end);
+    if (updated) {
+      if (updateQuotes) {
+        invalidateQuotes(true);
+      }
+      inlineContext.forceCheck();
+      if (spanChangeListener != null) {
+        spanChangeListener.onSpansChanged(this);
+      }
+    }
+  }
+
+  private static boolean isComposingSpan (Spanned spanned, Object span) {
+    return BitwiseUtils.hasFlag(spanned.getSpanFlags(span), Spanned.SPAN_COMPOSING);
+  }
+
+  private boolean setSpanImpl (int start, int end, TdApi.TextEntityType newType) {
+    if (end - start <= 0 || !TD.canConvertToSpan(newType)) {
+      return false;
+    }
+    final boolean isQuoteSpan = newType.getConstructor() == TdApi.TextEntityTypeBlockQuote.CONSTRUCTOR;
+    Object newSpan = TD.toSpan(newType);
+    Editable editable = getText();
+    Object[] existingSpansArray = editable.getSpans(start, end, Object.class);
+    List<Object> existingSpans = null;
+    if (existingSpansArray != null && existingSpansArray.length > 0) {
+      for (Object existingSpan : existingSpansArray) {
+        if (existingSpan instanceof NoCopySpan || isComposingSpan(editable, existingSpan) || !TD.canConvertToEntityType(existingSpan)) {
+          continue;
+        }
+        int existingSpanStart = editable.getSpanStart(existingSpan);
+        int existingSpanEnd = editable.getSpanEnd(existingSpan);
+        TdApi.TextEntityType[] existingTypes = TD.toEntityType(existingSpan);
+        if (existingTypes == null || existingTypes.length == 0) {
+          continue;
+        }
+        boolean matchingStyleSpans = false;
+        if (newSpan instanceof StyleSpan && existingSpan instanceof StyleSpan) {
+          StyleSpan existingStyleSpan = (StyleSpan) existingSpan;
+          StyleSpan newStyleSpan = (StyleSpan) newSpan;
+          if (newStyleSpan.getStyle() == existingStyleSpan.getStyle()) {
+            matchingStyleSpans = true;
+          }
+        }
+        boolean haveExactMatch = matchingStyleSpans;
+        if (!haveExactMatch) {
+          for (TdApi.TextEntityType existingType : existingTypes) {
+            if (Td.equalsTo(existingType, newType)) {
+              haveExactMatch = true;
+              break;
             }
           }
         }
-        if (sb != null)
-          setText(SpannableString.valueOf(sb));
+        if (haveExactMatch) {
+          if (existingTypes.length == 1 || matchingStyleSpans) {
+            if (start < existingSpanStart || end > existingSpanEnd) {
+              // Medium path: extend existing span indexes if needed
+              EditableHelper.removeSpan(editable, existingSpan);
+              editable.setSpan(
+                existingSpan,
+                Math.min(start, existingSpanStart),
+                Math.max(end, existingSpanEnd),
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+              );
+              if (isQuoteSpan) {
+                QuoteSpan.normalizeQuotes(editable);
+                invalidateQuotes(true);
+                resetFontMetricsCache();
+              }
+              return true;
+            }
+            // Easy path: do nothing, because entire selection already has the same entity
+            return false;
+          }
+          if (start >= existingSpanStart && end <= existingSpanEnd) {
+            // Easy path: do nothing, because entire selection already has the same entity
+            return false;
+          }
+          // Medium path: apply entity only to areas that do not have the exactly matching entity
+          boolean changed;
+          changed = setSpanImpl(start, existingSpanStart, newType);
+          changed = setSpanImpl(existingSpanEnd, end, newType) || changed;
+          return changed;
+        }
+        if (existingSpans == null) {
+          existingSpans = new ArrayList<>(existingSpansArray.length);
+        }
+        existingSpans.add(existingSpan);
       }
-
-      getText().setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
-    Views.setSelection(this, end);
-    inlineContext.forceCheck();
-    if (spanChangeListener != null) {
-      spanChangeListener.onSpansChanged(this);
+    if (existingSpans == null || existingSpans.isEmpty()) {
+      // Easy path: just set new span at start .. end
+      editable.setSpan(newSpan, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      if (isQuoteSpan) {
+        QuoteSpan.normalizeQuotes(editable);
+        invalidateQuotes(true);
+        resetFontMetricsCache();
+      }
+      return true;
+    }
+    boolean canBeNested = Td.canBeNested(newType);
+    for (Object existingSpan : existingSpans) {
+      int existingSpanStart = editable.getSpanStart(existingSpan);
+      int existingSpanEnd = editable.getSpanEnd(existingSpan);
+      TdApi.TextEntityType[] existingTypes = TD.toEntityType(existingSpan);
+      if (existingTypes == null || existingTypes.length == 0) {
+        continue; // Unreachable
+      }
+      if (existingSpan instanceof EmojiSpan) {
+        if (!((EmojiSpan) existingSpan).isCustomEmoji()) {
+          throw new IllegalStateException(); // Unreachable
+        }
+        if (!canBeNested || Td.isTextUrl(newType)) {
+          editable.removeSpan(existingSpan);
+          if (existingSpan instanceof Destroyable) {
+            ((Destroyable) existingSpan).performDestroy();
+          }
+          parseEmoji(editable, existingSpanStart, existingSpanEnd);
+        }
+        continue;
+      }
+      if (QuoteSpan.isQuoteSpan(existingSpan)) {
+        continue;
+      }
+      boolean moveExistingEntity = !canBeNested;
+      for (TdApi.TextEntityType existingType : existingTypes) {
+        if (!Td.canBeNested(existingType) || (Td.isTextUrl(existingType) && Td.isTextUrl(newType))) {
+          moveExistingEntity = true;
+        }
+      }
+      if (moveExistingEntity) {
+        if (existingSpanStart < start && existingSpanEnd > end) {
+          // Existing entity range covers start .. end fully, so we need it on both edges
+          editable.removeSpan(existingSpan);
+          editable.setSpan(existingSpan, existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          editable.setSpan(TD.cloneSpan(existingSpan), end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        } else if (existingSpanStart < start) {
+          // Existing entity starts before start, so we update its position to existingSpanStart .. start
+          editable.removeSpan(existingSpan);
+          editable.setSpan(existingSpan, existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        } else if (existingSpanEnd > end) {
+          // Existing entity ends after ens, so we update its position to end .. existingSpanEnd
+          editable.removeSpan(existingSpan);
+          editable.setSpan(existingSpan, end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        } else {
+          // Existing entity is fully inside start .. end, so we have to remove it
+          editable.removeSpan(existingSpan);
+          if (existingSpan instanceof Destroyable) {
+            ((Destroyable) existingSpan).performDestroy();
+          }
+        }
+      } else if (existingSpan instanceof StyleSpan) {
+        // Simplify work for getOutputText() if StyleSpan is located at the edges
+        if (existingSpanStart < start && existingSpanEnd < end) {
+          editable.removeSpan(existingSpan);
+          editable.setSpan(TD.cloneSpan(existingSpan), existingSpanStart, start, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          editable.setSpan(existingSpan, start, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        } else if (existingSpanEnd > end && existingSpanStart > start) {
+          editable.removeSpan(existingSpan);
+          editable.setSpan(existingSpan, existingSpanStart, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+          editable.setSpan(TD.cloneSpan(existingSpan), end, existingSpanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+      }
+    }
+    editable.setSpan(newSpan, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    if (isQuoteSpan) {
+      QuoteSpan.normalizeQuotes(editable);
+      invalidateQuotes(true);
+      resetFontMetricsCache();
+    }
+    return true;
+  }
+
+  public int getLength () {
+    Editable text = getText();
+    return text != null ? text.length() : 0;
+  }
+
+  private void setSpan (int start, int end, TdApi.TextEntityType newType) {
+    if (!TD.canConvertToSpan(newType)) {
+      return;
+    }
+    final int oldLength = getLength();
+    boolean spansChanged = setSpanImpl(start, end, newType);
+    boolean lengthChanged = oldLength != getLength();
+
+    boolean selectionUpdated = false;
+    if (lengthChanged && newType.getConstructor() == TdApi.TextEntityTypeBlockQuote.CONSTRUCTOR) {
+      final Editable text = getText();
+      if (text != null) {
+        final Object[] spans = text.getSpans(start, end, QuoteSpan.class);
+        if (spans != null && spans.length == 1) {
+          int newStart = text.getSpanStart(spans[0]);
+          int newEnd = text.getSpanEnd(spans[0]);
+          setSelection(newStart, newEnd);
+          selectionUpdated = true;
+        }
+      }
+    }
+
+    if (!selectionUpdated) {
+      setSelection(start, end);
+    }
+
+    if (spansChanged) {
+      inlineContext.forceCheck();
+      if (spanChangeListener != null) {
+        spanChangeListener.onSpansChanged(this);
+      }
     }
   }
 
@@ -800,6 +766,7 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
           }
           return true;
         } else if (Strings.isValidLink(result)) {
+          clearSpans(start, end, new TdApi.TextEntityTypeTextUrl(result)); // todo: remove after fix setSpanImpl
           setSpan(start, end, new TdApi.TextEntityTypeTextUrl(result));
           return true;
         } else {
@@ -809,35 +776,81 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     }
   }
 
-  private CharSequence changesText;
+  public void createTextUrl (URLSpan existingSpan, String result, int start, int end) {
+    if (start < 0 || end < 0 || start > getText().length() || end > getText().length()) {
+      return;
+    }
+    ViewController<?> c = controller;
+    if (c == null && inputListener instanceof ViewController<?>) {
+      c = (ViewController<?>) inputListener;
+    }
+    if (c != null) {
+      if (StringUtils.isEmpty(result)) {
+        if (existingSpan != null) {
+          getText().removeSpan(existingSpan);
+          inlineContext.forceCheck();
+        }
+      } else if (Strings.isValidLink(result)) {
+        clearSpans(start, end, new TdApi.TextEntityTypeTextUrl(result)); // todo: remove after fix setSpanImpl
+        setSpan(start, end, new TdApi.TextEntityTypeTextUrl(result));
+      }
+    }
+  }
 
   public void restartTextChange () {
     CharSequence cs = getText();
     String str = cs.toString();
-    int selectionStart = getSelectionStart();
-    int selectionEnd = getSelectionEnd();
-    inlineContext.onTextChanged(cs, str, selectionStart == selectionEnd ? selectionStart : -1);
-  }
-
-  public void setTextSilently (String text) {
-    boolean origValue = ignoreDraft;
-    ignoreDraft = true;
-    setText(text);
-    ignoreDraft = origValue;
+    TextSelection selection = getTextSelection();
+    inlineContext.onTextChanged(cs, str, selection != null && selection.isEmpty() ? selection.start : -1);
   }
 
   @Override
   protected void onSelectionChanged (int selStart, int selEnd) {
     super.onSelectionChanged(selStart, selEnd);
+    if (selectionChangeListener != null) {
+      selectionChangeListener.onInputSelectionChanged(this, selStart, selEnd);
+    }
     if (inlineContext != null) {
       inlineContext.onCursorPositionChanged(selStart == selEnd ? selStart : -1);
     }
+    boolean newHasSelection = selStart != selEnd;
+    if (hasSelection != newHasSelection) {
+      hasSelection = newHasSelection;
+      if (selectionChangeListener != null) {
+        selectionChangeListener.onInputSelectionExistChanged(this, hasSelection);
+      }
+    }
+  }
+
+  public void setSelectionChangeListener (SelectionChangeListener selectionChangeListener) {
+    this.selectionChangeListener = selectionChangeListener;
+  }
+
+  public void setActionModeVisibility (boolean actionModeVisibility) {
+    this.actionModeVisibility = actionModeVisibility;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      setShowSoftInputOnFocus(actionModeVisibility);
+    }
+
+    if (currentActionMode != null) {
+      currentActionMode.invalidate();
+    }
+  }
+
+  public void hideSelectionCursors () {
+    TextSelection selection = getTextSelection();
+    if (selection == null || selection.isEmpty()) return;
+    final int start = selection.start;
+    final int end = selection.end;
+
+    clearFocus();
+    requestFocus();
+    setSelection(start, end);
   }
 
   public boolean canFormatText () {
-    int selectionStart = getSelectionStart();
-    int selectionEnd = getSelectionEnd();
-    return selectionStart >= 0 && selectionEnd > selectionStart && selectionEnd <= getText().length();
+    TextSelection selection = getTextSelection();
+    return selection != null && !selection.isEmpty() && selection.end <= getText().length();
   }
 
   private boolean allowsAnyGravity;
@@ -848,38 +861,30 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     }
   }
 
-  private void processTextChange (CharSequence s) {
-    changesText = null;
-
+  private void processTextChange (CharSequence s, boolean byUserAction) {
     String str = s.toString();
 
-    if (str.isEmpty()) {
-      textChangedSinceChatOpened = false;
+    if (byUserAction && blockedText == null) {
+      setTextChangedSinceChatOpened(true);
     }
 
-    int selectionStart = getSelectionStart();
-    int selectionEnd = getSelectionEnd();
+    TextSelection selection = getTextSelection();
     if (controller != null) {
-      inlineContext.onTextChanged(s, str, selectionStart == selectionEnd ? selectionStart : -1);
-      controller.onInputTextChange(s);
+      inlineContext.onTextChanged(s, str, selection != null && selection.isEmpty() ? selection.start : -1);
+      controller.onInputTextChange(s, !ignoreDraft && byUserAction);
     } else if (inputListener != null) {
       if (inputListener.canSearchInline(InputView.this)) {
-        inlineContext.onTextChanged(s, str, selectionStart == selectionEnd ? selectionStart : -1);
+        inlineContext.onTextChanged(s, str, selection != null && selection.isEmpty() ? selection.start : -1);
       }
       inputListener.onInputChanged(InputView.this, str);
     }
     if (!isSettingText && blockedText != null && !blockedText.equals(str)) {
-      setInput(blockedText, true);
+      setInput(blockedText, true, false);
     }
-    // helper.process(str);
 
-    if (!ignoreDraft && controller != null) {
-      controller.setTyping(s.length() > 0);
-      if (!controller.isEditingMessage()) {
-        textChangedSinceChatOpened = true;
-      }
-    }
-    setAllowsAnyGravity(str.length() > 0);
+    final boolean hasText = s.length() > 0;
+    setAllowsAnyGravity(hasText);
+    showPlaceholder.setValue(!hasText, !hasText && needAnimateChanges());
   }
 
   @Override
@@ -887,28 +892,6 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     if (!allowsAnyGravity) {
       setGravity(Lang.gravity() | Gravity.TOP);
     }
-    if (USE_LAYOUT_DIRECTION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      setLayoutDirection(Lang.rtl() ? LAYOUT_DIRECTION_RTL : LAYOUT_DIRECTION_LTR);
-    }
-  }
-
-  // Text watcher
-
-  private boolean ignoreChanges;
-  private Spannable pendingSortSpannable;
-
-  @Override
-  public int compare (Object o1, Object o2) {
-    return Integer.compare(pendingSortSpannable.getSpanStart(o1), pendingSortSpannable.getSpanStart(o2));
-  }
-
-  @Override
-  public boolean onEmojiFound (CharSequence input, CharSequence code, EmojiInfo info, int position, int length) {
-    EmojiSpan span = Emoji.instance().newSpan(code, info);
-    if (span != null) {
-      pendingSortSpannable.setSpan(span, position, position + length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-    }
-    return true;
   }
 
   // ETc
@@ -927,35 +910,66 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
       return;
     }
     this.rawPlaceholder = placeholder;
-    if (controller == null) {
-      setHint(placeholder);
+    setInputPlaceholder(placeholder, null, 0);
+    /*if (controller == null) {
+      // setHint(placeholder);
     } else {
       this.rawPlaceholderWidth = U.measureText(rawPlaceholder, getPaint());
       this.lastPlaceholderAvailWidth = 0;
       checkPlaceholderWidth();
+    }*/
+  }
+
+  public void setInputPlaceholder (CharSequence placeholder, CharSequence placeholderSubtitle, @DrawableRes int iconId) {
+    this.placeholderTitleText = placeholder;
+    this.placeholderSubtitleText = placeholderSubtitle;
+    this.placeholderIcon = iconId != 0 ? Drawables.get(getResources(), iconId) : null;
+    if (controller != null) {
+      this.lastPlaceholderAvailWidth = 0;
+      checkPlaceholderWidth();
     }
+    invalidate();
+  }
+
+  private boolean needAnimateChanges () {
+    return UI.inUiThread() && boundController.getParentOrSelf().needsTempUpdates() && boundController.getParentOrSelf().isFocused();
   }
 
   public void checkPlaceholderWidth () {
-    if (lastPlaceholderRes != 0 && controller != null) {
-      int availWidth = Math.max(0, getMeasuredWidth() - controller.getHorizontalInputPadding() - getPaddingLeft());
+    if ((lastPlaceholderRes != 0 || !StringUtils.isEmpty(placeholderTitleText) || placeholderIcon != null) && controller != null) {
+      int availWidth = Math.max(0, getMeasuredWidth() - controller.getHorizontalInputPadding() - getPaddingLeft() - Screen.dp(placeholderIcon != null ? 20 : 0));
       if (this.lastPlaceholderAvailWidth != availWidth) {
         this.lastPlaceholderAvailWidth = availWidth;
+
+        placeholderTitle = !StringUtils.isEmpty(placeholderTitleText) ? new Text.Builder(tdlib, placeholderTitleText, null, availWidth, Paints.robotoStyleProvider(Screen.px(getTextSize())), TextColorSets.PLACEHOLDER, null)
+          .singleLine().clipTextArea().build() : null;
+
+        placeholderSubTitle = !StringUtils.isEmpty(placeholderSubtitleText) ? new Text.Builder(tdlib, placeholderSubtitleText, null, availWidth, Paints.robotoStyleProvider(Screen.px(getTextSize()) / 3f * 2f), TextColorSets.PLACEHOLDER, null)
+          .singleLine().clipTextArea().build() : null;
+
+        boolean needAnimateChanges = needAnimateChanges();
+
+        subtitleReplaceAnimator.replace(placeholderSubTitle, needAnimateChanges);
+
+        hasSubPlaceholder.setValue(placeholderSubTitle != null, needAnimateChanges);
+
         if (rawPlaceholderWidth <= availWidth) {
-          setHint(rawPlaceholder);
+          //setHint(rawPlaceholder);
         } else {
-          setHint(TextUtils.ellipsize(rawPlaceholder, getPaint(), availWidth, TextUtils.TruncateAt.END));
+          //setHint(TextUtils.ellipsize(rawPlaceholder, getPaint(), availWidth, TextUtils.TruncateAt.END));
         }
       }
     }
   }
 
   private boolean needSendByEnter () {
-    return Settings.instance().needSendByEnter() && qualifiesForKeySend();
+    return Settings.instance().needSendByEnter() && !isSettingText && controller != null && controller.inSimpleSendMode();
   }
 
-  private boolean qualifiesForKeySend () {
-    return !isSettingText && controller != null && controller.inSimpleSendMode();
+  private void sendByEnter () {
+    if (controller != null && needSendByEnter()) {
+      controller.pickDateOrProceed(Td.newSendOptions(), (sendOptions, disableMarkdown) -> controller.sendText(true, sendOptions));
+    }
   }
 
   public void setInputListener (InputListener inputListener) {
@@ -968,127 +982,6 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
 
   // Inline results
 
-  private static final int MEDIA_TYPE_WEBP = 1;
-  private static final int MEDIA_TYPE_PNG = 2;
-  private static final int MEDIA_TYPE_GIF = 3;
-  private static final int MEDIA_TYPE_JPEG = 4;
-
-  private InputConnection createInputConnection (EditorInfo editorInfo) {
-    InputConnection ic = super.onCreateInputConnection(editorInfo);
-    if (isCaptionEditing()) {
-      return ic;
-    }
-    String[] mimeTypes = new String[] {
-      "image/webp",
-      "image/png",
-      "image/gif",
-      "image/jpeg",
-      "image/*"
-    };
-    InputWrapperWrapper.setContentMimeTypes(editorInfo, mimeTypes);
-    if (ic == null)
-      return null;
-    final InputConnectionCompat.OnCommitContentListener callback =
-      (inputContentInfo, flags, bundle) -> {
-        if (controller == null || !controller.hasWritePermission())
-          return false;
-
-        ClipDescription description = inputContentInfo.getDescription();
-        int mediaType;
-        if (description.hasMimeType("image/webp")) {
-          mediaType = MEDIA_TYPE_WEBP;
-        } else if (description.hasMimeType("image/png")) {
-          mediaType = MEDIA_TYPE_PNG;
-        } else if (description.hasMimeType("image/gif")) {
-          mediaType = MEDIA_TYPE_GIF;
-        } else if (description.hasMimeType("image/jpeg")) {
-          mediaType = MEDIA_TYPE_JPEG;
-        } else {
-          return false;
-        }
-
-        // read and display inputContentInfo asynchronously
-        boolean needPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && (flags &
-          InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0;
-        if (needPermission) {
-          try {
-            inputContentInfo.requestPermission();
-          } catch (Throwable t) {
-            return false; // return false if failed
-          }
-        }
-        Uri uri = inputContentInfo.getContentUri();
-        long timestamp = System.currentTimeMillis();
-        long chatId = controller.getChatId();
-        long messageThreadId = controller.getMessageThreadId();
-        long replyToMessageId = controller.obtainReplyId();
-        boolean silent = controller.obtainSilentMode();
-        boolean needMenu = controller.areScheduledOnly();
-
-        Background.instance().post(() -> {
-          int imageWidth, imageHeight;
-          try (InputStream is = UI.getContext().getContentResolver().openInputStream(uri)) {
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inJustDecodeBounds = true;
-            BitmapFactory.decodeStream(is, null, opts);
-            imageWidth = opts.outWidth;
-            imageHeight = opts.outHeight;
-          } catch (Throwable t) {
-            Log.e("Unable to read image", t);
-            return;
-          }
-          if (imageWidth == 0 || imageHeight == 0) {
-            Log.e("Unknown image bounds, aborting");
-            return;
-          }
-          String path = uri.toString();
-          boolean isGif = true;
-          if (mediaType == MEDIA_TYPE_GIF) {
-            try (InputStream is = UI.getContext().getContentResolver().openInputStream(uri)) {
-              isGif = U.isAnimatedGIF(is);
-            } catch (Throwable t) {
-              Log.e("Unable to read GIF", t);
-              isGif = false;
-            }
-          }
-          final TdApi.InputMessageContent content;
-          final boolean isSecretChat = ChatId.isSecret(chatId);
-          if (mediaType == MEDIA_TYPE_GIF && isGif) {
-            TdApi.InputFileGenerated generated = TD.newGeneratedFile(null, path, 0, timestamp);
-            content = tdlib.filegen().createThumbnail(new TdApi.InputMessageAnimation(generated, null, null, 0, imageWidth, imageHeight, null), isSecretChat);
-          } else if ((mediaType != MEDIA_TYPE_JPEG && (mediaType == MEDIA_TYPE_WEBP || path.contains("sticker") || Math.max(imageWidth, imageHeight) <= 512))) {
-            TdApi.InputFileGenerated generated = PhotoGenerationInfo.newFile(path, 0, timestamp, true, 512);
-            content = tdlib.filegen().createThumbnail(new TdApi.InputMessageSticker(generated, null, imageWidth, imageHeight, null), isSecretChat);
-          } else {
-            TdApi.InputFileGenerated generated = PhotoGenerationInfo.newFile(path, 0, timestamp, false, 0);
-            content = tdlib.filegen().createThumbnail(new TdApi.InputMessagePhoto(generated, null, null, imageWidth, imageHeight, null, 0), isSecretChat);
-          }
-          if (needMenu) {
-            tdlib.ui().post(() -> {
-              tdlib.ui().showScheduleOptions(controller, chatId, false, (forceDisableNotification, schedulingState, disableMarkdown) -> tdlib.sendMessage(chatId, messageThreadId, replyToMessageId, new TdApi.MessageSendOptions(forceDisableNotification || silent, false, false, schedulingState), content, null), null);
-            });
-          } else {
-            tdlib.sendMessage(chatId, messageThreadId, replyToMessageId, silent, false, content);
-          }
-        });
-        // read and display inputContentInfo asynchronously.
-        // call inputContentInfo.releasePermission() as needed.
-
-        return true;  // return true if succeeded
-      };
-    return InputWrapperWrapper.createWrapper(ic, editorInfo, callback);
-  }
-
-  private InputConnection lastInputConnection;
-
-  @Override
-  public InputConnection onCreateInputConnection (EditorInfo editorInfo) {
-    InputConnection ic = createInputConnection(editorInfo);
-    if (ic == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT || ic instanceof EmojiInputConnection)
-      return lastInputConnection = ic;
-    return lastInputConnection = new EmojiInputConnection(this, ic);
-  }
-
   public InlineSearchContext getInlineSearchContext () {
     return inlineContext;
   }
@@ -1098,23 +991,25 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     return controller != null ? controller.getChatId() : inputListener != null && inputListener.canSearchInline(this) ? inputListener.provideInlineSearchChatId(this) : 0;
   }
 
-  @Override
-  public TdApi.WebPage provideExistingWebPage (TdApi.FormattedText currentText) {
-    return controller != null ? controller.getEditingWebPage(currentText) : null;
-  }
-
   private boolean isCaptionEditing () {
     return controller == null || controller.isEditingCaption();
   }
 
   @Override
-  public boolean needsLinkPreview () {
+  public boolean enableLinkPreview () {
     return !isCaptionEditing() && tdlib.canAddWebPagePreviews(controller.getChat());
   }
 
   @Override
+  public void showLinkPreview (@Nullable FoundUrls foundUrls) {
+    if (controller != null) {
+      controller.showLinkPreview(foundUrls);
+    }
+  }
+
+  @Override
   public boolean needsInlineBots () {
-    return !isCaptionEditing() && tdlib.canSendOtherMessages(controller.getChat());
+    return !isCaptionEditing() && tdlib.canSendMessage(controller.getChat(), RightId.SEND_OTHER_MESSAGES);
   }
 
   @Override
@@ -1145,9 +1040,13 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   }
 
   @Override
-  public void showInlineStickers (ArrayList<TGStickerObj> stickers, boolean isMore) {
+  public void showInlineStickers (ArrayList<TGStickerObj> stickers, String foundByEmoji, boolean isEmoji, boolean isMore) {
     if (controller != null) {
-      controller.showStickerSuggestions(stickers, isMore);
+      if (!isEmoji) {
+        controller.showStickerSuggestions(stickers, isMore);
+      } else {
+        controller.showEmojiSuggestions(stickers, foundByEmoji, isMore);
+      }
     }
   }
 
@@ -1177,60 +1076,13 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   @Override
   public void hideInlineResults () {
     if (controller != null) {
-      controller.hideStickerSuggestions();
+      controller.onHideEmojiAndStickerSuggestionsFinally();
     }
     if (inputListener != null && inputListener.canSearchInline(this)) {
       inputListener.showInlineResults(this, null, false);
     } else {
       ((BaseActivity) getContext()).showInlineResults(controller, tdlib, null, false, null);
     }
-  }
-
-  @Override
-  public boolean showLinkPreview (@Nullable String link, @Nullable TdApi.WebPage webPage) {
-    if (controller == null) {
-      return false;
-    }
-    if (ignoreFirstLinkPreview) {
-      ignoreFirstLinkPreview = false;
-      controller.ignoreLinkPreview(link, webPage);
-      return false;
-    } else {
-      controller.showLinkPreview(link, webPage);
-      return true;
-    }
-  }
-
-  private AlertDialog linkWarningDialog;
-
-  @Override
-  public int showLinkPreviewWarning (final int contextId, @Nullable final String link) {
-    if (controller == null || !controller.isSecretChat()) {
-      return InlineSearchContext.WARNING_OK;
-    }
-    if (Settings.instance().needTutorial(Settings.TUTORIAL_SECRET_LINK_PREVIEWS)) {
-      if (linkWarningDialog == null || !linkWarningDialog.isShowing()) {
-        AlertDialog.Builder b = new AlertDialog.Builder(controller.context(), Theme.dialogTheme());
-        b.setTitle(Lang.getString(R.string.AppName));
-        b.setMessage(Lang.getString(R.string.SecretLinkPreviewAlert));
-        b.setPositiveButton(Lang.getString(R.string.SecretLinkPreviewEnable), (dialog, which) -> {
-          linkWarningDialog = null;
-          Settings.instance().markTutorialAsComplete(Settings.TUTORIAL_SECRET_LINK_PREVIEWS);
-          Settings.instance().setUseSecretLinkPreviews(true);
-          inlineContext.forceCheck();
-        });
-        b.setNegativeButton(Lang.getString(R.string.SecretLinkPreviewDisable), (dialog, which) -> {
-          linkWarningDialog = null;
-          Settings.instance().markTutorialAsComplete(Settings.TUTORIAL_SECRET_LINK_PREVIEWS);
-          Settings.instance().setUseSecretLinkPreviews(false);
-          inlineContext.forceCheck();
-        });
-        b.setCancelable(false);
-        linkWarningDialog = controller.showAlert(b);
-      }
-      return InlineSearchContext.WARNING_CONFIRM;
-    }
-    return Settings.instance().needSecretLinkPreviews() ? InlineSearchContext.WARNING_OK : InlineSearchContext.WARNING_BLOCK;
   }
 
   public void setIsInEditMessageMode (boolean isInEditMessageMode, String futureText) {
@@ -1243,19 +1095,6 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
 
   public void setCommandListProvider (@Nullable InlineSearchContext.CommandListProvider provider) {
     this.inlineContext.setCommandListProvider(provider);
-  }
-
-  private boolean ignoreAnyChanges;
-
-  public void setIgnoreAnyChanges (boolean ignoreAnyChanges) {
-    if (this.ignoreAnyChanges != ignoreAnyChanges) {
-      this.ignoreAnyChanges = ignoreAnyChanges;
-      if (ignoreAnyChanges) {
-        changesText = null;
-      } else if (changesText != null) {
-        processTextChange(changesText);
-      }
-    }
   }
 
   // Other
@@ -1284,24 +1123,78 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   }
 
   public void onEmojiSelected (String emoji) {
-    int start = getSelectionStart();
-    int end = getSelectionEnd();
-    int after = start + emoji.length();
+    TextSelection selection = getTextSelection();
+    if (selection == null || !isEnabled())
+      return;
+    int after = selection.start + emoji.length();
     SpannableString s = new SpannableString(emoji);
     s.setSpan(Emoji.instance().newSpan(emoji, null), 0, s.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-    if (start == end)
-      getText().insert(start, s);
-    else
-      getText().replace(start, end, s);
-    Views.setSelection(this, after);
+    if (selection.isEmpty()) {
+      getText().insert(selection.start, s);
+    } else {
+      getText().replace(selection.start, selection.end, s);
+    }
+    setSelection(after);
   }
 
-  private boolean textChangedSinceChatOpened, ignoreFirstLinkPreview;
+  public void onCustomEmojiSelected (TGStickerObj stickerObj) {
+    onCustomEmojiSelected(stickerObj, false);
+  }
 
-  public void setChat (TdApi.Chat chat, @Nullable ThreadInfo messageThread, boolean isSilent) {
+  public void onCustomEmojiSelected (TdApi.Sticker sticker) {
+    onCustomEmojiSelected(sticker, false);
+  }
+
+  public void onCustomEmojiSelected (TGStickerObj stickerObj, boolean needReplace) {
+    onCustomEmojiSelected(stickerObj.getSticker(), needReplace);
+  }
+
+  public void onCustomEmojiSelected (TdApi.Sticker stickerObj, boolean needReplace) {
+    TextSelection selection = getTextSelection();
+    if (selection == null || !isEnabled())
+      return;
+
+    final String emoji = TD.stickerEmoji(stickerObj);
+    final Editable editable = getText();
+    final EmojiSpan oldEmojiSpan = needReplace ? Emoji.findPrecedingEmojiSpan(editable, selection.start) : null;
+
+    final int start = oldEmojiSpan != null ? editable.getSpanStart(oldEmojiSpan) : selection.start;
+    final int end = oldEmojiSpan != null ? editable.getSpanEnd(oldEmojiSpan) : selection.end;
+
+    if (oldEmojiSpan != null) {
+      editable.removeSpan(oldEmojiSpan);
+      if (oldEmojiSpan instanceof Destroyable) {
+        ((Destroyable) oldEmojiSpan).performDestroy();
+      }
+    }
+
+    if (oldEmojiSpan != null && needReplace && Config.KEEP_ORIGINAL_EMOJI_WHEN_INPUT_CUSTOM_EMOJI) {
+      editable.setSpan(Emoji.instance().newCustomSpan(emoji, null, this, tdlib, Td.customEmojiId(stickerObj)), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+      setSelection(start + emoji.length());
+      if (inlineContext != null) {
+        inlineContext.reset();
+      }
+      return;
+    }
+
+    SpannableString s = new SpannableString(emoji);
+    s.setSpan(Emoji.instance().newCustomSpan(emoji, null, this, tdlib,
+      Td.customEmojiId(stickerObj)), 0, s.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+    if (needReplace || start != end) {
+      editable.replace(start, end, s);
+    } else {
+      editable.insert(start, s);
+    }
+    setSelection(start + s.length());
+  }
+
+  private boolean textChangedSinceChatOpened;
+
+  public void setChat (TdApi.Chat chat, @Nullable ThreadInfo messageThread, @Nullable TdApi.InputMessageContent forceDraft, @Nullable String customInputField, boolean isSilent) {
     textChangedSinceChatOpened = false;
-    updateMessageHint(chat, messageThread, isSilent);
-    setDraft(!tdlib.hasWritePermission(chat) ? null :
+    updateMessageHint(chat, messageThread, customInputField, isSilent);
+    setDraft(forceDraft != null ? forceDraft : !tdlib.canSendBasicMessage(chat) ? null :
       messageThread != null ? messageThread.getDraftContent() :
       chat.draftMessage != null ? chat.draftMessage.inputMessageText : null
     );
@@ -1316,30 +1209,47 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   }
 
   public void setTextChangedSinceChatOpened (boolean force) {
-    if (!controller.isEditingMessage() && (!isEmpty() || force)) {
+    if (controller != null && !controller.isEditingMessage() && (!isEmpty() || force)) {
       textChangedSinceChatOpened = true;
     }
   }
 
-  public void updateMessageHint (TdApi.Chat chat, @Nullable ThreadInfo messageThread, boolean isSilent) {
+  public void updateMessageHint (TdApi.Chat chat, @Nullable ThreadInfo messageThread, @Nullable String customInputField, boolean isSilent) {
     if (chat == null) {
       setInputPlaceholder(R.string.Message);
       return;
     }
     int resource;
+    int icon = 0;
+    CharSequence subplaceholder = null;
     Object[] args = null;
     TdApi.ChatMemberStatus status = tdlib.chatStatus(chat.id);
-    if (tdlib.isChannel(chat.id)) {
+
+    if (!tdlib.canSendBasicMessage(chat)) {
+      resource = R.string.MessageInputTextDisabled;
+      icon = R.drawable.baseline_block_18;
+    } else if (tdlib.isChannel(chat.id)) {
       resource = isSilent ? R.string.ChannelSilentBroadcast : R.string.ChannelBroadcast;
-    } else if (tdlib.isMultiChat(chat) && Td.isAnonymous(status)) {
+    } /*else if (tdlib.isMultiChat(chat) && Td.isAnonymous(status)) {
       resource = messageThread != null ? (messageThread.areComments() ? R.string.CommentAnonymously : R.string.MessageReplyAnonymously) :  R.string.MessageAnonymously;
     } else if (chat.messageSenderId != null && !tdlib.isSelfSender(chat.messageSenderId)) {
       resource = messageThread != null ? (messageThread.areComments() ? R.string.CommentAsX : R.string.MessageReplyAsX) : R.string.MessageAsX;
       args = new Object[] { tdlib.senderName(chat.messageSenderId) };
-    } else {
+    }*/ else {
       resource = messageThread != null ? (messageThread.areComments() ? R.string.Comment : R.string.MessageReply) : R.string.Message;
     }
-    setInputPlaceholder(resource, args);
+    if (!tdlib.isChannel(chat.id) && tdlib.isMultiChat(chat) && Td.isAnonymous(status) && !tdlib.isChannel(chat.messageSenderId)) {
+      subplaceholder = Lang.getStringBold(R.string.AnyAsX, Lang.getString(R.string.AnonymousAdmin)); // "as Anonymous Admin";
+    } else if (!tdlib.isChannel(chat.id) && chat.messageSenderId != null && !tdlib.isSelfSender(chat.messageSenderId)) {
+      subplaceholder = Lang.getStringBold(R.string.AnyAsX, tdlib.senderName(chat.messageSenderId));
+    }
+    String text;
+    if (StringUtils.isEmpty(customInputField)) {
+      text = Lang.getString(resource);
+    } else {
+      text = customInputField;
+    }
+    setInputPlaceholder(text, subplaceholder, icon);
   }
 
   public void setDraft (@Nullable TdApi.InputMessageContent draftContent) {
@@ -1347,29 +1257,28 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     if (draftContent != null && draftContent.getConstructor() == TdApi.InputMessageText.CONSTRUCTOR) {
       TdApi.InputMessageText textDraft = (TdApi.InputMessageText) draftContent;
       draft = TD.toCharSequence(textDraft.text);
-      ignoreFirstLinkPreview = textDraft.disableWebPagePreview;
     } else {
       draft = "";
-      ignoreFirstLinkPreview = false;
     }
     String current = getInput().trim();
     controller.setInputVisible(true, current.length() > 0);
     if (!draft.equals(current)) {
       ignoreDraft = true;
-      setInput(draft, draft.length() > 0);
+      setInput(draft, draft.length() > 0, false);
       controller.updateSendButton(draft.toString(), false);
     }
   }
 
   // Suffix stuff
 
-  private boolean isSettingText;
+  private boolean isSettingText, settingByUserAction;
 
-  public void setInput (CharSequence text, boolean moveCursor) {
+  public void setInput (CharSequence text, boolean moveCursor, boolean byUserAction) {
     this.isSettingText = true;
+    this.settingByUserAction = byUserAction;
     setText(text);
     if (moveCursor) {
-      Views.setSelection(this, text != null ? text.length() : 0);
+      setSelection(text != null ? text.length() : 0);
     }
     this.isSettingText = false;
   }
@@ -1416,18 +1325,338 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     }
   }
 
+  private void drawEmojiOverlay (Canvas c) {
+    Layout layout = getLayout();
+    for (EmojiSpan span : mediaHolder.defaultLayerUsages()) {
+      span.onOverlayDraw(c, this, layout);
+    }
+    for (EmojiSpan span : mediaHolder.topLayerUsages()) {
+      span.onOverlayDraw(c, this, layout);
+    }
+  }
+
   @Override
   protected void onDraw (Canvas c) {
-    super.onDraw(c);
+    final int x = getPaddingLeft() + Screen.dp(placeholderIcon != null ? 20 : 0);
+    final float alpha = showPlaceholder.getFloatValue();
+    final int offset = (int) (hasSubPlaceholder.getFloatValue() * (getTextSize() / 18 * 8));
+    final int baseline = getBaseline();
 
+    if (alpha > 0f) {
+      if (placeholderTitle != null) {
+        final int titleHeight = placeholderTitle.getHeight();
+        final int titleBaseline = (int)(titleHeight * 0.75f);
+        final int y = baseline - titleBaseline - offset;
+        placeholderTitle.draw(c, x, y, null, alpha);
+      }
+      for (ListAnimator.Entry<Text> entry : subtitleReplaceAnimator) {
+        final int offset2 = (int) ((!entry.isAffectingList() ?
+          ((entry.getVisibility() - 1f) * (getTextSize() / 18f * 14f)):
+          ((1f - entry.getVisibility()) * (getTextSize() / 18f * 14f))));
+        entry.item.draw(c, x, baseline - offset / 2 + offset2, null, Math.min(alpha, entry.getVisibility()));
+      }
+      if (placeholderIcon != null) {
+        Drawables.draw(c, placeholderIcon, getPaddingLeft(), (getMeasuredHeight() - placeholderIcon.getMinimumHeight()) / 2f, PorterDuffPaint.get(ColorId.iconLight) /*Paints.getPorterDuffPaint(ColorId.textPlaceholder)*/);
+      }
+    }
+
+    invalidateQuotes(false);
+    if (!quoteBlocks.isEmpty()) {
+      final boolean needSave = !noClippingWorks();
+      final int scrollY = getScrollY();
+      final int s;
+      if (needSave) {
+        s = Views.save(c);
+        c.clipRect(0, scrollY + getPaddingTop(), getMeasuredWidth(), scrollY + getMeasuredHeight() - getPaddingBottom());
+      } else {
+        s = -1;
+      }
+      for (int i = 0; i < quoteBlocks.size(); ++i) {
+        quoteBlocks.get(i).draw(c, getPaddingLeft(), getPaddingTop(), getWidth() - getPaddingLeft() - getPaddingRight());
+      }
+      if (needSave) {
+        Views.restore(c, s);
+      }
+    }
+
+    super.onDraw(c);
+    drawEmojiOverlay(c);
     if (this.displaySuffix.length() > 0 && this.prefix.length() > 0 && getLineCount() == 1) {
       String text = getText().toString();
-      if (text.toLowerCase().equals(prefix.toLowerCase())) {
+      if (text.equalsIgnoreCase(prefix)) {
         checkPrefix(text);
-        c.drawText(displaySuffix, suffixLeft + prefixWidth, getBaseline(), paint);
+        c.drawText(displaySuffix, x + prefixWidth, getBaseline(), paint);
       }
     }
   }
+
+  // Inline query
+
+  @Override
+  public void onCommandPick (InlineResultCommand command, boolean isLongPress) {
+    if (controller != null) {
+      TdApi.Chat chat = controller.getChat();
+      if (isLongPress) {
+        String str = (chat != null && ChatId.isUserChat(ChatId.toUserId(chat.id))) || command.getUsername() == null ? command.getCommand() + ' ' : command.getCommand() + '@' + command.getUsername() + ' ';
+        setInput(str, true, true);
+      } else {
+        controller.sendCommand(command);
+      }
+    }
+  }
+
+  @Override
+  public void onHashtagPick (InlineResultHashtag hashtag) {
+    String resultHashtag = hashtag.data();
+
+    if (resultHashtag == null || !hashtag.hasTarget()) {
+      return;
+    }
+
+    Editable editable = getText();
+    SpannableStringBuilder b = new SpannableStringBuilder(editable);
+    CharSequence within = resultHashtag + " ";
+    try { editable.replace(hashtag.getTargetStart(), hashtag.getTargetEnd(), within); } catch (Throwable ignored) {  }
+    try { setInput(hashtag.replaceInTarget(b, within), false, true); setSelection(hashtag.getTargetStart() + within.length()); } catch (Throwable ignored) { }
+  }
+
+  @Override
+  public void onEmojiSuggestionPick (InlineResultEmojiSuggestion suggestion) {
+    String resultEmoji = suggestion.getEmoji();
+    if (resultEmoji == null || !suggestion.hasTarget()) {
+      return;
+    }
+
+    Editable editable = getText();
+    SpannableStringBuilder b = new SpannableStringBuilder(editable);
+    CharSequence within = editable.length() == suggestion.getTargetEnd() && suggestion.getTargetStart() == 0 ? resultEmoji : resultEmoji + " ";
+    try { editable.replace(suggestion.getTargetStart(), suggestion.getTargetEnd(), within); } catch (Throwable ignored) { }
+    try { setInput(suggestion.replaceInTarget(b, within), false, true); setSelection(suggestion.getTargetStart() + within.length()); } catch (Throwable ignored) { }
+  }
+
+  @Override
+  public void onMentionPick (InlineResultMention mention, @Nullable String usernamelessText) {
+    boolean isUsernameless = !StringUtils.isEmpty(usernamelessText) || mention.isUsernameless();
+    String resultMention = !StringUtils.isEmpty(usernamelessText) ? usernamelessText : mention.getMention(false);
+    if (resultMention == null || mention.getTargetEnd() == -1 || mention.getTargetStart() == -1) {
+      return;
+    }
+
+    Editable editable = getText();
+    SpannableStringBuilder b = new SpannableStringBuilder(editable);
+    CharSequence within;
+
+    if (isUsernameless) {
+      SpannableStringBuilder span = new SpannableStringBuilder(resultMention + " ");
+      span.setSpan(TD.toSpan(new TdApi.TextEntityTypeMentionName(mention.getUser().id)), 0, resultMention.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      within = span;
+    } else {
+      within = resultMention + " ";
+    }
+
+    try { editable.replace(mention.getTargetStart(), Math.min(editable.length(), mention.getTargetEnd()), within); } catch (Throwable ignored) { }
+    try { setInput(mention.replaceInTarget(b, within), false, true); setSelection(mention.getTargetStart() + within.length()); } catch (Throwable ignored) { }
+  }
+
+  @Override
+  public void onInlineQueryResultPick (InlineResult<?> result) {
+    if (controller != null) {
+      controller.sendInlineQueryResult(result.getQueryId(), result.getId(), true, true, Td.newSendOptions());
+    }
+  }
+
+  // Media processing
+
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    MediaType.WEBP,
+    MediaType.PNG,
+    MediaType.GIF,
+    MediaType.JPEG
+  })
+  private @interface MediaType {
+    int
+      WEBP = 1,
+      PNG = 2,
+      GIF = 3,
+      JPEG = 4;
+  }
+
+  @Override
+  protected InputConnection createInputConnection (EditorInfo editorInfo) {
+    InputConnection ic = super.createInputConnection(editorInfo);
+    if (isCaptionEditing()) {
+      return ic;
+    }
+    String[] mimeTypes = new String[] {
+      "image/webp",
+      "image/png",
+      "image/gif",
+      "image/jpeg",
+      "image/*"
+    };
+    InputWrapperWrapper.setContentMimeTypes(editorInfo, mimeTypes);
+    if (ic == null)
+      return null;
+    final InputConnectionCompat.OnCommitContentListener callback =
+      (inputContentInfo, flags, bundle) -> {
+        if (controller == null)
+          return false;
+
+        final long chatId = controller.getChatId();
+        final TdApi.Chat chat = tdlib.chat(chatId);
+        if (chat == null) {
+          return false;
+        }
+
+        ClipDescription description = inputContentInfo.getDescription();
+        @MediaType int mediaType;
+        if (description.hasMimeType("image/webp")) {
+          mediaType = MediaType.WEBP;
+        } else if (description.hasMimeType("image/png")) {
+          mediaType = MediaType.PNG;
+        } else if (description.hasMimeType("image/gif")) {
+          mediaType = MediaType.GIF;
+        } else if (description.hasMimeType("image/jpeg")) {
+          mediaType = MediaType.JPEG;
+        } else {
+          return false;
+        }
+
+        // read and display inputContentInfo asynchronously
+        boolean needPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && (flags &
+          InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0;
+        if (needPermission) {
+          try {
+            inputContentInfo.requestPermission();
+          } catch (Throwable t) {
+            return false; // return false if failed
+          }
+        }
+        Uri uri = inputContentInfo.getContentUri();
+        long timestamp = System.currentTimeMillis();
+        long messageThreadId = controller.getMessageThreadId();
+        TdApi.InputMessageReplyTo replyTo = controller.obtainReplyTo();
+        boolean silent = controller.obtainSilentMode();
+        boolean needMenu = controller.areScheduledOnly();
+
+        Background.instance().post(() -> {
+          int imageWidth, imageHeight;
+          try (InputStream is = UI.getContext().getContentResolver().openInputStream(uri)) {
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(is, null, opts);
+            imageWidth = opts.outWidth;
+            imageHeight = opts.outHeight;
+          } catch (Throwable t) {
+            Log.e("Unable to read image", t);
+            return;
+          }
+          if (imageWidth == 0 || imageHeight == 0) {
+            Log.e("Unknown image bounds, aborting");
+            return;
+          }
+          String path = uri.toString();
+          boolean isAnimatedGif = true;
+          if (mediaType == MediaType.GIF) {
+            try (InputStream is = UI.getContext().getContentResolver().openInputStream(uri)) {
+              isAnimatedGif = U.isAnimatedGIF(is);
+            } catch (Throwable t) {
+              Log.e("Unable to read GIF", t);
+              isAnimatedGif = false;
+            }
+          }
+          final TdApi.InputMessageContent content;
+          final boolean isSecretChat = ChatId.isSecret(chatId);
+          if (mediaType == MediaType.GIF && isAnimatedGif) {
+            TdApi.InputFileGenerated generated = TD.newGeneratedFile(null, path, 0, timestamp);
+            content = tdlib.filegen().createThumbnail(new TdApi.InputMessageAnimation(generated, null, null, 0, imageWidth, imageHeight, null, false, false), isSecretChat);
+          } else if ((mediaType != MediaType.JPEG && (mediaType == MediaType.WEBP || path.contains("sticker") || Math.max(imageWidth, imageHeight) <= 512))) {
+            TdApi.InputFileGenerated generated = PhotoGenerationInfo.newFile(path, 0, timestamp, true, 512);
+            content = tdlib.filegen().createThumbnail(new TdApi.InputMessageSticker(generated, null, imageWidth, imageHeight, null), isSecretChat);
+          } else {
+            TdApi.InputFileGenerated generated = PhotoGenerationInfo.newFile(path, 0, timestamp, false, 0);
+            content = tdlib.filegen().createThumbnail(new TdApi.InputMessagePhoto(generated, null, null, imageWidth, imageHeight, null, false, null, false), isSecretChat);
+          }
+
+          UI.post(() -> {
+            if (controller.showRestriction(this, tdlib.getRestrictionText(chat, content))) {
+              return;
+            }
+            if (needMenu) {
+              tdlib.ui().showScheduleOptions(controller, chatId, false,
+                (sendOptions, disableMarkdown) ->
+                  tdlib.sendMessage(chatId, messageThreadId, replyTo,
+                    Td.newSendOptions(sendOptions, silent),
+                    content,
+                    null
+                  ),
+                null, null);
+            } else {
+              tdlib.sendMessage(chatId, messageThreadId, replyTo, Td.newSendOptions(silent), content);
+            }
+          });
+        });
+        // read and display inputContentInfo asynchronously.
+        // call inputContentInfo.releasePermission() as needed.
+
+        return true;  // return true if succeeded
+      };
+    return InputWrapperWrapper.createWrapper(ic, editorInfo, callback);
+  }
+
+  // Send by enter
+
+  @Override
+  public boolean needRemoveFinalNewLine (FinalNewLineFilter filter) {
+    return needSendByEnter();
+  }
+
+  @Override
+  public void onFinalNewLineBeingRemoved (FinalNewLineFilter filter) {
+    post(InputView.this::sendByEnter);
+  }
+
+  // == Rework ==
+
+  // IME flags & view options
+
+  public void setMaxCodePointCount (int maxCodePointCount) {
+    if (maxCodePointCount > 0) {
+      setFilters(new InputFilter[] {
+        new PreserveCustomEmojiFilter(),
+        new ExternalEmojiFilter(),
+        new CodePointCountFilter(maxCodePointCount),
+        new EmojiFilter(this),
+        new CharacterStyleFilter(true),
+        new FinalNewLineFilter(this)
+      });
+    } else {
+      setFilters(new InputFilter[] {
+        new PreserveCustomEmojiFilter(),
+        new ExternalEmojiFilter(),
+        new EmojiFilter(this),
+        new CharacterStyleFilter(true),
+        new FinalNewLineFilter(this)
+      });
+    }
+  }
+
+  public final void setNoPersonalizedLearning (boolean noPersonalizedLearning) {
+    final int secrecyFlag;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      secrecyFlag = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+    } else {
+      secrecyFlag = 0x1000000;
+    }
+    final int imeOptions = getImeOptions();
+    final int newImeOptions = BitwiseUtils.setFlag(imeOptions, secrecyFlag, noPersonalizedLearning);
+    if (imeOptions != newImeOptions) {
+      setImeOptions(newImeOptions);
+    }
+  }
+
+  // Android-related workarounds
 
   @Override
   public boolean onTouchEvent (MotionEvent event) {
@@ -1460,7 +1689,21 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
   @Override
   protected void onAttachedToWindow() {
     super.onAttachedToWindow();
+    invalidateQuotes(false);
     doBugfix();
+  }
+
+  @Override
+  protected void onLayout (boolean changed, int left, int top, int right, int bottom) {
+    super.onLayout(changed, left, top, right, bottom);
+    invalidateQuotes(false);
+  }
+
+  @Override
+  protected void onTextChanged (CharSequence text, int start, int lengthBefore, int lengthAfter) {
+    super.onTextChanged(text, start, lengthBefore, lengthAfter);
+    invalidateQuotes(true);
+    invalidate();
   }
 
   @Override
@@ -1481,78 +1724,66 @@ public class InputView extends NoClipEditText implements InlineSearchContext.Cal
     }
   }
 
-  // Inline query
+  private final int[]
+    cords1 = new int[2],
+    cords2 = new int[2],
+    cords3 = new int[2];
 
-  @Override
-  public void onCommandPick (InlineResultCommand command, boolean isLongPress) {
-    if (controller != null) {
-      TdApi.Chat chat = controller.getChat();
-      if (isLongPress) {
-        String str = (chat != null && ChatId.isUserChat(ChatId.toUserId(chat.id))) || command.getUsername() == null ? command.getCommand() + ' ' : command.getCommand() + '@' + command.getUsername() + ' ';
-        setInput(str, true);
-      } else {
-        controller.sendCommand(command);
+  public void getSymbolUnderCursorPosition (int[] coordinates) {
+    TextSelection selection = getTextSelection();
+    if (selection == null) {
+      coordinates[0] = coordinates[1] = 0;
+      return;
+    }
+
+    Views.getCharacterCoordinates(this, selection.start, cords1);
+    cords2[0] = cords1[0];
+    cords2[1] = cords1[1];
+    int[] cords2 = this.cords2;
+
+    for (int a = selection.start - 1; a >= 0; a--) {
+      Views.getCharacterCoordinates(this, a, cords3);
+      if (cords3[1] != cords1[1]) {
+        cords2[0] /= 2;
+        break;
       }
+      if (cords3[0] == cords1[0]) continue;
+      cords2 = cords3;
+      break;
+    }
+
+    coordinates[0] = (cords1[0] + cords2[0]) / 2;
+    coordinates[1] = cords1[1];
+  }
+
+  private ArrayList<QuoteSpan.Block> quoteBlocks = new ArrayList<>();
+  private int lastText2Length;
+  private int quoteUpdatesTries;
+  private boolean[] quoteUpdateLayout;
+
+  public void invalidateQuotes(boolean force) {
+    int newTextLength = (getLayout() == null || getLayout().getText() == null) ? 0 : getLayout().getText().length();
+    if (force || lastText2Length != newTextLength) {
+      quoteUpdatesTries = 2;
+      lastText2Length = newTextLength;
+    }
+    if (quoteUpdatesTries > 0) {
+      if (quoteUpdateLayout == null) {
+        quoteUpdateLayout = new boolean[1];
+      }
+      quoteUpdateLayout[0] = false;
+      quoteBlocks = QuoteSpan.updateQuoteBlocks(getLayout(), quoteBlocks, quoteUpdateLayout);
+      if (quoteUpdateLayout[0]) {
+        resetFontMetricsCache();
+      }
+      quoteUpdatesTries--;
     }
   }
 
-  @Override
-  public void onHashtagPick (InlineResultHashtag hashtag) {
-    String resultHashtag = hashtag.data();
-
-    if (resultHashtag == null || !hashtag.hasTarget()) {
-      return;
-    }
-
-    Editable editable = getText();
-    SpannableStringBuilder b = new SpannableStringBuilder(editable);
-    CharSequence within = resultHashtag + " ";
-    try { editable.replace(hashtag.getTargetStart(), hashtag.getTargetEnd(), within); } catch (Throwable ignored) {  }
-    try { setInput(hashtag.replaceInTarget(b, within), false); Views.setSelection(this, hashtag.getTargetStart() + within.length()); } catch (Throwable ignored) { }
-  }
-
-  @Override
-  public void onEmojiSuggestionPick (InlineResultEmojiSuggestion suggestion) {
-    String resultEmoji = suggestion.getEmoji();
-    if (resultEmoji == null || !suggestion.hasTarget()) {
-      return;
-    }
-
-    Editable editable = getText();
-    SpannableStringBuilder b = new SpannableStringBuilder(editable);
-    CharSequence within = editable.length() == suggestion.getTargetEnd() && suggestion.getTargetStart() == 0 ? resultEmoji : resultEmoji + " ";
-    try { editable.replace(suggestion.getTargetStart(), suggestion.getTargetEnd(), within); } catch (Throwable ignored) { }
-    try { setInput(suggestion.replaceInTarget(b, within), false); Views.setSelection(this, suggestion.getTargetStart() + within.length()); } catch (Throwable ignored) { }
-  }
-
-  @Override
-  public void onMentionPick (InlineResultMention mention, @Nullable String usernamelessText) {
-    boolean isUsernameless = !StringUtils.isEmpty(usernamelessText) || mention.isUsernameless();
-    String resultMention = !StringUtils.isEmpty(usernamelessText) ? usernamelessText : mention.getMention(false);
-    if (resultMention == null || mention.getTargetEnd() == -1 || mention.getTargetStart() == -1) {
-      return;
-    }
-
-    Editable editable = getText();
-    SpannableStringBuilder b = new SpannableStringBuilder(editable);
-    CharSequence within;
-
-    if (isUsernameless) {
-      SpannableStringBuilder span = new SpannableStringBuilder(resultMention + " ");
-      span.setSpan(TD.toSpan(new TdApi.TextEntityTypeMentionName(mention.getUser().id)), 0, resultMention.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-      within = span;
-    } else {
-      within = resultMention + " ";
-    }
-
-    try { editable.replace(mention.getTargetStart(), Math.min(editable.length(), mention.getTargetEnd()), within); } catch (Throwable ignored) { }
-    try { setInput(mention.replaceInTarget(b, within), false); Views.setSelection(this, mention.getTargetStart() + within.length()); } catch (Throwable ignored) { }
-  }
-
-  @Override
-  public void onInlineQueryResultPick (InlineResult<?> result) {
-    if (controller != null) {
-      controller.sendInlineQueryResult(result.getQueryId(), result.getId(), true, true, false, null);
-    }
+  // really dirty workaround to reset fontmetrics cache (lineheightspan.chooseheight works only when text is inserted into the respected line)
+  protected void resetFontMetricsCache() {
+    float originalTextSize = getTextSize();
+    setTextSize(TypedValue.COMPLEX_UNIT_PX, originalTextSize + 1);
+    setTextSize(TypedValue.COMPLEX_UNIT_PX, originalTextSize);
   }
 }

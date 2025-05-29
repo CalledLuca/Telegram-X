@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextPaint;
@@ -27,12 +28,11 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.navigation.NavigationController;
 import org.thunderdog.challegram.navigation.SettingsWrap;
 import org.thunderdog.challegram.navigation.SettingsWrapBuilder;
@@ -42,6 +42,7 @@ import org.thunderdog.challegram.telegram.MessageListener;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibContext;
 import org.thunderdog.challegram.telegram.TdlibManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Drawables;
@@ -66,9 +67,9 @@ import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.MessageId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.MessageId;
+import tgx.td.Td;
 
 public class LiveLocationHelper implements LiveLocationManager.Listener, FactorAnimator.Target, BaseView.ActionListProvider, ForceTouchView.ActionListener, MessageListener, Handler.Callback, ClickHelper.Delegate {
   private static final int ANIMATOR_SUBTEXT = 0;
@@ -109,7 +110,7 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
     this.onBackground = onBackground;
     this.callback = callback;
     this.icon = Drawables.get(context.getResources(), R.drawable.baseline_location_on_18);
-    this.handler = chatId != 0 ? new Handler(this) : null;
+    this.handler = chatId != 0 ? new Handler(Looper.getMainLooper(), this) : null;
     this.clickHelper = chatId != 0 ? new ClickHelper(this) : null;
   }
 
@@ -124,7 +125,7 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
           TdApi.Message[] msgs = ((TdApi.Messages) object).messages;
           messages.ensureCapacity(msgs.length);
           for (TdApi.Message message : msgs) {
-            if (message.content.getConstructor() != TdApi.MessageLocation.CONSTRUCTOR || ((TdApi.MessageLocation) message.content).expiresIn == 0) {
+            if (!Td.isLocation(message.content) || ((TdApi.MessageLocation) message.content).expiresIn == 0) {
               continue;
             }
             messages.add(message);
@@ -565,14 +566,11 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
       info = Lang.getString(R.string.StopLiveLocationInfo);
     }
 
-    c.showOptions(info, ids.get(), strings.get(), new int[] {ViewController.OPTION_COLOR_RED, ViewController.OPTION_COLOR_NORMAL}, icons.get(), (itemView, id) -> {
-      switch (id) {
-        case R.id.btn_stopAllLiveLocations: {
-          tdlib.cache().stopLiveLocations(chatId);
-          if (after != null) {
-            after.run();
-          }
-          break;
+    c.showOptions(info, ids.get(), strings.get(), new int[] {ViewController.OptionColor.RED, ViewController.OptionColor.NORMAL}, icons.get(), (itemView, id) -> {
+      if (id == R.id.btn_stopAllLiveLocations) {
+        tdlib.cache().stopLiveLocations(chatId);
+        if (after != null) {
+          after.run();
         }
       }
       return true;
@@ -614,7 +612,7 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
     final SettingsWrap[] wrap = new SettingsWrap[1];
 
     b.setSaveStr(R.string.StopAllLocationSharings);
-    b.setSaveColorId(R.id.theme_color_textNegative);
+    b.setSaveColorId(ColorId.textNegative);
     b.addHeaderItem(Lang.plural(R.string.SharingLiveLocationToChats, locationMessages.size()));
     ListItem[] items = new ListItem[locationMessages.size() + 2];
     items[0] = items[items.length - 1] = new ListItem(ListItem.TYPE_PADDING).setHeight(Screen.dp(12f)).setBoolValue(true);
@@ -628,7 +626,7 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
     b.setDrawerProcessor((item, view, timerView, isUpdate) -> {
       TdApi.Message message = (TdApi.Message) item.getData();
       TdApi.Chat chat = tdlib.chat(message.chatId);
-      view.setAvatar(tdlib.chatPlaceholderMetadata(message.chatId, chat, false), TD.getAvatar(tdlib, chat));
+      view.setAvatar(tdlib, message.chatId);
       view.setText(tdlib.chatTitle(chat));
       view.setPreviewChatId(null, message.chatId, null, new MessageId(message.chatId, message.id), null);
       view.setPreviewActionListProvider(LiveLocationHelper.this);
@@ -643,7 +641,7 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
       }
       return false;
     });
-    b.setOnSettingItemClick((view, settingsId, item, doneButton, settingsAdapter) -> {
+    b.setOnSettingItemClick((view, settingsId, item, doneButton, settingsAdapter, window) -> {
       TdApi.Message message = (TdApi.Message) item.getData();
       TdApi.MessageLocation messageLocation = (TdApi.MessageLocation) message.content;
       MapController.Args args = new MapController.Args(messageLocation.location.latitude, messageLocation.location.longitude, message).setChatId(message.chatId, message.messageThreadId).setNavigateBackOnStop(true);
@@ -693,16 +691,13 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
 
   @Override
   public void onAfterForceTouchAction (ForceTouchView.ForceTouchContext context, int actionId, Object arg) {
-    switch (actionId) {
-      case R.id.btn_messageLiveStop: {
-        stopLiveLocations(((MessagesController) arg).getChatId(), () -> {
-          if (lastPopup != null) {
-            lastPopup.window.hideWindow(true);
-            lastPopup = null;
-          }
-        });
-        break;
-      }
+    if (actionId == R.id.btn_messageLiveStop) {
+      stopLiveLocations(((MessagesController) arg).getChatId(), () -> {
+        if (lastPopup != null) {
+          lastPopup.window.hideWindow(true);
+          lastPopup = null;
+        }
+      });
     }
   }
 
@@ -825,21 +820,21 @@ public class LiveLocationHelper implements LiveLocationManager.Listener, FactorA
 
   @Override
   public void onNewMessage (TdApi.Message message) {
-    if (!message.isOutgoing && message.sendingState == null && message.schedulingState == null && message.content.getConstructor() == TdApi.MessageLocation.CONSTRUCTOR && ((TdApi.MessageLocation) message.content).livePeriod > 0 && ((TdApi.MessageLocation) message.content).expiresIn > 0) {
+    if (!message.isOutgoing && message.sendingState == null && message.schedulingState == null && Td.isLocation(message.content) && ((TdApi.MessageLocation) message.content).livePeriod > 0 && ((TdApi.MessageLocation) message.content).expiresIn > 0) {
       UI.post(() -> addChatMessage(message));
     }
   }
 
   @Override
   public void onMessageSendSucceeded (TdApi.Message message, long oldMessageId) {
-    if (message.content.getConstructor() == TdApi.MessageLocation.CONSTRUCTOR && message.schedulingState == null && ((TdApi.MessageLocation) message.content).livePeriod > 0 && ((TdApi.MessageLocation) message.content).expiresIn > 0) {
+    if (Td.isLocation(message.content) && message.schedulingState == null && ((TdApi.MessageLocation) message.content).livePeriod > 0 && ((TdApi.MessageLocation) message.content).expiresIn > 0) {
       UI.post(() -> addChatMessage(message));
     }
   }
 
   @Override
   public void onMessageContentChanged (long chatId, long messageId, TdApi.MessageContent newContent) {
-    if (newContent.getConstructor() == TdApi.MessageLocation.CONSTRUCTOR && ((TdApi.MessageLocation) newContent).livePeriod > 0) {
+    if (Td.isLocation(newContent) && ((TdApi.MessageLocation) newContent).livePeriod > 0) {
       UI.post(() -> editChatMessage(messageId, (TdApi.MessageLocation) newContent));
     }
   }

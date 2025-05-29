@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@ import org.thunderdog.challegram.unsorted.Passcode;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.lambda.CancellableRunnable;
 
+@SuppressWarnings("deprecation")
 public class RootFrameLayout extends FrameLayoutFix {
   private Object lastInsets;
 
@@ -73,7 +74,7 @@ public class RootFrameLayout extends FrameLayoutFix {
     this.ignoreSystemNavigationBar = ignoreSystemNavigationBar;
   }
 
-  public void setIgnoreAll (boolean ignoreAll) {
+  public void setIgnoreAllInsets (boolean ignoreAll) {
     this.ignoreAll = ignoreAll;
   }
 
@@ -100,15 +101,19 @@ public class RootFrameLayout extends FrameLayoutFix {
         lastAction = null;
       }
       if (keyboardListener != null) {
-        getViewTreeObserver().removeOnPreDrawListener(onPreDrawListener);
-        getViewTreeObserver().addOnPreDrawListener(onPreDrawListener);
+        ViewTreeObserver observer = getViewTreeObserver();
+        observer.removeOnPreDrawListener(onPreDrawListener);
+        observer.addOnPreDrawListener(onPreDrawListener);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
           keyboardListener.onKeyboardStateChanged(isVisible);
           UI.post(lastAction = new CancellableRunnable() {
             @Override
             public void act () {
-              getViewTreeObserver().removeOnPreDrawListener(onPreDrawListener);
+              observer.removeOnPreDrawListener(onPreDrawListener);
               invalidate();
+              if (lastAction == this) {
+                lastAction = null;
+              }
             }
           }.removeOnCancel(UI.getAppHandler()), 20);
         } else {
@@ -116,24 +121,14 @@ public class RootFrameLayout extends FrameLayoutFix {
             @Override
             public void act () {
               keyboardListener.onKeyboardStateChanged(isVisible);
-              getViewTreeObserver().removeOnPreDrawListener(onPreDrawListener);
+              observer.removeOnPreDrawListener(onPreDrawListener);
               invalidate();
+              if (lastAction == this) {
+                lastAction = null;
+              }
             }
           }.removeOnCancel(UI.getAppHandler()), 2);
         }
-        /*if (true || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-
-        } else {
-          keyboardListener.onKeyboardStateChanged(isVisible);
-        }*/
-        /*if (isVisible) {
-          UI.postDelayed(new Runnable() {
-            @Override
-            public void run () {
-              keyboardListener.closeAdditionalKeyboards();
-            }
-          }, 20);
-        }*/
       }
     }
   }
@@ -226,10 +221,12 @@ public class RootFrameLayout extends FrameLayoutFix {
     int top = wi.getSystemWindowInsetTop();
     int right = wi.getSystemWindowInsetRight();
     int bottom =  wi.getSystemWindowInsetBottom();
-    if (ignoreAll || UI.getContext(getContext()).dispatchCameraMargins(child, left, top, right, bottom)) {
+    if (UI.getContext(getContext()).dispatchCameraMargins(child, left, top, right, bottom)) {
       wi.replaceSystemWindowInsets(0, 0, 0, 0);
     } else {
-      if (ignoreBottom || (shouldIgnoreBottomMargin(child, bottom))) {
+      if (ignoreAll) {
+        wi.replaceSystemWindowInsets(0, 0, 0, 0);
+      } else if (ignoreBottom || (shouldIgnoreBottomMargin(child, bottom))) {
         wi.replaceSystemWindowInsets(left, top, right, 0);
       }
       ViewController<?> c = ViewController.findAncestor(child);
@@ -258,17 +255,21 @@ public class RootFrameLayout extends FrameLayoutFix {
     } else if (drawerGravity == Gravity.RIGHT) {
       wi = wi.replaceSystemWindowInsets(0, wi.getSystemWindowInsetTop(), wi.getSystemWindowInsetRight(), wi.getSystemWindowInsetBottom());
     }
-    lp.leftMargin = ignoreHorizontal ? 0 : wi.getSystemWindowInsetLeft();
-    lp.topMargin = topOnly ? 0 : wi.getSystemWindowInsetTop();
-    lp.rightMargin = ignoreHorizontal ? 0 : wi.getSystemWindowInsetRight();
+    int left = wi.getSystemWindowInsetLeft();
+    int top = wi.getSystemWindowInsetTop();
+    int right = wi.getSystemWindowInsetRight();
     int bottom = wi.getSystemWindowInsetBottom();
-    lp.bottomMargin = ignoreBottom || shouldIgnoreBottomMargin(child, bottom) ? 0 : bottom;
+
+    lp.leftMargin = ignoreAll || ignoreHorizontal ? 0 : left;
+    lp.topMargin = ignoreAll || topOnly ? 0 : top;
+    lp.rightMargin = ignoreAll || ignoreHorizontal ? 0 : right;
+    lp.bottomMargin = ignoreAll || ignoreBottom || shouldIgnoreBottomMargin(child, bottom) ? 0 : bottom;
     if (UI.getContext(getContext()).dispatchCameraMargins(child, lp.leftMargin, lp.topMargin, lp.rightMargin, bottom)) {
       lp.leftMargin = lp.topMargin = lp.rightMargin = lp.bottomMargin = 0;
     } else {
       ViewController<?> c = ViewController.findAncestor(child);
       if (c != null) {
-        c.dispatchInnerMargins(lp.leftMargin, lp.topMargin, lp.rightMargin, bottom);
+        c.dispatchInnerMargins(left, top, right, bottom);
       }
     }
   }

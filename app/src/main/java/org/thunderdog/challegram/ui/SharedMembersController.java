@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,10 +17,11 @@ package org.thunderdog.challegram.ui;
 import android.content.Context;
 import android.view.View;
 
+import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.DoubleTextWrapper;
@@ -41,8 +42,8 @@ import java.util.List;
 
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class SharedMembersController extends SharedBaseController<DoubleTextWrapper> implements
   TdlibCache.BasicGroupDataChangeListener,
@@ -53,10 +54,11 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
     super(context, tdlib);
   }
 
-  /*@Override
-  public int getIcon () {
-    return R.drawable.baseline_group_20;
-  }*/
+  private boolean forceAdmins;
+
+  public void setForceAdmins (boolean forceAdmins) {
+    this.forceAdmins = forceAdmins;
+  }
 
   @Override
   public CharSequence getName () {
@@ -70,12 +72,28 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
           return Lang.getString(R.string.TabRestricted);
       }
     }
-    return Lang.getString(R.string.TabMembers);
+    return Lang.getString(forceAdmins ? R.string.TabAdmins : R.string.TabMembers);
+  }
+
+  @DrawableRes
+  @Override
+  public int getIcon () {
+    if (specificFilter != null) {
+      switch (specificFilter.getConstructor()) {
+        case TdApi.SupergroupMembersFilterAdministrators.CONSTRUCTOR:
+          return R.drawable.baseline_stars_24;
+        case TdApi.SupergroupMembersFilterBanned.CONSTRUCTOR:
+          return R.drawable.baseline_gavel_24;
+        case TdApi.SupergroupMembersFilterRestricted.CONSTRUCTOR:
+          return R.drawable.baseline_block_24;
+      }
+    }
+    return forceAdmins ? R.drawable.baseline_stars_24 : R.drawable.baseline_group_24;
   }
 
   @Override
   protected CharSequence buildTotalCount (ArrayList<DoubleTextWrapper> data) {
-    int res = R.string.xMembers;
+    int res = forceAdmins ? R.string.xAdmins : R.string.xMembers;
     if (specificFilter != null) {
       switch (specificFilter.getConstructor()) {
         case TdApi.SupergroupMembersFilterAdministrators.CONSTRUCTOR:
@@ -188,7 +206,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
         return DoubleTextWrapper.valueOf(tdlib, (TdApi.ChatMember) object, needFullMemberDescription(), needAdminSign());
       }
       case TdApi.User.CONSTRUCTOR: {
-        return new DoubleTextWrapper(tdlib, ((TdApi.User) object).id, true);
+        return new DoubleTextWrapper(tdlib, ((TdApi.User) object).id, true, DoubleTextWrapper.SubtitleOption.SHOW_ACCESS_TO_MESSAGE_PRIVACY);
       }
     }
     return null;
@@ -265,14 +283,14 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
     if (TD.isCreator(member.status)) {
       if (TD.isCreator(myStatus)) {
         ids.append(R.id.btn_editRights);
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_edit_24);
         strings.append(R.string.EditAdminTitle);
 
         boolean isAnonymous = ((TdApi.ChatMemberStatusCreator) member.status).isAnonymous;
         if (!isChannel() || isAnonymous) {
           ids.append(isAnonymous ? R.id.btn_makePublic : R.id.btn_makePrivate);
-          colors.append(OPTION_COLOR_NORMAL);
+          colors.append(OptionColor.NORMAL);
           icons.append(isAnonymous ? R.drawable.nilsfast_baseline_incognito_off_24 : R.drawable.infanf_baseline_incognito_24);
           strings.append(isAnonymous ? R.string.EditOwnerPublic : R.string.EditOwnerAnonymous);
         }
@@ -281,7 +299,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
       int promoteMode = TD.canPromoteAdmin(myStatus, member.status);
       if (promoteMode != TD.PROMOTE_MODE_NONE) {
         ids.append(R.id.btn_editRights);
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_stars_24);
         switch (promoteMode) {
           case TD.PROMOTE_MODE_EDIT:
@@ -305,7 +323,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
         )) {
           boolean isAnonymous = ((TdApi.ChatMemberStatusAdministrator) member.status).rights.isAnonymous;
           ids.append(isAnonymous ? R.id.btn_makePublic : R.id.btn_makePrivate);
-          colors.append(OPTION_COLOR_NORMAL);
+          colors.append(OptionColor.NORMAL);
           icons.append(isAnonymous ? R.drawable.nilsfast_baseline_incognito_off_24 : R.drawable.infanf_baseline_incognito_24);
           strings.append(isAnonymous ? R.string.EditAdminPublic : R.string.EditAdminAnonymous);
         }
@@ -315,7 +333,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
       if (restrictMode != TD.RESTRICT_MODE_NONE) {
         if (!isChannel() && !(restrictMode == TD.RESTRICT_MODE_EDIT && member.memberId.getConstructor() == TdApi.MessageSenderChat.CONSTRUCTOR)) {
           ids.append(R.id.btn_restrictMember);
-          colors.append(OPTION_COLOR_NORMAL);
+          colors.append(OptionColor.NORMAL);
           icons.append(R.drawable.baseline_block_24);
           switch (restrictMode) {
             case TD.RESTRICT_MODE_EDIT:
@@ -335,7 +353,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
         if (restrictMode != TD.RESTRICT_MODE_VIEW) {
           if (TD.isMember(member.status)) {
             ids.append(R.id.btn_blockSender);
-            colors.append(OPTION_COLOR_NORMAL);
+            colors.append(OptionColor.NORMAL);
             icons.append(R.drawable.baseline_remove_circle_24);
             strings.append(isChannel() ? R.string.ChannelRemoveUser : R.string.RemoveFromGroup);
           } else {
@@ -355,7 +373,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
                   R.string.UnbanMember
               );
               ids.append(R.id.btn_unblockSender);
-              colors.append(OPTION_COLOR_NORMAL);
+              colors.append(OptionColor.NORMAL);
               icons.append(R.drawable.baseline_remove_circle_24);
             }
           }
@@ -371,7 +389,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
         strings.append(Lang.getString(content.getSenderId().getConstructor() == TdApi.MessageSenderUser.CONSTRUCTOR ? R.string.ViewMessagesFromUser : R.string.ViewMessagesFromChat, tdlib.senderName(content.getSenderId(), true)));
       }
       icons.append(R.drawable.baseline_person_24);
-      colors.append(OPTION_COLOR_NORMAL);
+      colors.append(OptionColor.NORMAL);
     }
 
     if (!ids.isEmpty()) {
@@ -392,55 +410,46 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
         result = Lang.boldify(name);
       }
       showOptions(result, ids.get(), strings.get(), colors.get(), icons.get(), (itemView, id) -> {
-        switch (id) {
-          case R.id.btn_messageViewList:
-            HashtagChatController c = new HashtagChatController(context, tdlib);
-            c.setArguments(new HashtagChatController.Arguments(null, chatId, null, new TdApi.MessageSenderUser(content.getUserId()), false));
-            if (parent != null) {
-              parent.navigateTo(c);
-            } else {
-              getParentOrSelf().navigateTo(c);
-            }
-            break;
-          case R.id.btn_makePrivate:
-          case R.id.btn_makePublic: {
-            Runnable act = () -> {
-              TdApi.ChatMemberStatus newStatus = Td.copyOf(content.getMember().status);
-
-              switch (newStatus.getConstructor()) {
-                case TdApi.ChatMemberStatusCreator.CONSTRUCTOR:
-                  ((TdApi.ChatMemberStatusCreator) newStatus).isAnonymous = id == R.id.btn_makePrivate;
-                  break;
-                case TdApi.ChatMemberStatusAdministrator.CONSTRUCTOR:
-                  ((TdApi.ChatMemberStatusAdministrator) newStatus).rights.isAnonymous = id == R.id.btn_makePrivate;
-                  break;
-                default:
-                  return;
-              }
-
-              tdlib.setChatMemberStatus(chatId, content.getSenderId(), newStatus, content.getMember().status, null);
-            };
-
-            if (ChatId.isBasicGroup(chatId)) {
-              showConfirm(Lang.getMarkdownString(this, R.string.UpgradeChatPrompt), Lang.getString(R.string.Proceed), act);
-            } else {
-              act.run();
-            }
-
-            break;
+        if (id == R.id.btn_messageViewList) {
+          TdApi.Chat chat = tdlib.chat(chatId);
+          MessagesController c = new MessagesController(context, tdlib);
+          c.setArguments(new MessagesController.Arguments(null, chat, content.getSenderId()));
+          if (parent != null) {
+            parent.navigateTo(c);
+          } else {
+            getParentOrSelf().navigateTo(c);
           }
-          case R.id.btn_editRights:
-            editMember(content, false);
-            break;
-          case R.id.btn_restrictMember:
-            editMember(content, true);
-            break;
-          case R.id.btn_blockSender:
-            tdlib.ui().kickMember(getParentOrSelf(), chatId, content.getSenderId(), content.getMember().status);
-            break;
-          case R.id.btn_unblockSender:
-            tdlib.ui().unblockMember(getParentOrSelf(), chatId, content.getSenderId(), content.getMember().status);
-            break;
+        } else if (id == R.id.btn_makePrivate || id == R.id.btn_makePublic) {
+          Runnable act = () -> {
+            TdApi.ChatMemberStatus newStatus = Td.copyOf(content.getMember().status);
+
+            switch (newStatus.getConstructor()) {
+              case TdApi.ChatMemberStatusCreator.CONSTRUCTOR:
+                ((TdApi.ChatMemberStatusCreator) newStatus).isAnonymous = id == R.id.btn_makePrivate;
+                break;
+              case TdApi.ChatMemberStatusAdministrator.CONSTRUCTOR:
+                ((TdApi.ChatMemberStatusAdministrator) newStatus).rights.isAnonymous = id == R.id.btn_makePrivate;
+                break;
+              default:
+                return;
+            }
+
+            tdlib.setChatMemberStatus(chatId, content.getSenderId(), newStatus, content.getMember().status, null);
+          };
+
+          if (ChatId.isBasicGroup(chatId)) {
+            showConfirm(Lang.getMarkdownString(this, R.string.UpgradeChatPrompt), Lang.getString(R.string.Proceed), act);
+          } else {
+            act.run();
+          }
+        } else if (id == R.id.btn_editRights) {
+          editMember(content, false);
+        } else if (id == R.id.btn_restrictMember) {
+          editMember(content, true);
+        } else if (id == R.id.btn_blockSender) {
+          tdlib.ui().kickMember(getParentOrSelf(), chatId, content.getSenderId(), content.getMember().status);
+        } else if (id == R.id.btn_unblockSender) {
+          tdlib.ui().unblockMember(getParentOrSelf(), chatId, content.getSenderId(), content.getMember().status);
         }
         return true;
       });
@@ -607,7 +616,7 @@ public class SharedMembersController extends SharedBaseController<DoubleTextWrap
           return Lang.getString(isChannel() ? R.string.MembersDetailBannedChannel : R.string.MembersDetailBannedGroup);
       }
     }
-    return Lang.getString(R.string.Recent);
+    return Lang.getString(forceAdmins ? R.string.RecentAdmins : R.string.Recent);
   }
 
   @Override

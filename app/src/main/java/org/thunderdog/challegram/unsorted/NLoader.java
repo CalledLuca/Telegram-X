@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,22 +19,23 @@ import android.os.SystemClock;
 import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
+import androidx.media3.common.C;
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary;
+import androidx.media3.decoder.flac.FlacLibrary;
+import androidx.media3.decoder.opus.OpusLibrary;
+import androidx.media3.decoder.vp9.VpxLibrary;
 
 import com.getkeepsafe.relinker.ReLinker;
 import com.getkeepsafe.relinker.ReLinkerInstance;
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ext.ffmpeg.FfmpegLibrary;
-import com.google.android.exoplayer2.ext.flac.FlacLibrary;
-import com.google.android.exoplayer2.ext.opus.OpusLibrary;
-import com.google.android.exoplayer2.ext.vp9.VpxLibrary;
 
 import org.thunderdog.challegram.BuildConfig;
-import org.thunderdog.challegram.config.Config;
+import org.thunderdog.challegram.N;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.voip.VoIPController;
+import org.webrtc.SoftwareVideoEncoderFactory;
+import org.webrtc.VideoCodecInfo;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 
 import me.vkryl.leveldb.LevelDB;
@@ -56,31 +57,23 @@ public class NLoader implements ReLinker.Logger {
     return instance;
   }
 
-  public static boolean ensureLibraryLoaded () {
-    return loaded || loadLibrary();
+  private static void loadLibraryImpl (ReLinkerInstance reLinker, String library, @Nullable String version) {
+    long ms = SystemClock.uptimeMillis();
+    reLinker.loadLibrary(UI.getAppContext(), library, version);
+    android.util.Log.v("tgx", "Loaded " + library + " in " + (SystemClock.uptimeMillis() - ms) + "ms");
   }
 
   public static synchronized boolean loadLibrary () {
     if (!loaded) {
       try {
-        long ms;
         ReLinkerInstance reLinker = ReLinker.recursively().log(NLoader.instance());
-        int libCount = 2;
-        if (Config.SO_SHARED) {
-          libCount++;
-        }
-        List<String> libraries = new ArrayList<>(libCount);
-        if (Config.SO_SHARED) {
-          libraries.add("c++_shared");
-        }
-        libraries.add("tdjni");
-        libraries.add("leveldbjni");
-        libraries.add("challegram.23");
-        for (String library : libraries) {
-          ms = SystemClock.uptimeMillis();
-          reLinker.loadLibrary(UI.getAppContext(), library, "1." + BuildConfig.SO_VERSION);
-          android.util.Log.v("tgx", "Loaded " + library + " in " + (SystemClock.uptimeMillis() - ms) + "ms");
-        }
+        loadLibraryImpl(reLinker, "c++_shared", BuildConfig.NDK_VERSION);
+        loadLibraryImpl(reLinker, "cryptox", BuildConfig.OPENSSL_VERSION_FULL);
+        loadLibraryImpl(reLinker, "sslx", BuildConfig.OPENSSL_VERSION_FULL);
+        loadLibraryImpl(reLinker, "tdjni", BuildConfig.TDLIB_VERSION);
+        loadLibraryImpl(reLinker, "leveldbjni", BuildConfig.LEVELDB_VERSION);
+        loadLibraryImpl(reLinker, "tgcallsjni", BuildConfig.JNI_VERSION /*TODO: separate variable?*/);
+        loadLibraryImpl(reLinker, "tgxjni", BuildConfig.JNI_VERSION);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
           OpusLibrary.setLibraries(C.CRYPTO_TYPE_UNSUPPORTED);
           VpxLibrary.setLibraries(C.CRYPTO_TYPE_UNSUPPORTED);
@@ -88,13 +81,15 @@ public class NLoader implements ReLinker.Logger {
           FfmpegLibrary.setLibraries();
           if (BuildConfig.DEBUG) {
             android.util.Log.v("tgx", String.format(Locale.US,
-              "leveldb %s, libopus %s, libvpx %s, ffmpeg %s, tgvoip %s",
+              "leveldb %s, libopus %s, libvpx %s, ffmpeg %s, tgvoip %s, tgcalls %s",
               LevelDB.getVersion(),
               OpusLibrary.getVersion(),
               VpxLibrary.getVersion(),
               FfmpegLibrary.getVersion(),
-              VoIPController.getVersion()
+              VoIPController.getVersion(),
+              TextUtils.join("+", N.getTgCallsVersions())
             ));
+            VideoCodecInfo[] softwareVideoCodecs = new SoftwareVideoEncoderFactory().getSupportedCodecs();
           }
         }
       } catch (Throwable t) {

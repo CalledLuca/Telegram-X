@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@ package org.thunderdog.challegram.data;
 
 import androidx.annotation.NonNull;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.component.sticker.TGStickerObj;
 import org.thunderdog.challegram.telegram.Tdlib;
@@ -26,7 +26,7 @@ public class InlineResultSticker extends InlineResult<TdApi.InlineQueryResultSti
 
   public InlineResultSticker (BaseActivity context, Tdlib tdlib, String emoji, TdApi.InlineQueryResultSticker data) {
     super(context, tdlib, TYPE_STICKER, data.id, data);
-    this.sticker = new TGStickerObj(tdlib, data.sticker, emoji, data.sticker.type);
+    this.sticker = new TGStickerObj(tdlib, data.sticker, emoji, data.sticker.fullType);
   }
 
   public @NonNull TGStickerObj getSticker () {

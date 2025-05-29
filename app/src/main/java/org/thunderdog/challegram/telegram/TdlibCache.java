@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,14 +23,16 @@ import android.os.SystemClock;
 import androidx.annotation.AnyThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.Px;
 import androidx.annotation.UiThread;
 import androidx.collection.SparseArrayCompat;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.TDLib;
 import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.AvatarPlaceholder;
@@ -38,9 +40,10 @@ import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
+import org.thunderdog.challegram.util.AppUpdater;
 import org.thunderdog.challegram.util.DrawableProvider;
 import org.thunderdog.challegram.util.text.Letters;
-import org.thunderdog.challegram.voip.VoIPController;
+import org.thunderdog.challegram.voip.annotation.CallState;
 import org.thunderdog.challegram.voip.gui.CallSettings;
 
 import java.util.ArrayList;
@@ -50,21 +53,22 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import me.vkryl.core.ArrayUtils;
+import me.vkryl.android.AppInstallationUtil;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.LongSparseIntArray;
+import me.vkryl.core.collection.LongSparseLongArray;
 import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.RunnableData;
 import me.vkryl.core.reference.ReferenceIntMap;
 import me.vkryl.core.reference.ReferenceList;
 import me.vkryl.core.reference.ReferenceLongMap;
 import me.vkryl.core.reference.ReferenceMap;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupStartupDelegate, UI.StateListener {
   public interface UserDataChangeListener {
-    void onUserUpdated (TdApi.User user);
+    default void onUserUpdated (TdApi.User user) { }
     default void onUserFullUpdated (long userId, TdApi.UserFullInfo userFull) { }
   }
 
@@ -123,6 +127,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
   private final HashMap<Long, TdApi.Supergroup> supergroups = new HashMap<>();
   private final HashMap<Long, TdApi.SupergroupFullInfo> supergroupsFulls = new HashMap<>();
+  private final LongSparseLongArray supergroupsFullsLastUpdateTime = new LongSparseLongArray();
   private final ReferenceList<SupergroupDataChangeListener> supergroupsGlobalListeners = new ReferenceList<>();
   private final ReferenceLongMap<SupergroupDataChangeListener> supergroupListeners = new ReferenceLongMap<>();
 
@@ -141,21 +146,11 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   private final ArrayList<TdApi.Message> outputLocations = new ArrayList<>();
 
   private boolean loadingMyUser;
-  private final Client.ResultHandler meHandler, dataHandler;
+  private final Tdlib.ResultHandler<TdApi.User> meHandler;
+  private final Client.ResultHandler dataHandler;
 
   private final LongSparseIntArray pendingStatusRefresh = new LongSparseIntArray();
   private final Handler onlineHandler;
-
-  private final Client.ResultHandler locationListHandler = object -> {
-    switch (object.getConstructor()) {
-      case TdApi.Messages.CONSTRUCTOR:
-        replaceOutputLocationList(((TdApi.Messages) object).messages);
-        break;
-      case TdApi.Error.CONSTRUCTOR:
-        Log.i("Unable to load active live locations: %s", TD.toErrorString(object));
-        break;
-    }
-  };
 
   private final Object dataLock = new Object();
 
@@ -204,20 +199,11 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   TdlibCache (Tdlib tdlib) {
     this.tdlib = tdlib;
 
-    this.meHandler = object -> {
-      switch (object.getConstructor()) {
-        case TdApi.User.CONSTRUCTOR: {
-          loadingMyUser = false;
-          break;
-        }
-        case TdApi.Error.CONSTRUCTOR: {
-          UI.showError(object);
-          break;
-        }
-        default: {
-          Log.unexpectedTdlibResponse(object, TdApi.GetMe.class, TdApi.User.class, TdApi.Error.class);
-          break;
-        }
+    this.meHandler = (user, error) -> {
+      if (error != null) {
+        UI.showError(error);
+      } else {
+        loadingMyUser = false;
       }
     };
     this.dataHandler = object -> {
@@ -251,8 +237,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
           break;
         }
         default: {
-          Log.unexpectedTdlibResponse(object, TdApi.GetUserFullInfo.class, TdApi.UserFullInfo.class, TdApi.BasicGroupFullInfo.class, TdApi.SupergroupFullInfo.class, TdApi.Error.class, TdApi.User.class);
-          break;
+          throw new UnsupportedOperationException(object.toString());
         }
       }
     };
@@ -262,12 +247,12 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     tdlib.listeners().addCleanupListener(this);
 
     UI.addStateListener(this);
-    this.refreshUiPaused = UI.getUiState() != UI.STATE_RESUMED;
+    this.refreshUiPaused = UI.getUiState() != UI.State.RESUMED;
   }
 
   @Override
   public void onUiStateChanged (int newState) {
-    setPauseStatusRefreshers(newState != UI.STATE_RESUMED);
+    setPauseStatusRefreshers(newState != UI.State.RESUMED);
   }
 
   public void getInviteText (@Nullable final RunnableData<TdApi.Text> callback) {
@@ -279,10 +264,18 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     });
   }
 
-  public void getDownloadUrl (@Nullable final RunnableData<TdApi.HttpUrl> callback) {
+  private @NonNull AppInstallationUtil.DownloadUrl toDownloadUrl (@Nullable TdApi.HttpUrl url) {
+    final String httpUrl = url != null ? url.url : null;
+    if (!StringUtils.isEmpty(httpUrl) && tdlib.hasUrgentInAppUpdate()) {
+      return new AppInstallationUtil.DownloadUrl(httpUrl);
+    }
+    return AppUpdater.getDownloadUrl(httpUrl);
+  }
+
+  public void getDownloadUrl (@Nullable final RunnableData<AppInstallationUtil.DownloadUrl> callback) {
     if (downloadUrl != null) {
       if (callback != null) {
-        callback.runWithData(downloadUrl);
+        callback.runWithData(toDownloadUrl(downloadUrl));
       }
       return;
     }
@@ -290,32 +283,22 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
       @Override
       public void act () {
         if (callback != null) {
-          callback.runWithData(new TdApi.HttpUrl(BuildConfig.DOWNLOAD_URL));
+          callback.runWithData(toDownloadUrl(null));
         }
         cancel();
       }
     };
-    tdlib.client().send(new TdApi.GetApplicationDownloadLink(), object -> {
-      switch (object.getConstructor()) {
-        case TdApi.HttpUrl.CONSTRUCTOR: {
-          TdApi.HttpUrl httpUrl = (TdApi.HttpUrl) object;
-          if (Strings.isValidLink(httpUrl.url)) {
-            tdlib.ui().post(() -> {
-              downloadUrl = httpUrl;
-              if (callback != null && fallback.isPending()) {
-                callback.runWithData(httpUrl);
-                fallback.cancel();
-              }
-            });
-          } else {
-            tdlib.ui().post(fallback);
+    tdlib.send(new TdApi.GetApplicationDownloadLink(), (httpUrl, error) -> {
+      if (error != null || !Strings.isValidLink(httpUrl.url)) {
+        tdlib.ui().post(fallback);
+      } else {
+        tdlib.ui().post(() -> {
+          downloadUrl = httpUrl;
+          if (callback != null && fallback.isPending()) {
+            callback.runWithData(toDownloadUrl(httpUrl));
+            fallback.cancel();
           }
-          break;
-        }
-        case TdApi.Error.CONSTRUCTOR: {
-          tdlib.ui().post(fallback);
-          break;
-        }
+        });
       }
     });
     if (tdlib.context().watchDog().isOnline()) {
@@ -328,14 +311,8 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   // === PUBLIC ===
 
   @Override
-  public void onPerformStartup (boolean isAfterRestart) {
-    tdlib.client().send(new TdApi.GetActiveLiveLocationMessages(), locationListHandler);
-  }
-
-  @Override
   public void onPerformUserCleanup () {
     onlineHandler.removeCallbacksAndMessages(null);
-    tdlib.client().send(new TdApi.GetActiveLiveLocationMessages(), locationListHandler);
   }
 
   @Override
@@ -434,7 +411,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
         tdlib.downloadMyUser(myUser);
       } else if (!loadingMyUser) {
         loadingMyUser = true;
-        tdlib.client().send(new TdApi.GetMe(), meHandler);
+        tdlib.send(new TdApi.GetMe(), meHandler);
       }
     } else {
       notifyMyUserListeners(myUserListeners.iterator(), null);
@@ -448,29 +425,35 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
   @TdlibThread
   void onUpdateUser (TdApi.UpdateUser update) {
-    boolean statusChanged;
-    boolean isMe;
-    boolean hadUser;
+    final boolean statusChanged;
+    final boolean hadUser;
+    final boolean isContactChanged;
+    final boolean isContact;
     TdApi.User newUser = update.user;
     synchronized (dataLock) {
       TdApi.User oldUser = users.get(newUser.id);
-      if (hadUser = oldUser != null) {
+      hadUser = oldUser != null;
+      isContact = newUser.isContact;
+      if (hadUser) {
         statusChanged = !Td.equalsTo(oldUser.status, newUser.status);
+        isContactChanged = oldUser.isContact != newUser.isContact;
         Td.copyTo(newUser, oldUser);
         synchronized (onlineMutex) {
           oldUser.status = newUser.status;
         }
         newUser = oldUser;
       } else {
-        statusChanged = false;
+        statusChanged = isContactChanged = false;
         users.put(newUser.id, newUser);
       }
     }
 
     notifyUserListeners(newUser);
-    if (isMe = (newUser.id == myUserId)) {
+    boolean isMe = (newUser.id == myUserId);
+    if (isMe) {
       notifyMyUserListeners(myUserListeners.iterator(), newUser);
       tdlib.downloadMyUser(newUser);
+      tdlib.context().onUpdateAccountProfile(tdlib.id(), newUser, true);
       tdlib.notifications().onUpdateMyUser(newUser);
     }
 
@@ -484,9 +467,13 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
     if (isMe) {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        TdlibNotificationChannelGroup.updateGroup(newUser);
+        TdlibNotificationChannelGroup.updateGroup(newUser, tdlib.account().isDebug());
       }
       tdlib.context().onUpdateAccountProfile(tdlib.id(), newUser, !hadUser);
+    } else {
+      if (isContactChanged) {
+        tdlib.contacts().notifyContactStatusChanged(newUser.id, isContact);
+      }
     }
   }
 
@@ -614,7 +601,15 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && updateMode == UPDATE_MODE_IMPORTANT) {
       if (chat != null) {
-        TdlibNotificationChannelGroup.updateChat(tdlib, myUserId, chat);
+        try {
+          TdlibNotificationChannelGroup.updateChat(tdlib, myUserId, chat);
+        } catch (TdlibNotificationChannelGroup.ChannelCreationFailureException e) {
+          TDLib.Tag.notifications("Unable to update notification channel for supergroup %d:\n%s",
+            update.supergroup.id,
+            Log.toString(e)
+          );
+          tdlib.settings().trackNotificationChannelProblem(e, ChatId.fromSupergroupId(update.supergroup.id));
+        }
       }
     }
   }
@@ -649,8 +644,8 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   // Calls
 
   @UiThread
-  void onCallStateChanged (final int callId, final int newState) {
-    if (newState == VoIPController.STATE_ESTABLISHED) {
+  void onCallStateChanged (final int callId, final @CallState int newState) {
+    if (newState == CallState.ESTABLISHED) {
       notifyCallListeners(callsGlobalListeners.iterator(), callId, newState, false);
       notifyCallListeners(callListeners.iterator(callId), callId, newState, false);
     }
@@ -720,45 +715,45 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
   // Listeners
 
-  public void subscribeToAnyUpdates (Object any) {
-    if (any instanceof UserDataChangeListener) {
-      __putGlobalUserDataListener((UserDataChangeListener) any);
+  public void subscribeForGlobalUpdates (Object globalListener) {
+    if (globalListener instanceof UserDataChangeListener) {
+      __putGlobalUserDataListener((UserDataChangeListener) globalListener);
     }
-    if (any instanceof UserStatusChangeListener) {
-      __putGlobalStatusListener((UserStatusChangeListener) any);
+    if (globalListener instanceof UserStatusChangeListener) {
+      __putGlobalStatusListener((UserStatusChangeListener) globalListener);
     }
-    if (any instanceof BasicGroupDataChangeListener) {
-      putGlobalBasicGroupListener((BasicGroupDataChangeListener) any);
+    if (globalListener instanceof BasicGroupDataChangeListener) {
+      putGlobalBasicGroupListener((BasicGroupDataChangeListener) globalListener);
     }
-    if (any instanceof SupergroupDataChangeListener) {
-      putGlobalSupergroupListener((SupergroupDataChangeListener) any);
+    if (globalListener instanceof SupergroupDataChangeListener) {
+      putGlobalSupergroupListener((SupergroupDataChangeListener) globalListener);
     }
-    if (any instanceof SecretChatDataChangeListener) {
-      putGlobalSecretChatListener((SecretChatDataChangeListener) any);
+    if (globalListener instanceof SecretChatDataChangeListener) {
+      putGlobalSecretChatListener((SecretChatDataChangeListener) globalListener);
     }
-    if (any instanceof CallStateChangeListener) {
-      putGlobalCallListener((CallStateChangeListener) any);
+    if (globalListener instanceof CallStateChangeListener) {
+      putGlobalCallListener((CallStateChangeListener) globalListener);
     }
   }
 
-  public void unsubscribeFromAnyUpdates (Object any) {
-    if (any instanceof UserDataChangeListener) {
-      __deleteGlobalUserDataListener((UserDataChangeListener) any);
+  public void unsubscribeFromGlobalUpdates (Object globalListener) {
+    if (globalListener instanceof UserDataChangeListener) {
+      __deleteGlobalUserDataListener((UserDataChangeListener) globalListener);
     }
-    if (any instanceof UserStatusChangeListener) {
-      __deleteGlobalStatusListener((UserStatusChangeListener) any);
+    if (globalListener instanceof UserStatusChangeListener) {
+      __deleteGlobalStatusListener((UserStatusChangeListener) globalListener);
     }
-    if (any instanceof BasicGroupDataChangeListener) {
-      deleteGlobalBasicGroupListener((BasicGroupDataChangeListener) any);
+    if (globalListener instanceof BasicGroupDataChangeListener) {
+      deleteGlobalBasicGroupListener((BasicGroupDataChangeListener) globalListener);
     }
-    if (any instanceof SupergroupDataChangeListener) {
-      deleteGlobalSupergroupListener((SupergroupDataChangeListener) any);
+    if (globalListener instanceof SupergroupDataChangeListener) {
+      deleteGlobalSupergroupListener((SupergroupDataChangeListener) globalListener);
     }
-    if (any instanceof SecretChatDataChangeListener) {
-      deleteGlobalSecretChatListener((SecretChatDataChangeListener) any);
+    if (globalListener instanceof SecretChatDataChangeListener) {
+      deleteGlobalSecretChatListener((SecretChatDataChangeListener) globalListener);
     }
-    if (any instanceof CallStateChangeListener) {
-      deleteGlobalCallListener((CallStateChangeListener) any);
+    if (globalListener instanceof CallStateChangeListener) {
+      deleteGlobalCallListener((CallStateChangeListener) globalListener);
     }
   }
 
@@ -928,12 +923,24 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     return userId != 0 && TD.isGeneralUser(user(userId));
   }
 
-  public int userAvatarColorId (long userId) {
-    return userAvatarColorId(userId != 0 ? user(userId) : null);
+  public int userAccentColorId (long userId) {
+    return userAccentColorId(userId != 0 ? user(userId) : null);
   }
 
-  public int userAvatarColorId (TdApi.User user) {
-    return TD.getAvatarColorId(user == null || TD.isUserDeleted(user) ? -1 : user.id, myUserId);
+  public int userAccentColorId (TdApi.User user) {
+    if (user != null) {
+      return user.accentColorId;
+    } else {
+      return TdlibAccentColor.InternalId.INACTIVE;
+    }
+  }
+
+  public TdlibAccentColor userAccentColor (long userId) {
+    return tdlib.chatAccentColor(ChatId.fromUserId(userId));
+  }
+
+  public TdlibAccentColor userAccentColor (TdApi.User user) {
+    return tdlib.chatAccentColor(user != null ? ChatId.fromUserId(user.id) : 0);
   }
 
   public Letters userLetters (TdApi.User user) {
@@ -946,34 +953,39 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   }
 
   public AvatarPlaceholder.Metadata selfPlaceholderMetadata () {
-    return new AvatarPlaceholder.Metadata(R.id.theme_color_avatarSavedMessages, (String) null, R.drawable.baseline_bookmark_24, 0);
+    return new AvatarPlaceholder.Metadata(tdlib.accentColor(TdlibAccentColor.InternalId.SAVED_MESSAGES), null, R.drawable.baseline_bookmark_24, 0);
+  }
+
+  public AvatarPlaceholder.Metadata repliesPlaceholderMetadata () {
+    return new AvatarPlaceholder.Metadata(tdlib.accentColor(TdlibAccentColor.InternalId.REPLIES), null, R.drawable.baseline_reply_24, R.drawable.baseline_reply_56);
+  }
+
+  public AvatarPlaceholder.Metadata deletedPlaceholderMetadata () {
+    return new AvatarPlaceholder.Metadata(tdlib.accentColor(TdlibAccentColor.InternalId.INACTIVE), null, R.drawable.baseline_ghost_24, R.drawable.baseline_ghost_56);
   }
 
   public AvatarPlaceholder.Metadata userPlaceholderMetadata (@Nullable TdApi.User user, boolean allowSavedMessages) {
     if (user == null) {
       return null;
     }
-    Letters avatarLetters = null;
-    int avatarColorId;
-    int desiredDrawableRes = 0;
-    int extraDrawableRes = 0;
     if (allowSavedMessages && tdlib.isSelfUserId(user.id)) {
-      avatarColorId = R.id.theme_color_avatarSavedMessages;
-      desiredDrawableRes = R.drawable.baseline_bookmark_24;
-    } else {
-      if (tdlib.isRepliesChat(ChatId.fromUserId(user.id))) {
-        desiredDrawableRes = R.drawable.baseline_reply_24;
-        avatarColorId = R.id.theme_color_avatarReplies;
-      } else {
-        avatarLetters = userLetters(user);
-        avatarColorId = userAvatarColorId(user);
-      }
-      extraDrawableRes = tdlib.isSelfUserId(user.id) ? R.drawable.baseline_add_a_photo_56 :
-        tdlib.isRepliesChat(ChatId.fromUserId(user.id)) ? R.drawable.baseline_reply_56 :
-        TD.isBot(user) ? R.drawable.deproko_baseline_bots_56 :
-          R.drawable.baseline_person_56;
+      return selfPlaceholderMetadata();
     }
-    return new AvatarPlaceholder.Metadata(avatarColorId, avatarLetters != null ? avatarLetters.text : null, desiredDrawableRes, extraDrawableRes);
+    long chatId = ChatId.fromUserId(user.id);
+    if (tdlib.isRepliesChat(chatId)) {
+      return repliesPlaceholderMetadata();
+    }
+    if (userDeleted(user.id)) {
+      return deletedPlaceholderMetadata();
+    }
+    TdlibAccentColor accentColor = userAccentColor(user);
+    Letters avatarLetters = userLetters(user);
+    int extraDrawableRes = /*tdlib.isSelfUserId(user.id) ? R.drawable.baseline_add_a_photo_56 :*/
+      /*tdlib.isRepliesChat(ChatId.fromUserId(user.id)) ? R.drawable.baseline_reply_56 :*/
+      TD.isBot(user) ?
+        (((TdApi.UserTypeBot) user.type).canBeEdited ? R.drawable.baseline_add_a_photo_56 : R.drawable.deproko_baseline_bots_56) :
+      R.drawable.baseline_person_56;
+    return new AvatarPlaceholder.Metadata(accentColor, avatarLetters, 0, extraDrawableRes);
   }
 
   public AvatarPlaceholder userPlaceholder (long userId, boolean allowSavedMessages, float radius, @Nullable DrawableProvider provider) {
@@ -985,6 +997,10 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   }
 
   public @Nullable ImageFile userAvatar (long userId) {
+    return userAvatar(userId, ChatView.getDefaultAvatarCacheSize());
+  }
+
+  public @Nullable ImageFile userAvatar (long userId, @Px int size) {
     if (userId == 0)
       return null;
     TdApi.User user = user(userId);
@@ -992,7 +1008,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     if (photo == null)
       return null;
     ImageFile avatarFile = new ImageFile(tdlib, photo.small);
-    avatarFile.setSize(ChatView.getDefaultAvatarCacheSize());
+    avatarFile.setSize(size);
     return avatarFile;
   }
 
@@ -1000,7 +1016,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     if (user != null || userId == 0) {
       return userPlaceholderMetadata(user, allowSavedMessages);
     } else {
-      return new AvatarPlaceholder.Metadata(TD.getAvatarColorId(userId, tdlib.myUserId()));
+      return new AvatarPlaceholder.Metadata(userAccentColor(userId));
     }
   }
 
@@ -1049,12 +1065,17 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     return userId != 0 ? TD.getUserSingleName(userId, user(userId)) : "VOID";
   }
 
-  public @Nullable String userUsername (long userId) {
+  public @Nullable TdApi.Usernames userUsernames (long userId) {
     if (userId != 0) {
       TdApi.User user = user(userId);
-      return user != null && !StringUtils.isEmpty(user.username) ? user.username : null;
+      return user != null ? user.usernames : null;
     }
     return null;
+  }
+
+  public @Nullable String userUsername (long userId) {
+    TdApi.Usernames usernames = userUsernames(userId);
+    return Td.primaryUsername(usernames);
   }
 
   @Nullable
@@ -1108,12 +1129,16 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   }
 
   public @Nullable TdApi.User searchUser (String username) {
+    return searchUser(username, false);
+  }
+
+  public @Nullable TdApi.User searchUser (String username, boolean allowDisabled) {
     TdApi.User result = null;
     synchronized (dataLock) {
       final Set<HashMap.Entry<Long, TdApi.User>> entries = users.entrySet();
       for (HashMap.Entry<Long, TdApi.User> entry : entries) {
         TdApi.User user = entry.getValue();
-        if (user.username != null && user.username.length() == username.length() && user.username.toLowerCase().equals(username)) {
+        if (Td.findUsername(user, username, allowDisabled)) {
           result = user;
           break;
         }
@@ -1221,6 +1246,12 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
   }
 
   @Nullable
+  public TdApi.Usernames supergroupUsernames (long supergroupId) {
+    TdApi.Supergroup supergroup = supergroup(supergroupId);
+    return supergroup != null ? supergroup.usernames : null;
+  }
+
+  @Nullable
   public TdApi.SupergroupFullInfo supergroupFull (long supergroupId) {
     return supergroupFull(supergroupId, true);
   }
@@ -1241,6 +1272,19 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
       }
     }
     return result;
+  }
+
+  public long getSlowModeDelayExpiresIn (long supergroupId, TimeUnit timeUnit) {
+    synchronized (dataLock) {
+      final long lastUpdateTime = supergroupsFullsLastUpdateTime.get(supergroupId, 0);
+      final TdApi.SupergroupFullInfo supergroupFullInfo = supergroupsFulls.get(supergroupId);
+      if (supergroupFullInfo != null) {
+        final long delayExpiresInMillis = TimeUnit.SECONDS.toMillis((long) supergroupFullInfo.slowModeDelayExpiresIn);
+        return timeUnit.convert(Math.max(0, delayExpiresInMillis - (SystemClock.uptimeMillis() - lastUpdateTime)), TimeUnit.MILLISECONDS);
+      }
+    }
+
+    return 0;
   }
 
   public void supergroupFull (long supergroupId, RunnableData<TdApi.SupergroupFullInfo> callback) {
@@ -1288,9 +1332,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     }
   }
 
-  @Deprecated
   /*pacakge*/ long myUserId () {
-    // TODO move myUserId to TdlibContext
     return myUserId;
   }
 
@@ -1298,9 +1340,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     return myUserId == userId;
   }
 
-  @Deprecated
   public @Nullable TdApi.User myUser () {
-    // TODO move to TdlibContext
     TdApi.User result;
     synchronized (dataLock) {
       result = myUserId != 0 ? users.get(myUserId) : null;
@@ -1314,6 +1354,9 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     }
     if (userId == myUserId) {
       return true;
+    }
+    if (tdlib.isServiceNotificationsChat(ChatId.fromUserId(userId))) {
+      return false;
     }
     boolean isOnline;
     synchronized (dataLock) {
@@ -1344,67 +1387,16 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
   // Locations
 
-  void onScheduledRemove (TdApi.Message outputLocation) {
-    synchronized (outputLocations) {
-      int i = outputLocations.indexOf(outputLocation);
-      if (i != -1) {
-        outputLocations.remove(i);
-        notifyOutputLocationsChanged(-1);
-      }
-    }
-  }
-
-  void addOutputLocationMessage (TdApi.Message message) {
-    if (message.sendingState != null || !message.canBeEdited || !message.isOutgoing || message.content.getConstructor() != TdApi.MessageLocation.CONSTRUCTOR) {
-      return;
-    }
-    TdApi.MessageLocation location = (TdApi.MessageLocation) message.content;
-    if (location.livePeriod == 0 || location.expiresIn == 0) {
-      return;
-    }
-    synchronized (outputLocations) {
-      this.outputLocations.add(message);
-      notifyOutputLocationsChanged(1);
-      tdlib.scheduleLocationRemoval(message);
-    }
-  }
-
-  void deleteOutputMessages (long chatId, long[] messageIds) {
-    synchronized (outputLocations) {
-      if (this.outputLocations.isEmpty()) {
-        return;
-      }
-      int removedCount = 0;
-      for (int i = outputLocations.size() - 1; i >= 0; i--) {
-        TdApi.Message message = outputLocations.get(i);
-        if (message.chatId == chatId && ArrayUtils.indexOf(messageIds, message.id) != -1) {
-          tdlib.cancelLocationRemoval(message);
-          outputLocations.remove(i);
-          removedCount++;
-        }
-      }
-      if (removedCount > 0) {
-        notifyOutputLocationsChanged(removedCount);
-      }
-    }
-  }
-
-  private void replaceOutputLocationList (TdApi.Message[] messages) {
+  void replaceOutputLocationList (TdApi.Message[] messages) {
     synchronized (outputLocations) {
       if (outputLocations.isEmpty() && (messages == null || messages.length == 0)) {
         return;
-      }
-      for (TdApi.Message message : outputLocations) {
-        tdlib.cancelLocationRemoval(message);
       }
       int oldSize = outputLocations.size();
       outputLocations.clear();
       if (messages != null) {
         Collections.addAll(outputLocations, messages);
         notifyOutputLocationsChanged(messages.length - oldSize);
-        for (TdApi.Message message : outputLocations) {
-          tdlib.scheduleLocationRemoval(message);
-        }
       } else {
         notifyOutputLocationsChanged(-oldSize);
       }
@@ -1437,12 +1429,9 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
       TdApi.Message message = outputLocations.get(foundIndex);
       message.content = location;
       boolean removed = location.expiresIn == 0;
-      tdlib.cancelLocationRemoval(message);
       if (removed) {
         outputLocations.remove(foundIndex);
         notifyOutputLocationsChanged(-1);
-      } else {
-        tdlib.scheduleLocationRemoval(message);
       }
     }
   }
@@ -1479,7 +1468,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
       for (int i = size - 1; i >= 0; i--) {
         TdApi.Message msg = outputLocations.get(i);
         if (chatId == 0 || msg.chatId == chatId) {
-          tdlib.client().send(new TdApi.EditMessageLiveLocation(msg.chatId, msg.id, null, null, 0, 0), tdlib.silentHandler());
+          tdlib.client().send(new TdApi.EditMessageLiveLocation(msg.chatId, msg.id, null, null, 0, 0, 0), tdlib.silentHandler());
         }
       }
     }
@@ -1516,24 +1505,19 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     synchronized (outputLocations) {
       Log.v("Updating %d live location messages", outputLocations.size());
       for (final TdApi.Message message : outputLocations) {
-        tdlib.client().send(new TdApi.EditMessageLiveLocation(message.chatId, message.id, message.replyMarkup, location, heading, 0), object -> {
-          switch (object.getConstructor()) {
-            case TdApi.Message.CONSTRUCTOR: {
-              TdApi.Message resultMessage = (TdApi.Message) object;
-              message.editDate = resultMessage.editDate;
-              if (resultMessage.content.getConstructor() == TdApi.MessageLocation.CONSTRUCTOR) {
-                TdApi.MessageLocation in = (TdApi.MessageLocation) resultMessage.content;
-                TdApi.MessageLocation out = (TdApi.MessageLocation) message.content;
-                out.expiresIn = in.livePeriod;
-                out.location.latitude = in.location.latitude;
-                out.location.longitude = in.location.longitude;
-                onLiveLocationChanged(message);
-              }
-              break;
+        tdlib.send(new TdApi.EditMessageLiveLocation(message.chatId, message.id, message.replyMarkup, location, 0, heading, 0), (resultMessage, error) -> {
+          if (error != null) {
+            Log.e("Error broadcasting location: %s", TD.toErrorString(error));
+          } else {
+            message.editDate = resultMessage.editDate;
+            if (Td.isLocation(resultMessage.content)) {
+              TdApi.MessageLocation in = (TdApi.MessageLocation) resultMessage.content;
+              TdApi.MessageLocation out = (TdApi.MessageLocation) message.content;
+              out.expiresIn = in.livePeriod;
+              out.location.latitude = in.location.latitude;
+              out.location.longitude = in.location.longitude;
+              onLiveLocationChanged(message);
             }
-            case TdApi.Error.CONSTRUCTOR:
-              Log.e("Error broadcasting location: %s", TD.toErrorString(object));
-              break;
           }
         });
       }
@@ -1845,7 +1829,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
     TdApi.Supergroup oldSupergroup = supergroups.get(supergroup.id);
     final int mode;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      mode = oldSupergroup == null ? UPDATE_MODE_NONE : oldSupergroup.isChannel != supergroup.isChannel || !StringUtils.equalsOrBothEmpty(oldSupergroup.username, supergroup.username) ? UPDATE_MODE_IMPORTANT : UPDATE_MODE_UPDATE;
+      mode = oldSupergroup == null ? UPDATE_MODE_NONE : oldSupergroup.isChannel != supergroup.isChannel || !Td.equalsTo(oldSupergroup.usernames, supergroup.usernames) ? UPDATE_MODE_IMPORTANT : UPDATE_MODE_UPDATE;
     } else {
       mode = oldSupergroup == null ? UPDATE_MODE_NONE : UPDATE_MODE_UPDATE;
     }
@@ -1855,6 +1839,7 @@ public class TdlibCache implements LiveLocationManager.OutputDelegate, CleanupSt
 
   private boolean putSupergroupFull (long supergroupId, TdApi.SupergroupFullInfo supergroupFull) {
     supergroupsFulls.put(supergroupId, supergroupFull);
+    supergroupsFullsLastUpdateTime.put(supergroupId, SystemClock.uptimeMillis());
     return true;
   }
 

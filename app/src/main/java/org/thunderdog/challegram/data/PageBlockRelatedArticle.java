@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.loader.ComplexReceiver;
@@ -37,7 +37,7 @@ import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.util.text.TextWrapper;
 
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class PageBlockRelatedArticle extends PageBlock {
   private final TdApi.PageBlockRelatedArticle article;
@@ -53,10 +53,14 @@ public class PageBlockRelatedArticle extends PageBlock {
     this.openParameters = openParameters;
 
     if (!StringUtils.isEmpty(article.title)) {
-      title = new TextWrapper(article.title, PageBlockRichText.getParagraphProvider(), TextColorSets.InstantView.NORMAL, null).setMaxLines(3).addTextFlags(Text.FLAG_ALL_BOLD | Text.FLAG_ARTICLE);
+      title = new TextWrapper(article.title, PageBlockRichText.getParagraphProvider(), TextColorSets.InstantView.NORMAL)
+        .setMaxLines(3)
+        .addTextFlags(Text.FLAG_ALL_BOLD | Text.FLAG_ARTICLE);
     }
     if (!StringUtils.isEmpty(article.description)) {
-      description = new TextWrapper(article.description, PageBlockRichText.getCaptionProvider(), TextColorSets.InstantView.NORMAL, null).setMaxLines(3).addTextFlags(Text.FLAG_ARTICLE);
+      description = new TextWrapper(article.description, PageBlockRichText.getCaptionProvider(), TextColorSets.InstantView.NORMAL)
+        .setMaxLines(3)
+        .addTextFlags(Text.FLAG_ARTICLE);
     }
     String info;
     if (article.publishDate != 0 && !StringUtils.isEmptyOrBlank(article.author)) {
@@ -69,7 +73,7 @@ public class PageBlockRelatedArticle extends PageBlock {
       info = null;
     }
     if (!StringUtils.isEmpty(info)) {
-      this.info = new TextWrapper(null, info, PageBlockRichText.getCaptionProvider(), TextColorSets.InstantView.CAPTION, 0, openParameters);
+      this.info = new TextWrapper(info, PageBlockRichText.getCaptionProvider(), TextColorSets.InstantView.CAPTION);
     }
     if (article.photo != null) {
       if (article.photo.minithumbnail != null) {

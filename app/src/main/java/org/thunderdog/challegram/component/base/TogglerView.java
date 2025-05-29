@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@ import androidx.annotation.Nullable;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -49,11 +50,14 @@ import me.vkryl.core.ColorUtils;
 public class TogglerView extends View implements FactorAnimator.Target, TooltipOverlayView.LocationProvider {
   private Paint circlePaint;
 
-  private boolean isEnabled;
+  private final BoolAnimator isEnabled = new BoolAnimator(0, (id, factor, fraction, callee) -> {
+    updateOrigX();
+    invalidate();
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      invalidateOutline();
+    }
+  }, AnimatorUtils.DECELERATE_INTERPOLATOR, 180l);
   private BoolAnimator isDisabled;
-  private float factor;
-
-  private FactorAnimator enableAnimator;
 
   private boolean useNegativeState;
 
@@ -80,14 +84,14 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
           final int fromBackgroundColor;
           final int toBackgroundColor;
           if (useNegativeState) {
-            fromBackgroundColor = Theme.getColor(R.id.theme_color_togglerNegativeBackground);
-            toBackgroundColor = Theme.getColor(R.id.theme_color_togglerPositiveBackground);
+            fromBackgroundColor = Theme.getColor(ColorId.togglerNegativeBackground);
+            toBackgroundColor = Theme.getColor(ColorId.togglerPositiveBackground);
           } else {
             fromBackgroundColor = Theme.togglerInactiveFillingColor();
             toBackgroundColor = Theme.togglerActiveFillingColor();
           }
           final boolean isDisabled = !useNegativeState && TogglerView.this.isDisabled();
-          c.drawRoundRect(fillingRect, fillRadius, fillRadius, Paints.fillingPaint(ColorUtils.fromToArgb(fromBackgroundColor, toBackgroundColor, isDisabled ? 0f : factor)));
+          c.drawRoundRect(fillingRect, fillRadius, fillRadius, Paints.fillingPaint(ColorUtils.fromToArgb(fromBackgroundColor, toBackgroundColor, isDisabled ? 0f : TogglerView.this.isEnabled.getFloatValue())));
         }
 
         @Override
@@ -156,32 +160,13 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
     }
   }
 
-  private static final int ANIMATOR_SWITCH = 0;
-
   public void setRadioEnabled (boolean isEnabled, boolean animated) {
-    if (this.isEnabled != isEnabled) {
-      this.isEnabled = isEnabled;
-
-      if (animated) {
-        if (this.enableAnimator == null) {
-          this.enableAnimator = new FactorAnimator(ANIMATOR_SWITCH, this, AnimatorUtils.DECELERATE_INTERPOLATOR, 180l, this.factor);
-        }
-        enableAnimator.animateTo(isEnabled ? 1f : 0f);
-      } else {
-        if (enableAnimator != null) {
-          enableAnimator.forceFactor(isEnabled ? 1f : 0f);
-        }
-        setFactor(isEnabled ? 1f : 0f);
-      }
-    }
+    this.isEnabled.setValue(isEnabled, animated);
   }
 
   @Override
   public void onFactorChanged (int id, float factor, float fraction, FactorAnimator callee) {
     switch (id) {
-      case ANIMATOR_SWITCH:
-        setFactor(factor);
-        break;
       case ANIMATOR_DISABLE:
         invalidate();
     }
@@ -191,23 +176,7 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
   public void onFactorChangeFinished (int id, float finalFactor, FactorAnimator callee) { }
 
   public boolean toggle (boolean animated) {
-    setRadioEnabled(!isEnabled, animated);
-    return isEnabled;
-  }
-
-  public float getFactor () {
-    return factor;
-  }
-
-  public void setFactor (float factor) {
-    if (this.factor != factor) {
-      this.factor = factor;
-      updateOrigX();
-      invalidate();
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        invalidateOutline();
-      }
-    }
+    return isEnabled.toggleValue(animated);
   }
 
   /*public boolean isAnimating () {
@@ -215,7 +184,7 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
   }*/
 
   public boolean isEnabled () {
-    return isEnabled;
+    return isEnabled.getValue();
   }
 
   private RectF fillingRect;
@@ -274,6 +243,7 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
   }
 
   private void updateOrigX () {
+    float factor = this.isEnabled.getFloatValue();
     if (Lang.rtl()) {
       origX = factor == 0f ? maxX : factor == 1f ? minX : maxX - factor * diffX;
     } else {
@@ -289,15 +259,17 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
 
   @Override
   public void onDraw (Canvas c) {
+    final float factor = this.isEnabled.getFloatValue();
+    updateOrigX();
     final int fromBackgroundColor, fromColor;
     final int toBackgroundColor, toColor;
     int checkColor;
     if (useNegativeState) {
-      fromBackgroundColor = Theme.getColor(R.id.theme_color_togglerNegativeBackground); // ThemeRed.getColor(R.id.theme_color_togglerFillingActive);
-      fromColor = Theme.getColor(R.id.theme_color_togglerNegative); // ThemeRed.getColor(R.id.theme_color_togglerActive);
-      toBackgroundColor = Theme.getColor(R.id.theme_color_togglerPositiveBackground); // ThemeBase.getColor(R.id.theme_color_togglerFillingActive);
-      toColor = Theme.getColor(R.id.theme_color_togglerPositive); // ThemeBase.getColor(R.id.theme_color_togglerActive);
-      checkColor = ColorUtils.fromToArgb(Theme.getColor(R.id.theme_color_togglerNegativeContent), Theme.getColor(R.id.theme_color_togglerPositiveContent), factor);
+      fromBackgroundColor = Theme.getColor(ColorId.togglerNegativeBackground); // ThemeRed.getColor(ColorId.togglerFillingActive);
+      fromColor = Theme.getColor(ColorId.togglerNegative); // ThemeRed.getColor(ColorId.togglerActive);
+      toBackgroundColor = Theme.getColor(ColorId.togglerPositiveBackground); // ThemeBase.getColor(ColorId.togglerFillingActive);
+      toColor = Theme.getColor(ColorId.togglerPositive); // ThemeBase.getColor(ColorId.togglerActive);
+      checkColor = ColorUtils.fromToArgb(Theme.getColor(ColorId.togglerNegativeContent), Theme.getColor(ColorId.togglerPositiveContent), isEnabled.getFloatValue());
     } else {
       fromBackgroundColor = Theme.togglerInactiveFillingColor();
       fromColor = Theme.togglerInactiveColor();
@@ -315,7 +287,7 @@ public class TogglerView extends View implements FactorAnimator.Target, TooltipO
     c.drawCircle(origX, origY, origRadius, circlePaint);
 
     if (showLock) {
-      Drawables.draw(c, lockDrawable, origX - lockDrawable.getMinimumWidth() / 2, origY - lockDrawable.getMinimumHeight() / 2, Paints.getPorterDuffPaint(checkColor));
+      Drawables.draw(c, lockDrawable, origX - lockDrawable.getMinimumWidth() / 2f, origY - lockDrawable.getMinimumHeight() / 2f, Paints.getPorterDuffPaint(checkColor));
     } else if (useNegativeState) {
       Paint strokePaint = Paints.getProgressPaint(checkColor, Screen.dp(2f));
 

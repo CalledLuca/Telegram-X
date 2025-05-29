@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,8 +33,8 @@ import androidx.annotation.UiThread;
 
 import com.otaliastudios.transcoder.strategy.DefaultVideoStrategy;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.drinkmore.Tracer;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
@@ -50,17 +50,22 @@ import org.thunderdog.challegram.emoji.RecentEmoji;
 import org.thunderdog.challegram.emoji.RecentInfo;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.player.TGPlayerController;
+import org.thunderdog.challegram.telegram.ChatFolderOptions;
+import org.thunderdog.challegram.telegram.ChatFolderStyle;
+import org.thunderdog.challegram.telegram.EmojiMediaType;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.telegram.TdlibManager;
 import org.thunderdog.challegram.telegram.TdlibNotificationManager;
+import org.thunderdog.challegram.telegram.TdlibNotificationUtils;
 import org.thunderdog.challegram.telegram.TdlibProvider;
 import org.thunderdog.challegram.telegram.TdlibSettingsManager;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PropertyId;
 import org.thunderdog.challegram.theme.TGBackground;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeColors;
 import org.thunderdog.challegram.theme.ThemeCustom;
 import org.thunderdog.challegram.theme.ThemeDelegate;
@@ -68,7 +73,6 @@ import org.thunderdog.challegram.theme.ThemeId;
 import org.thunderdog.challegram.theme.ThemeInfo;
 import org.thunderdog.challegram.theme.ThemeManager;
 import org.thunderdog.challegram.theme.ThemeProperties;
-import org.thunderdog.challegram.theme.ThemeProperty;
 import org.thunderdog.challegram.theme.ThemeSet;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
@@ -76,6 +80,10 @@ import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.util.AppBuildInfo;
 import org.thunderdog.challegram.util.Crash;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
+import org.thunderdog.challegram.util.DeviceStorageError;
+import org.thunderdog.challegram.util.DeviceTokenType;
+import org.thunderdog.challegram.util.FeatureAvailability;
+import org.thunderdog.challegram.util.StringList;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -92,7 +100,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -100,6 +107,8 @@ import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.DateUtils;
+import me.vkryl.core.FileUtils;
+import me.vkryl.core.ObjectUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.RunnableBool;
@@ -110,13 +119,13 @@ import me.vkryl.core.unit.ByteUnit;
 import me.vkryl.core.util.Blob;
 import me.vkryl.core.util.BlobEntry;
 import me.vkryl.leveldb.LevelDB;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.MessageId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.MessageId;
+import tgx.td.Td;
 
 /**
  * All app-related settings.
- *
+ * <p>
  * SharedPreferences is no longer used at all for the following reasons:
  * 1. Application launch speed;
  * 2. Storage usage;
@@ -165,7 +174,15 @@ public class Settings {
   private static final int VERSION_37 = 37; // removed weird "wallpaper_" + file.remote.id unused legacy cache
   private static final int VERSION_38 = 38; // int32 -> int64
   private static final int VERSION_39 = 39; // drop all previously stored crashes
-  private static final int VERSION = VERSION_39;
+  private static final int VERSION_40 = 40; // drop legacy crash management ids
+  private static final int VERSION_41 = 41; // clear all application log files
+  private static final int VERSION_42 = 42; // drop __
+  private static final int VERSION_43 = 43; // optimize recent custom emoji
+  private static final int VERSION_44 = 44; // 8-bit -> 32-bit account flags
+  private static final int VERSION_45 = 45; // Reset "Big emoji" setting to default
+  private static final int VERSION_46 = 46; // Remove folders experimental setting
+  private static final int VERSION_47 = 47; // Force reset released features list
+  private static final int VERSION = VERSION_47;
 
   private static final AtomicBoolean hasInstance = new AtomicBoolean(false);
   private static volatile Settings instance;
@@ -184,12 +201,18 @@ public class Settings {
   }
 
   private static final String KEY_VERSION = "version";
+  private static final String KEY_FEATURES = "features";
+  private static final String KEY_FEATURES_ADDED_NOTIFICATIONS = "features_new";
+  private static final String KEY_FEATURES_REMOVED_NOTIFICATIONS = "features_gone";
   private static final String KEY_OTHER = "settings_other";
   private static final String KEY_OTHER_NEW = "settings_other2";
+  private static final String KEY_EXPERIMENTS = "settings_experiments";
   private static final @Deprecated String KEY_MARKDOWN_MODE = "settings_markdown";
   private static final String KEY_MAP_PROVIDER_TYPE = "settings_map_provider";
   private static final String KEY_MAP_PROVIDER_TYPE_CLOUD = "settings_map_provider_cloud";
   private static final String KEY_STICKER_MODE = "settings_sticker";
+  private static final String KEY_EMOJI_MODE = "settings_emoji";
+  private static final String KEY_REACTION_AVATARS_MODE = "settings_reaction_avatars";
   private static final String KEY_AUTO_UPDATE_MODE = "settings_auto_update";
   private static final String KEY_INCOGNITO = "settings_incognito";
   private static final String KEY_NIGHT_MODE = "settings_night_mode";
@@ -211,11 +234,18 @@ public class Settings {
   private static final String KEY_TUTORIAL_PSA = "settings_tutorial_psa";
   private static final String KEY_CHAT_FONT_SIZE = "settings_font_size";
   private static final String KEY_CHAT_LIST_MODE = "settings_chat_list_mode";
+  private static final String KEY_CHAT_TRANSLATE_MODE = "settings_chat_translate_mode";
+  private static final String KEY_CHAT_DO_NOT_TRANSLATE_MODE = "settings_chat_do_not_translate_mode";
+  private static final String KEY_CHAT_DO_NOT_TRANSLATE_LIST = "settings_chat_do_not_translate_list";
+  private static final String KEY_CHAT_TRANSLATE_RECENTS = "language_recents";
+  private static final String KEY_DEFAULT_LANGUAGE_FOR_TRANSLATE_DRAFT = "language_draft_translate";
   private static final String KEY_INSTANT_VIEW = "settings_iv_mode";
   private static final String KEY_RESTRICT_CONTENT = "settings_restrict_content";
   private static final String KEY_CAMERA_ASPECT_RATIO = "settings_camera_ratio";
   private static final String KEY_CAMERA_TYPE = "settings_camera_type";
   private static final String KEY_CAMERA_VOLUME_CONTROL = "settings_camera_control";
+  private static final String KEY_CHAT_FOLDER_STYLE = "settings_folders_style";
+  private static final String KEY_CHAT_FOLDER_OPTIONS = "settings_folders_options";
 
   private static final String KEY_TDLIB_VERBOSITY = "settings_tdlib_verbosity";
   private static final String KEY_TDLIB_DEBUG_PREFIX = "settings_tdlib_allow_debug";
@@ -227,13 +257,28 @@ public class Settings {
 
   private static final String KEY_ACCOUNT_INFO = "account";
   public static final String KEY_ACCOUNT_INFO_SUFFIX_ID = ""; // user_id
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_FLAGS = "flags"; // premium, verified, etc
   public static final String KEY_ACCOUNT_INFO_SUFFIX_NAME1 = "name1"; // first_name
   public static final String KEY_ACCOUNT_INFO_SUFFIX_NAME2 = "name2"; // last_name
-  public static final String KEY_ACCOUNT_INFO_SUFFIX_USERNAME = "username"; // last_name
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_ACCENT_COLOR_ID = "accent_id"; // accent_color_id
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_ACCENT_BUILT_IN_ACCENT_COLOR_ID = "accent_builtin"; // accent_color_id
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_LIGHT_THEME_COLORS = "accent_light"; // accent_light
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_DARK_THEME_COLORS = "accent_dark"; // accent_dark
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_MIN_CHAT_BOOST_LEVEL = "min_boost_level"; // min_chat_boost_level
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_USERNAME = "username"; // username
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_USERNAMES_ACTIVE = "usernames_active"; // username
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_USERNAMES_DISABLED = "usernames_disabled"; // last_name
   public static final String KEY_ACCOUNT_INFO_SUFFIX_PHONE = "phone"; // phone
   public static final String KEY_ACCOUNT_INFO_SUFFIX_PHOTO = "photo"; // path, if loaded
   public static final String KEY_ACCOUNT_INFO_SUFFIX_PHOTO_FULL = "photo_full"; // path, if loaded
   public static final String KEY_ACCOUNT_INFO_SUFFIX_COUNTER = "counter_"; // counter
+
+  public static final String KEY_ACCOUNT_INFO_SUFFIX_EMOJI_STATUS_PREFIX = "emoji_"; // emoji status
+  public static final String KEY_EMOJI_STATUS_SUFFIX_ID = "id";
+  public static final String KEY_EMOJI_STATUS_SUFFIX_METADATA = "data";
+  public static final String KEY_EMOJI_STATUS_SUFFIX_THUMBNAIL = "thumb";
+  public static final String KEY_EMOJI_STATUS_SUFFIX_STICKER = "sticker";
+
   public static String accountInfoPrefix (int accountId) {
     return KEY_ACCOUNT_INFO + accountId + "_";
   }
@@ -282,7 +327,8 @@ public class Settings {
   private static final String KEY_SCROLL_CHAT_TOP_END = "_top";
   private static final @Deprecated String KEY_PUSH_USER_IDS = "push_user_ids";
   private static final @Deprecated String KEY_PUSH_USER_ID = "push_user_id";
-  private static final String KEY_PUSH_DEVICE_TOKEN = "push_device_token";
+  private static final String KEY_PUSH_DEVICE_TOKEN_TYPE = "push_device_token_type";
+  private static final String KEY_PUSH_DEVICE_TOKEN_OR_ENDPOINT = "push_device_token";
   private static final String KEY_PUSH_STATS_TOTAL_COUNT = "push_stats_total";
   private static final String KEY_PUSH_STATS_CURRENT_APP_VERSION_COUNT = "push_stats_app";
   private static final String KEY_PUSH_STATS_CURRENT_TOKEN_COUNT = "push_stats_token";
@@ -292,7 +338,9 @@ public class Settings {
   private static final String KEY_PUSH_REPORTED_ERROR = "push_reported_error";
   private static final String KEY_PUSH_REPORTED_ERROR_DATE = "push_reported_error_date";
   private static final String KEY_CRASH_DEVICE_ID = "crash_device_id";
-  public static final String KEY_IS_EMULATOR = "is_emulator";
+  private static final String KEY_IS_EMULATOR = "is_emulator";
+  private static final String KEY_EMULATOR_DETECTION_RESULT = "emulator";
+  private static final String KEY_PLAYBACK_SPEED = "playback_speed";
 
   private static final @Deprecated String KEY_EMOJI_COUNTERS_OLD = "counters_v2";
   private static final @Deprecated String KEY_EMOJI_RECENTS_OLD = "recents_v2";
@@ -339,6 +387,7 @@ public class Settings {
   private static final int FLAG_OTHER_NO_CHAT_QUICK_REPLY = 1 << 11;
   private static final int FLAG_OTHER_SEND_BY_ENTER = 1 << 12;
   private static final int FLAG_OTHER_HIDE_CHAT_KEYBOARD = 1 << 13;
+  private static final int FLAG_OTHER_USE_QUICK_TRANSLATION = 1 << 14;
   private static final int FLAG_OTHER_DISABLE_PREVIEW_CHATS_ON_HOLD = 1 << 15;
   private static final int FLAG_OTHER_NEED_GROUP_MEDIA = 1 << 16;
   private static final int FLAG_OTHER_DISABLE_INAPP_BROWSER = 1 << 17;
@@ -363,12 +412,23 @@ public class Settings {
   public static final long SETTING_FLAG_FORCE_EXO_PLAYER_EXTENSIONS = 1 << 7;
   public static final long SETTING_FLAG_NO_AUDIO_COMPRESSION = 1 << 8;
   public static final long SETTING_FLAG_DOWNLOAD_BETAS = 1 << 9;
+  public static final long SETTING_FLAG_NO_ANIMATED_EMOJI_LOOP = 1 << 10;
 
   public static final long SETTING_FLAG_CAMERA_NO_FLIP = 1 << 10;
   public static final long SETTING_FLAG_CAMERA_KEEP_DISCARDED_MEDIA = 1 << 11;
   public static final long SETTING_FLAG_CAMERA_SHOW_GRID = 1 << 12;
 
   public static final long SETTING_FLAG_NO_EMBEDS = 1 << 13;
+  public static final long SETTING_FLAG_LIMIT_STICKERS_FPS = 1 << 14;
+  public static final long SETTING_FLAG_EXPAND_RECENT_STICKERS = 1 << 15;
+  public static final long SETTING_FLAG_FOREGROUND_SERVICE_ENABLED = 1 << 16;
+  public static final long SETTING_FLAG_DYNAMIC_ORDER_STICKER_PACKS = 1 << 17;
+  public static final long SETTING_FLAG_DYNAMIC_ORDER_EMOJI_PACKS = 1 << 18;
+
+  public static final long EXPERIMENT_FLAG_ALLOW_EXPERIMENTS = 1;
+  public static final long EXPERIMENT_FLAG_SHOW_PEER_IDS = 1 << 2;
+
+  public static final long REMOVED_EXPERIMENT_FLAG_ENABLE_FOLDERS = 1 << 1;
 
   private static final @Deprecated int DISABLED_FLAG_OTHER_NEED_RAISE_TO_SPEAK = 1 << 2;
   private static final @Deprecated int DISABLED_FLAG_OTHER_AUTODOWNLOAD_IN_BACKGROUND = 1 << 3;
@@ -388,7 +448,7 @@ public class Settings {
   @Nullable
   private Integer _settings;
   @Nullable
-  private Long _newSettings;
+  private Long _newSettings, _experiments;
 
   public static final int NIGHT_MODE_NONE = 0;
   public static final int NIGHT_MODE_AUTO = 1;
@@ -409,8 +469,14 @@ public class Settings {
   public static final int STICKER_MODE_ONLY_INSTALLED = 1;
   public static final int STICKER_MODE_NONE = 2;
 
-  @Nullable
-  private Integer _stickerMode;
+  @Nullable private Integer _stickerMode;
+  @Nullable private Integer _emojiMode;
+
+  public static final int REACTION_AVATARS_MODE_NEVER = 0;
+  public static final int REACTION_AVATARS_MODE_SMART_FILTER = 1;
+  public static final int REACTION_AVATARS_MODE_ALWAYS = 2;
+
+  @Nullable private Integer _reactionAvatarsMode;
 
   public static final int AUTO_UPDATE_MODE_PROMPT = 0;
   public static final int AUTO_UPDATE_MODE_NEVER = 1;
@@ -444,6 +510,10 @@ public class Settings {
   public static final long TUTORIAL_PROXY_SPONSOR = 1 << 16;
   public static final long TUTORIAL_BRUSH_COLOR_TONE = 1 << 17;
   public static final long TUTORIAL_QR_SCAN = 1 << 18;
+  public static final long TUTORIAL_SELECT_LANGUAGE_INLINE_MODE = 1 << 19;
+  public static final long TUTORIAL_MULTIPLE_LINK_PREVIEWS = 1 << 20;
+  public static final long TUTORIAL_PLAYBACK_SPEED_HOLD = 1 << 21;
+  public static final long TUTORIAL_PLAYBACK_SPEED_SWIPE = 1 << 22;
 
   @Nullable
   private Long _tutorialFlags;
@@ -466,6 +536,7 @@ public class Settings {
   private Integer _notificationFlags;
 
   private static final long DEFAULT_LOG_SIZE = ByteUnit.MIB.toBytes(50);
+  private static final int DEFAULT_LOG_GLOBAL_VERBOSITY_LEVEL = 0;
 
   public class TdlibLogSettings {
     private final String settingsKey, maxSizeKey, verbosityKey;
@@ -490,13 +561,13 @@ public class Settings {
 
     private int getSettings () {
       if (_settings == null) {
-        _settings = pmc.getInt(settingsKey, BuildConfig.DEBUG || BuildConfig.EXPERIMENTAL ? FLAG_TDLIB_OTHER_ENABLE_ANDROID_LOG : 0);
+        _settings = pmc.getInt(settingsKey, UI.isTestLab() ? FLAG_TDLIB_OTHER_ENABLE_ANDROID_LOG : 0);
       }
       return _settings;
     }
 
     private boolean checkLogSetting (int flag) {
-      return BitwiseUtils.getFlag(getSettings(), flag);
+      return BitwiseUtils.hasFlag(getSettings(), flag);
     }
 
     private boolean setLogSetting (int flag, boolean enabled) {
@@ -505,7 +576,7 @@ public class Settings {
       if (flags != newFlags) {
         _settings = newFlags;
         pmc.putInt(settingsKey, newFlags);
-        apply();
+        apply(false);
         return true;
       }
       return false;
@@ -528,17 +599,17 @@ public class Settings {
         pmc.remove(maxSizeKey);
       else
         pmc.putLong(maxSizeKey, bytes);
-      apply();
+      apply(false);
     }
 
     public List<String> getModules () {
       List<String> modules;
-      TdApi.Object object = Client.execute(new TdApi.GetLogTags());
-      if (object instanceof TdApi.LogTags) {
-        String[] tags = ((TdApi.LogTags) object).tags;
+      try {
+        TdApi.LogTags logTags = Client.execute(new TdApi.GetLogTags());
+        String[] tags = logTags.tags;
         modules = new ArrayList<>(tags.length + (_modules != null ? _modules.size() : 0));
         Collections.addAll(modules, tags);
-      } else {
+      } catch (Client.ExecutionException error) {
         modules = new ArrayList<>(_modules != null ? _modules.size() : 0);
       }
       if (_modules != null) {
@@ -552,13 +623,21 @@ public class Settings {
     }
 
     private boolean setLogTagVerbosityLevel (String module, int verbosityLevel) {
-      TdApi.Object result = Client.execute(new TdApi.SetLogTagVerbosityLevel(module, verbosityLevel));
-      return result instanceof TdApi.Ok;
+      try {
+        Client.execute(new TdApi.SetLogTagVerbosityLevel(module, verbosityLevel));
+        return true;
+      } catch (Client.ExecutionException error) {
+        return false;
+      }
     }
 
     private boolean setLogVerbosityLevel (int globalVerbosityLevel) {
-      TdApi.Object result = Client.execute(new TdApi.SetLogVerbosityLevel(globalVerbosityLevel));
-      return result instanceof TdApi.Ok;
+      try {
+        Client.execute(new TdApi.SetLogVerbosityLevel(globalVerbosityLevel));
+        return true;
+      } catch (Client.ExecutionException error) {
+        return false;
+      }
     }
 
     public int getVerbosity (@Nullable String module) {
@@ -587,7 +666,11 @@ public class Settings {
 
     public void setVerbosity (@Nullable String module, int verbosity) {
       if (StringUtils.isEmpty(module)) {
-        putInt(verbosityKey, verbosity);
+        if (verbosity != DEFAULT_LOG_GLOBAL_VERBOSITY_LEVEL) {
+          putInt(verbosityKey, verbosity);
+        } else {
+          remove(verbosityKey);
+        }
         setLogVerbosityLevel(verbosity);
       } else {
         if (_modules == null)
@@ -596,17 +679,18 @@ public class Settings {
         int defaultVerbosityLevel = value != null ? value[1] : queryLogVerbosityLevel(module);
         int currentVerbosityLevel = value != null ? value[0] : defaultVerbosityLevel;
         if (verbosity != currentVerbosityLevel) {
-          TdApi.Object result = Client.execute(new TdApi.SetLogTagVerbosityLevel(module, verbosity));
-          if (result instanceof TdApi.Ok) {
+          try {
+            Client.execute(new TdApi.SetLogTagVerbosityLevel(module, verbosity));
+
             if (value != null)
               value[0] = verbosity;
             else
-              _modules.put(module, value = new int[]{verbosity, defaultVerbosityLevel});
+              _modules.put(module, value = new int[] {verbosity, defaultVerbosityLevel});
             if (value[0] == value[1])
               remove(verbosityKey + "_" + module);
             else
               putInt(verbosityKey + "_" + module, verbosity);
-          }
+          } catch (Client.ExecutionException ignored) { }
         }
       }
     }
@@ -624,24 +708,28 @@ public class Settings {
     }
 
     private int queryLogVerbosityLevel (@Nullable String module) {
-      TdApi.Object object = Client.execute(StringUtils.isEmpty(module) ? new TdApi.GetLogVerbosityLevel() : new TdApi.GetLogTagVerbosityLevel(module));
-      if (object instanceof TdApi.LogVerbosityLevel)
-        return ((TdApi.LogVerbosityLevel) object).verbosityLevel;
-      return TDLIB_LOG_VERBOSITY_UNKNOWN;
+      try {
+        TdApi.Function<TdApi.LogVerbosityLevel> function = StringUtils.isEmpty(module) ? new TdApi.GetLogVerbosityLevel() : new TdApi.GetLogTagVerbosityLevel(module);
+        TdApi.LogVerbosityLevel logVerbosityLevel = Client.execute(function);
+        return logVerbosityLevel.verbosityLevel;
+      } catch (Client.ExecutionException error) {
+        return TDLIB_LOG_VERBOSITY_UNKNOWN;
+      }
     }
 
-    public void apply () {
-      if (UI.TEST_MODE == UI.TEST_MODE_AUTO)
+    public void apply (boolean async) {
+      if (UI.isTestLab())
         return;
-      int globalVerbosityLevel = 0;
+      int globalVerbosityLevel = DEFAULT_LOG_GLOBAL_VERBOSITY_LEVEL;
       if (_modules == null)
         _modules = new HashMap<>();
       for (final LevelDB.Entry entry : pmc.find(verbosityKey)) {
         final String key = entry.key();
-        int verbosityLevel = Math.max(1, entry.asInt()); // At least error
+        int verbosityLevel = entry.asInt();
         if (verbosityKey.length() == key.length()) {
-          globalVerbosityLevel = verbosityLevel;
+          globalVerbosityLevel = Math.max(0, verbosityLevel); // Can't be negative
         } else if (key.length() > verbosityKey.length() + 1) {
+          verbosityLevel = Math.max(1, verbosityLevel); // At least error
           String module = key.substring(verbosityKey.length() + 1);
           int[] value = _modules.get(module);
           int defaultVerbosityLevel = value != null ? value[1] : queryLogVerbosityLevel(module);
@@ -660,11 +748,24 @@ public class Settings {
       if (needAndroidLog()) {
         stream = new TdApi.LogStreamDefault();
       } else {
-        stream = new TdApi.LogStreamFile(TdlibManager.getLogFilePath(false), getLogMaxFileSize(), true);
+        File logFile = TdlibManager.getLogFile(false);
+        if (logFile != null) {
+          stream = new TdApi.LogStreamFile(logFile.getPath(), getLogMaxFileSize(), false);
+        } else {
+          stream = new TdApi.LogStreamEmpty();
+        }
       }
-      TdApi.Object result = Client.execute(new TdApi.SetLogStream(stream));
-      if (result.getConstructor() == TdApi.Error.CONSTRUCTOR) {
-        Tracer.onTdlibFatalError(null, TdApi.SetLogStream.class, (TdApi.Error) result, new RuntimeException().getStackTrace());
+      try {
+        Client.execute(new TdApi.SetLogStream(stream));
+      } catch (Client.ExecutionException error) {
+        Runnable act = () -> {
+          Tracer.onTdlibFatalError(null, TdApi.SetLogStream.class, error.error, new RuntimeException().getStackTrace());
+        };
+        if (async) {
+          UI.post(act);
+        } else {
+          act.run();
+        }
       }
     }
   }
@@ -720,8 +821,15 @@ public class Settings {
 
   private Settings () {
     File pmcDir = new File(UI.getAppContext().getFilesDir(), "pmc");
-    if (!pmcDir.exists() && !pmcDir.mkdir()) {
-      throw new IllegalStateException("Unable to create working directory");
+    boolean fatalError;
+    try {
+      fatalError = !FileUtils.createDirectory(pmcDir);
+    } catch (SecurityException e) {
+      e.printStackTrace();
+      fatalError = true;
+    }
+    if (fatalError) {
+      throw new DeviceStorageError("Unable to create working directory");
     }
     long ms = SystemClock.uptimeMillis();
     pmc = new LevelDB(new File(pmcDir, "db").getPath(), true, new LevelDB.ErrorHandler() {
@@ -767,10 +875,21 @@ public class Settings {
       pmc.remove(KEY_TUTORIAL);
       pmc.removeByPrefix(KEY_TUTORIAL_PSA);
     }
+    if (Config.TEST_NEW_FEATURES_PROMPTS) {
+      forceRevokeAllFeaturePrompts();
+    }
     trackInstalledApkVersion();
+    trackChangesInAvailableFeatures();
     Log.i("Opened database in %dms", SystemClock.uptimeMillis() - ms);
     checkPendingPasscodeLocks();
-    applyLogSettings();
+    applyLogSettings(true);
+  }
+
+  public void forceRevokeAllFeaturePrompts () {
+    pmc
+      .putLong(KEY_FEATURES, 0 /*no features were available*/)
+      .remove(KEY_FEATURES_ADDED_NOTIFICATIONS)
+      .remove(KEY_FEATURES_REMOVED_NOTIFICATIONS);
   }
 
   // Schedule
@@ -804,51 +923,75 @@ public class Settings {
   public LevelDB edit () {
     return pmc.edit();
   }
+
   public void remove (String key) {
     pmc.remove(key);
   }
+
   public void putLong (String key, long value) {
     pmc.putLong(key, value);
   }
+
   public long getLong (String key, long defValue) {
     return pmc.getLong(key, defValue);
   }
+
   public long[] getLongArray (String key) {
     return pmc.getLongArray(key);
   }
+
   public void putLongArray (String key, long[] value) {
     pmc.putLongArray(key, value);
   }
+
   public void putInt (String key, int value) {
     pmc.putInt(key, value);
   }
+
   public int getInt (String key, int defValue) {
     return pmc.getInt(key, defValue);
   }
+
+  public int[] getIntArray (String key) {
+    return pmc.getIntArray(key);
+  }
+  
+  public void putIntArray (String key, int[] value) {
+    pmc.putIntArray(key, value);
+  }
+
   public void putFloat (String key, float value) {
     pmc.putFloat(key, value).apply();
   }
+
   public void putBoolean (String key, boolean value) {
     pmc.putBoolean(key, value);
   }
+
   public boolean getBoolean (String key, boolean defValue) {
     return pmc.getBoolean(key, defValue);
   }
+
   public void putVoid (String key) {
     pmc.putVoid(key);
   }
+
   public boolean containsKey (String key) {
     return pmc.contains(key);
   }
+
   public void putString (String key, @NonNull String value) {
     pmc.putString(key, value);
   }
+
   public String getString (String key, String defValue) {
     return pmc.getString(key, defValue);
   }
+
   public void removeByPrefix (String prefix, @Nullable SharedPreferences.Editor editor) {
     pmc.removeByPrefix(prefix); // editor
   }
+
   public void removeByAnyPrefix (String[] prefixes, @Nullable SharedPreferences.Editor editor) {
     pmc.removeByAnyPrefix(prefixes); // , editor
   }
@@ -972,6 +1115,116 @@ public class Settings {
     }
   }
 
+  public HashMap<String, Boolean> _chatDoNotTranslateLanguages;
+
+  private void loadNotTranslatableLanguages () {
+    if (_chatDoNotTranslateLanguages != null) return;
+    _chatDoNotTranslateLanguages = new HashMap<>();
+    String[] result = pmc.getStringArray(KEY_CHAT_DO_NOT_TRANSLATE_LIST);
+    if (result == null) return;
+    for (String lang : result) {
+      _chatDoNotTranslateLanguages.put(lang, true);
+    }
+  }
+
+  private void saveNotTranslatableLanguages () {
+    pmc.putStringArray(KEY_CHAT_DO_NOT_TRANSLATE_LIST, getAllNotTranslatableLanguages());
+  }
+
+  public String[] getAllNotTranslatableLanguages () {
+    loadNotTranslatableLanguages();
+    StringList list = new StringList(_chatDoNotTranslateLanguages.size());
+    for (Map.Entry<String, Boolean> entry : _chatDoNotTranslateLanguages.entrySet()) {
+      list.append(entry.getKey());
+    }
+    return list.get();
+  }
+
+  public boolean isNotTranslatableLanguage (String lang) {
+    if (getChatDoNotTranslateMode() == DO_NOT_TRANSLATE_MODE_APP_LANG) {
+      return StringUtils.equalsOrBothEmpty(getLanguage().packInfo.pluralCode, lang);
+    } else {
+      return containsInNotTranslatableLanguageList(lang);
+    }
+  }
+
+  public boolean containsInNotTranslatableLanguageList (String lang) {
+    loadNotTranslatableLanguages();
+    if (lang == null) return false;
+    return _chatDoNotTranslateLanguages.containsKey(lang);
+  }
+
+  public void setIsNotTranslatableLanguage (String lang, boolean isNotTranslatable) {
+    if (isNotTranslatable == containsInNotTranslatableLanguageList(lang)) return;
+    if (isNotTranslatable) {
+      _chatDoNotTranslateLanguages.put(lang, true);
+    } else {
+      _chatDoNotTranslateLanguages.remove(lang);
+    }
+    saveNotTranslatableLanguages();
+  }
+
+
+  public static final int DO_NOT_TRANSLATE_MODE_APP_LANG = 1;
+  public static final int DO_NOT_TRANSLATE_MODE_SELECTED = 2;
+  private Integer _chatDoNotTranslateMode;
+
+  public int getChatDoNotTranslateMode () {
+    if (_chatDoNotTranslateMode == null) {
+      _chatDoNotTranslateMode = pmc.getInt(KEY_CHAT_DO_NOT_TRANSLATE_MODE, DO_NOT_TRANSLATE_MODE_APP_LANG);
+    }
+    return _chatDoNotTranslateMode;
+  }
+
+  public void setChatDoNotTranslateMode (int mode) {
+    if (getChatDoNotTranslateMode() != mode) {
+      pmc.putInt(KEY_CHAT_DO_NOT_TRANSLATE_MODE, _chatDoNotTranslateMode = mode);
+    }
+  }
+
+  public static final int TRANSLATE_MODE_NONE = 1;
+  public static final int TRANSLATE_MODE_POPUP = 2;
+  public static final int TRANSLATE_MODE_INLINE = 3;
+  private Integer _chatTranslateMode;
+
+  public int getChatTranslateMode () {
+    if (_chatTranslateMode == null) {
+      _chatTranslateMode = pmc.getInt(KEY_CHAT_TRANSLATE_MODE, TRANSLATE_MODE_POPUP);
+    }
+    return _chatTranslateMode;
+  }
+
+  public void setChatTranslateMode (int mode) {
+    if (getChatTranslateMode() != mode) {
+      pmc.putInt(KEY_CHAT_TRANSLATE_MODE, _chatTranslateMode = mode);
+    }
+  }
+
+  public void setTranslateLanguageRecents (String[] recents) {
+    pmc.putStringArray(KEY_CHAT_TRANSLATE_RECENTS, recents);
+  }
+
+  public void setTranslateLanguageRecents (List<String> recents) {
+    String[] out = new String[recents.size()];
+    int i = 0;
+    for (String recent : recents) {
+      out[i++] = recent;
+    }
+    setTranslateLanguageRecents(out);
+  }
+
+  public ArrayList<String> getTranslateLanguageRecents () {
+    String[] result = pmc.getStringArray(KEY_CHAT_TRANSLATE_RECENTS);
+    if (result != null) {
+      return new ArrayList<>(Arrays.asList(result));
+    }
+    return new ArrayList<>();
+  }
+
+  public void clearTranslateLanguageRecents () {
+    pmc.remove(KEY_CHAT_TRANSLATE_RECENTS);
+  }
+
   public static final int CHAT_MODE_2LINE = 1;
   public static final int CHAT_MODE_3LINE = 2;
   public static final int CHAT_MODE_3LINE_BIG = 3;
@@ -1014,6 +1267,65 @@ public class Settings {
     }
   }
 
+
+  public interface ChatFolderSettingsListener {
+    default void onChatFolderOptionsChanged (@ChatFolderOptions int newOptions) {}
+    default void onChatFolderStyleChanged (@ChatFolderStyle int newStyle) {}
+  }
+  private final ReferenceList<ChatFolderSettingsListener> chatFolderSettingsListeners = new ReferenceList<>();
+
+  public void addChatFolderSettingsListener (ChatFolderSettingsListener listener) {
+    chatFolderSettingsListeners.add(listener);
+  }
+
+  public void removeChatFolderSettingsListener (ChatFolderSettingsListener listener) {
+    chatFolderSettingsListeners.remove(listener);
+  }
+
+  private Integer _chatFolderOptions, _chatFolderStyle;
+
+  public void setChatFolderOptions (@ChatFolderOptions int options) {
+    if (getChatFolderOptions() != options) {
+      if (options == TdlibSettingsManager.DEFAULT_CHAT_FOLDER_OPTIONS) {
+        pmc.remove(KEY_CHAT_FOLDER_OPTIONS);
+      } else {
+        pmc.putInt(KEY_CHAT_FOLDER_OPTIONS, options);
+      }
+      _chatFolderOptions = options;
+      for (ChatFolderSettingsListener listener : chatFolderSettingsListeners) {
+        listener.onChatFolderOptionsChanged(options);
+      }
+    }
+  }
+
+  public @ChatFolderOptions int getChatFolderOptions () {
+    if (_chatFolderOptions == null) {
+      _chatFolderOptions = pmc.getInt(KEY_CHAT_FOLDER_OPTIONS, TdlibSettingsManager.DEFAULT_CHAT_FOLDER_OPTIONS);
+    }
+    return _chatFolderOptions;
+  }
+
+  public void setChatFolderStyle (@ChatFolderStyle int style) {
+    if (getChatFolderStyle() != style) {
+      if (style == TdlibSettingsManager.DEFAULT_CHAT_FOLDER_STYLE) {
+        pmc.remove(KEY_CHAT_FOLDER_STYLE);
+      } else {
+        pmc.putInt(KEY_CHAT_FOLDER_STYLE, style);
+      }
+      _chatFolderStyle = style;
+      for (ChatFolderSettingsListener listener : chatFolderSettingsListeners) {
+        listener.onChatFolderStyleChanged(style);
+      }
+    }
+  }
+
+  public @ChatFolderStyle int getChatFolderStyle () {
+    if (_chatFolderStyle == null) {
+      _chatFolderStyle = pmc.getInt(KEY_CHAT_FOLDER_STYLE, TdlibSettingsManager.DEFAULT_CHAT_FOLDER_STYLE);
+    }
+    return _chatFolderStyle;
+  }
+
   private long makeDefaultNewSettings () {
     long settings = 0;
 
@@ -1027,7 +1339,7 @@ public class Settings {
   }
 
   public boolean getNewSetting (long key) {
-    return BitwiseUtils.getFlag(getNewSettings(), key);
+    return BitwiseUtils.hasFlag(getNewSettings(), key);
   }
 
   private boolean setNewSettings (long newSettings) {
@@ -1040,6 +1352,35 @@ public class Settings {
           listener.onSettingsChanged(newSettings, oldSettings);
         }
       }
+      return true;
+    }
+    return false;
+  }
+
+  private static long makeDefaultExperiments () {
+    // TODO: this flag allows implementing later a global toggle that enables/disables all experiments
+    // while preserving specific experiments toggle values.
+    return EXPERIMENT_FLAG_ALLOW_EXPERIMENTS;
+  }
+
+  private long getExperiments () {
+    if (_experiments == null) {
+      _experiments = pmc.getLong(KEY_EXPERIMENTS, makeDefaultExperiments());
+    }
+    return _experiments;
+  }
+
+  public boolean isExperimentEnabled (long key) {
+    long experiments = getExperiments();
+    return BitwiseUtils.hasAllFlags(experiments, EXPERIMENT_FLAG_ALLOW_EXPERIMENTS | key);
+  }
+
+  public boolean setExperimentEnabled (long key, boolean enabled) {
+    long oldExperiments = getExperiments();
+    long newExperiments = BitwiseUtils.setFlag(oldExperiments, key, enabled);
+    if (oldExperiments != newExperiments) {
+      this._experiments = newExperiments;
+      pmc.putLong(KEY_EXPERIMENTS, newExperiments);
       return true;
     }
     return false;
@@ -1097,7 +1438,7 @@ public class Settings {
   }
 
   private boolean checkSetting (int flag) {
-    return BitwiseUtils.getFlag(getSettings(), flag);
+    return BitwiseUtils.hasFlag(getSettings(), flag);
   }
 
   private boolean checkNegativeSetting (int flag) {
@@ -1347,6 +1688,8 @@ public class Settings {
     return pmc;
   }
 
+  private boolean ignoreFurtherAccountConfigUpgrades;
+
   private void upgradePmc (LevelDB pmc, SharedPreferences.Editor editor, int version) {
     switch (version) {
       case VERSION_10: {
@@ -1393,14 +1736,16 @@ public class Settings {
           if (type == MAP_PROVIDER_GOOGLE) {
             editor.remove(KEY_MAP_PROVIDER_TYPE_CLOUD);
           }
-        } catch (FileNotFoundException ignored) { }
+        } catch (FileNotFoundException ignored) {
+        }
         // Removing secret chat map provider setting, if it's equal to Google
         try {
           int type = pmc.tryGetInt(KEY_MAP_PROVIDER_TYPE);
           if (type == MAP_PROVIDER_GOOGLE) {
             editor.remove(KEY_MAP_PROVIDER_TYPE);
           }
-        } catch (FileNotFoundException ignored) { }
+        } catch (FileNotFoundException ignored) {
+        }
         break;
       }
       case VERSION_17: {
@@ -1410,13 +1755,13 @@ public class Settings {
           if (customThemeId >= 0) {
             int activeColor;
             try {
-              activeColor = pmc.tryGetInt(themeColorKey(customThemeId, R.id.theme_color_headerText));
+              activeColor = pmc.tryGetInt(themeColorKey(customThemeId, ColorId.headerText));
             } catch (Throwable ignored) {
               continue;
             }
-            String activeKey = themeColorKey(customThemeId, R.id.theme_color_headerTabActive);
-            String activeTextKey = themeColorKey(customThemeId, R.id.theme_color_headerTabActiveText);
-            String inactiveTextKey = themeColorKey(customThemeId, R.id.theme_color_headerTabInactiveText);
+            String activeKey = themeColorKey(customThemeId, ColorId.headerTabActive);
+            String activeTextKey = themeColorKey(customThemeId, ColorId.headerTabActiveText);
+            String inactiveTextKey = themeColorKey(customThemeId, ColorId.headerTabInactiveText);
             int barColor = ColorUtils.alphaColor(.9f, activeColor);
             int inactiveColor = ColorUtils.alphaColor(.8f, activeColor);
             if (!pmc.contains(activeKey)) {
@@ -1486,7 +1831,8 @@ public class Settings {
           if (newBadgeMode != 0)
             editor.putInt(KEY_BADGE_FLAGS, newBadgeMode);
           editor.remove(KEY_BADGE_MODE);
-        } catch (Throwable ignored) { }
+        } catch (Throwable ignored) {
+        }
         changeDefaultOtherFlag(pmc, editor, FLAG_OTHER_SPLIT_CHAT_NOTIFICATIONS, true);
         break;
       }
@@ -1496,13 +1842,15 @@ public class Settings {
           if (file.exists() && !file.delete()) {
             // nothing?
           }
-        } catch (Throwable ignored) { }
+        } catch (Throwable ignored) {
+        }
         try {
           File file = new File(TdlibManager.getLegacyLogFilePath(true));
           if (file.exists() && !file.delete()) {
             // nothing?
           }
-        } catch (Throwable ignored) { }
+        } catch (Throwable ignored) {
+        }
         break;
       }
       case VERSION_21: {
@@ -1523,7 +1871,7 @@ public class Settings {
       case VERSION_24: {
         int accountNum = TdlibManager.readAccountNum();
         for (int accountId = 0; accountId < accountNum; accountId++) {
-          editor.remove(TdlibSettingsManager.key(TdlibSettingsManager.DEVICE_TOKEN_KEY, accountId));
+          editor.remove(TdlibSettingsManager.key(TdlibSettingsManager.DEVICE_TOKEN_OR_ENDPOINT_KEY, accountId));
           editor.remove(TdlibSettingsManager.key(TdlibSettingsManager.DEVICE_UID_KEY, accountId));
           editor.remove(TdlibSettingsManager.key(TdlibSettingsManager.DEVICE_OTHER_UID_KEY, accountId));
         }
@@ -1630,7 +1978,8 @@ public class Settings {
             setNewSetting(SETTING_FLAG_EDIT_MARKDOWN, true);
           }
           editor.remove(KEY_MARKDOWN_MODE);
-        } catch (FileNotFoundException ignored) { }
+        } catch (FileNotFoundException ignored) {
+        }
         break;
       }
       case VERSION_30: {
@@ -1770,41 +2119,135 @@ public class Settings {
           }
         }
 
-        File oldConfigFile = TdlibManager.getAccountConfigFile();
-        File backupFile = new File(oldConfigFile.getParentFile(), oldConfigFile.getName() + ".bak." + TdlibAccount.VERSION_1);
-        if (oldConfigFile.exists() && !backupFile.exists()) {
-          TdlibManager.AccountConfig config = null;
-          try (RandomAccessFile r = new RandomAccessFile(oldConfigFile, TdlibManager.MODE_R)) {
-            config = TdlibManager.readAccountConfig(null, r, TdlibAccount.VERSION_1, false);
-          } catch (IOException e) {
-            Log.e(e);
-          }
-          if (config != null) {
-            File newConfigFile = new File(oldConfigFile.getParentFile(), oldConfigFile.getName() + ".tmp");
-            try {
-              if (newConfigFile.exists() || newConfigFile.createNewFile()) {
-                try (RandomAccessFile r = new RandomAccessFile(newConfigFile, TdlibManager.MODE_RW)) {
-                  TdlibManager.writeAccountConfigFully(r, config);
-                } catch (IOException e) {
-                  Tracer.onLaunchError(e);
-                  throw new RuntimeException(e);
-                }
-              }
-              if (!oldConfigFile.renameTo(backupFile))
-                throw new RuntimeException("Cannot backup old config");
-              if (!newConfigFile.renameTo(oldConfigFile))
-                throw new RuntimeException("Cannot save new config");
-            } catch (Throwable t) {
-              Tracer.onLaunchError(t);
-              throw new RuntimeException(t);
-            }
-          }
-        }
+        upgradeAccountsConfig(TdlibAccount.VERSION_1);
         break;
       }
       case VERSION_39: {
         pmc.removeByPrefix(KEY_TDLIB_CRASH_PREFIX);
         break;
+      }
+      case VERSION_40: {
+        pmc
+          .remove("crash_id_debug")
+          .remove("crash_id_release")
+          .remove("crash_id_reported_debug")
+          .remove("crash_id_reported_release");
+        break;
+      }
+      case VERSION_41: {
+        deleteAllLogs(false, null);
+        break;
+      }
+      case VERSION_42: {
+        int accountNum = TdlibManager.readAccountNum();
+        for (int accountId = 0; accountId < accountNum; accountId++) {
+          editor.remove(TdlibSettingsManager.key(TdlibSettingsManager.__DEVICE_TDLIB_VERSION_KEY, accountId));
+        }
+        break;
+      }
+      case VERSION_43: {
+        String[] emojis = pmc.getStringArray(KEY_EMOJI_RECENTS);
+        if (emojis != null && emojis.length > 0) {
+          Map<String, RecentInfo> infos = new HashMap<>();
+          getBinaryMap(KEY_EMOJI_COUNTERS, infos, RecentInfo.class);
+
+          int changedCount = 0;
+          int changedEmojiCounters = 0;
+          for (int index = 0; index < emojis.length; index++) {
+            final String oldEmoji = emojis[index];
+            // Save 15*2 bytes per recent custom emoji by simply reducing prefix size
+            if (oldEmoji.startsWith(Emoji.CUSTOM_EMOJI_CACHE_OLD)) {
+              String newEmoji = Emoji.CUSTOM_EMOJI_CACHE + oldEmoji.substring(Emoji.CUSTOM_EMOJI_CACHE_OLD.length());
+              emojis[index] = newEmoji;
+              changedCount++;
+
+              RecentInfo recentInfo = infos.remove(oldEmoji);
+              if (recentInfo != null) {
+                infos.put(newEmoji, recentInfo);
+                changedEmojiCounters++;
+              }
+            }
+          }
+          if (changedCount > 0) {
+            pmc.putStringArray(KEY_EMOJI_RECENTS, emojis);
+          }
+          if (changedEmojiCounters > 0) {
+            saveBinaryMap(KEY_EMOJI_COUNTERS, infos);
+          }
+        }
+        break;
+      }
+      case VERSION_44: {
+        upgradeAccountsConfig(TdlibAccount.VERSION_2);
+        break;
+      }
+      case VERSION_45: {
+        resetOtherFlag(pmc, editor, FLAG_OTHER_DISABLE_BIG_EMOJI, false);
+        break;
+      }
+      case VERSION_46: {
+        long experiments = pmc.getLong(KEY_EXPERIMENTS, makeDefaultExperiments());
+        if (BitwiseUtils.hasFlag(experiments, REMOVED_EXPERIMENT_FLAG_ENABLE_FOLDERS)) {
+          experiments &= ~REMOVED_EXPERIMENT_FLAG_ENABLE_FOLDERS;
+          editor.putLong(KEY_EXPERIMENTS, experiments);
+        }
+        break;
+      }
+      case VERSION_47: {
+        // No features were officially available before VERSION_46.
+        // Reset just once in VERSION_47 right prior to stable release.
+        editor.putLong(KEY_FEATURES, 0);
+        break;
+      }
+    }
+  }
+
+  private void resetOtherFlag (LevelDB pmc, SharedPreferences.Editor editor, int flag, boolean value) {
+    int defaultSettings = makeDefaultSettings();
+    int oldSettings = pmc.getInt(KEY_OTHER, defaultSettings);
+    int newSettings = BitwiseUtils.setFlag(oldSettings, flag, value);
+    if (oldSettings != newSettings) {
+      if (newSettings != defaultSettings) {
+        editor.putInt(KEY_OTHER, newSettings);
+      } else {
+        editor.remove(KEY_OTHER);
+      }
+    }
+  }
+
+  private void upgradeAccountsConfig (int fromConfigVersion) {
+    if (ignoreFurtherAccountConfigUpgrades) {
+      return;
+    }
+    File oldConfigFile = TdlibManager.getAccountConfigFile();
+    File backupFile = new File(oldConfigFile.getParentFile(), oldConfigFile.getName() + ".bak." + fromConfigVersion);
+    if (oldConfigFile.exists() && !backupFile.exists()) {
+      TdlibManager.AccountConfig config = null;
+      try (RandomAccessFile r = new RandomAccessFile(oldConfigFile, TdlibManager.MODE_R)) {
+        config = TdlibManager.readAccountConfig(null, r, fromConfigVersion, false);
+      } catch (IOException e) {
+        Log.e(e);
+      }
+      if (config != null) {
+        File newConfigFile = new File(oldConfigFile.getParentFile(), oldConfigFile.getName() + ".tmp");
+        try {
+          if (newConfigFile.exists() || newConfigFile.createNewFile()) {
+            try (RandomAccessFile r = new RandomAccessFile(newConfigFile, TdlibManager.MODE_RW)) {
+              TdlibManager.writeAccountConfigFully(r, config);
+              ignoreFurtherAccountConfigUpgrades = true;
+            } catch (IOException e) {
+              Tracer.onLaunchError(e);
+              throw new DeviceStorageError(e);
+            }
+          }
+          if (!oldConfigFile.renameTo(backupFile))
+            throw new DeviceStorageError("Cannot backup old config");
+          if (!newConfigFile.renameTo(oldConfigFile))
+            throw new DeviceStorageError("Cannot save new config");
+        } catch (Throwable t) {
+          Tracer.onLaunchError(t);
+          throw new DeviceStorageError(t);
+        }
       }
     }
   }
@@ -1816,7 +2259,8 @@ public class Settings {
       if (settings != newSettings) {
         editor.putInt(KEY_OTHER, newSettings);
       }
-    } catch (FileNotFoundException ignored) { }
+    } catch (FileNotFoundException ignored) {
+    }
   }
 
   private boolean needProxyLegacyMigrateCheck;
@@ -1952,7 +2396,7 @@ public class Settings {
           editor.putString(key, (String) value);
         } else {
           Log.e("Unknown preferences value, key:%s, value:%s", key, value);
-          throw new IllegalStateException("key = " + key + " value = " + value + " (" + (value != null ? value.getClass().getSimpleName() : "null"));
+          throw new UnsupportedOperationException("key = " + key + " value = " + value + " (" + (value != null ? value.getClass().getSimpleName() : "null"));
         }
       }
       if (pipX != null && pipY != null) {
@@ -2040,7 +2484,7 @@ public class Settings {
 
           default:
             if (key.startsWith(KEY_SCROLL_CHAT_PREFIX) ||
-                key.startsWith(TdlibNotificationManager._NOTIFICATIONS_STACK_KEY)) {
+              key.startsWith(TdlibNotificationManager._NOTIFICATIONS_STACK_KEY)) {
               continue;
             }
             break;
@@ -2063,7 +2507,7 @@ public class Settings {
             String newValue = pmc.tryGetString(key);
             Test.assertEquals((String) value, newValue);
           } else {
-            throw new IllegalStateException("key = " + key + " value = " + value + " (" + (value != null ? value.getClass().getSimpleName() : "null"));
+            throw new UnsupportedOperationException("key = " + key + " value = " + value + " (" + (value != null ? value.getClass().getSimpleName() : "null"));
           }
         } catch (FileNotFoundException e) {
           throw new RuntimeException(key + " not found");
@@ -2094,14 +2538,14 @@ public class Settings {
     File proxyFile = getProxyConfigFile();
     if (proxyFile.exists()) {
       if (proxyFile.length() > 0) {
-        TdApi.Proxy proxy = null;
+        TdApi.InternalLinkTypeProxy proxy = null;
         try (RandomAccessFile r = new RandomAccessFile(proxyFile, "r")) {
           proxy = readProxy(r);
         } catch (IOException e) {
           Log.e(e);
         }
         if (proxy != null) {
-          addOrUpdateProxy(proxy.server, proxy.port, proxy.type,null, true);
+          addOrUpdateProxy(proxy, null, true);
         }
       }
       if (!proxyFile.delete()) {
@@ -2118,7 +2562,7 @@ public class Settings {
   }
 
   @Deprecated
-  private static TdApi.Proxy readProxy (RandomAccessFile file) throws IOException {
+  private static TdApi.InternalLinkTypeProxy readProxy (RandomAccessFile file) throws IOException {
     switch (Blob.readVarint(file)) {
       case 1456461592: {
         String server = Blob.readString(file);
@@ -2126,7 +2570,11 @@ public class Settings {
         byte flags = Blob.readByte(file);
         String username = (flags & 1) != 0 ? Blob.readString(file) : "";
         String password = (flags & 2) != 0 ? Blob.readString(file) : "";
-        return new TdApi.Proxy(0, server, port, 0, false, new TdApi.ProxyTypeSocks5(username, password));
+        return new TdApi.InternalLinkTypeProxy(
+          server,
+          port,
+          new TdApi.ProxyTypeSocks5(username, password)
+        );
       }
       default:
         return null;
@@ -2172,7 +2620,7 @@ public class Settings {
   }
 
   public boolean needTutorial (long flag) {
-    return !BitwiseUtils.getFlag(getTutorialFlags(), flag) && !BitwiseUtils.getFlag(shownTutorials, flag);
+    return !BitwiseUtils.hasFlag(getTutorialFlags(), flag) && !BitwiseUtils.hasFlag(shownTutorials, flag);
   }
 
   public boolean needTutorial (@NonNull TdApi.ChatSource source) {
@@ -2183,7 +2631,8 @@ public class Settings {
       case TdApi.ChatSourceMtprotoProxy.CONSTRUCTOR:
         return needTutorial(TUTORIAL_PROXY_SPONSOR);
       default:
-        throw new UnsupportedOperationException(source.toString());
+        Td.assertChatSource_12b21238();
+        throw Td.unsupported(source);
     }
   }
 
@@ -2283,6 +2732,14 @@ public class Settings {
     setSetting(FLAG_OTHER_AUTOPLAY_GIFS, autoplayGIFs);
   }
 
+  public void setUseQuickTranslation (boolean useQuickTranslation) {
+    setSetting(FLAG_OTHER_USE_QUICK_TRANSLATION, useQuickTranslation);
+  }
+
+  public boolean needUseQuickTranslation () {
+    return checkSetting(FLAG_OTHER_USE_QUICK_TRANSLATION);
+  }
+
   public boolean forceArabicNumbers () {
     return checkSetting(FLAG_OTHER_FORCE_ARABIC_NUMBERS);
   }
@@ -2360,6 +2817,32 @@ public class Settings {
     }
   }
 
+  public int getEmojiMode () {
+    if (_emojiMode == null)
+      _emojiMode = pmc.getInt(KEY_EMOJI_MODE, STICKER_MODE_ALL);
+    return _emojiMode;
+  }
+
+  public void setEmojiMode (int mode) {
+    this._emojiMode = mode;
+    if (mode == STICKER_MODE_ALL) {
+      remove(KEY_EMOJI_MODE);
+    } else {
+      putInt(KEY_EMOJI_MODE, mode);
+    }
+  }
+
+  public int getReactionAvatarsMode () {
+    if (_reactionAvatarsMode == null)
+      _reactionAvatarsMode = pmc.getInt(KEY_REACTION_AVATARS_MODE, REACTION_AVATARS_MODE_SMART_FILTER);
+    return _reactionAvatarsMode;
+  }
+
+  public void setReactionAvatarsMode (int mode) {
+    this._reactionAvatarsMode = mode;
+    putInt(KEY_REACTION_AVATARS_MODE, mode);
+  }
+
   public int getAutoUpdateMode () {
     if (_autoUpdateMode == null)
       _autoUpdateMode = pmc.getInt(KEY_AUTO_UPDATE_MODE, AUTO_UPDATE_MODE_PROMPT);
@@ -2403,7 +2886,7 @@ public class Settings {
   private int getNotificationFlags () {
     if (_notificationFlags == null) {
       int flags = pmc.getInt(KEY_NOTIFICATION_FLAGS, NOTIFICATION_FLAGS_DEFAULT);
-      if (BitwiseUtils.getFlag(flags, NOTIFICATION_FLAG_ONLY_ACTIVE_ACCOUNT) && BitwiseUtils.getFlag(flags, NOTIFICATION_FLAG_ONLY_SELECTED_ACCOUNTS)) {
+      if (BitwiseUtils.hasFlag(flags, NOTIFICATION_FLAG_ONLY_ACTIVE_ACCOUNT) && BitwiseUtils.hasFlag(flags, NOTIFICATION_FLAG_ONLY_SELECTED_ACCOUNTS)) {
         flags = BitwiseUtils.setFlag(flags, NOTIFICATION_FLAG_ONLY_ACTIVE_ACCOUNT, false);
         flags = BitwiseUtils.setFlag(flags, NOTIFICATION_FLAG_ONLY_SELECTED_ACCOUNTS, false);
       }
@@ -2413,7 +2896,7 @@ public class Settings {
   }
 
   public boolean checkNotificationFlag (int flag) {
-    return BitwiseUtils.getFlag(getNotificationFlags(), flag);
+    return BitwiseUtils.hasFlag(getNotificationFlags(), flag);
   }
 
   public boolean setNotificationFlag (int flag, boolean enabled) {
@@ -2470,7 +2953,8 @@ public class Settings {
 
   public interface VideoModePreferenceListener {
     void onPreferVideoModeChanged (boolean preferVideoMode);
-    default void onRecordAudioVideoError (boolean preferVideoMode) { }
+
+    default void onRecordAudioVideoError (boolean preferVideoMode) {}
   }
 
   private final List<Reference<VideoModePreferenceListener>> videoPreferenceChangeListeners = new ArrayList<>();
@@ -2685,7 +3169,7 @@ public class Settings {
       if (o == null || getClass() != o.getClass()) return false;
       VideoSize videoSize = (VideoSize) o;
       return majorSize == videoSize.majorSize &&
-             minorSize == videoSize.minorSize;
+        minorSize == videoSize.minorSize;
     }
 
     public boolean isDefault () {
@@ -2698,7 +3182,7 @@ public class Settings {
 
     @Override
     public int hashCode () {
-      return Objects.hash(majorSize, minorSize);
+      return ObjectUtils.hash(majorSize, minorSize);
     }
   }
 
@@ -2728,8 +3212,8 @@ public class Settings {
     public boolean isDefault () {
       return
         size.isDefault() &&
-        fps == DEFAULT_FRAME_RATE &&
-        bitrate == DefaultVideoStrategy.BITRATE_UNKNOWN;
+          fps == DEFAULT_FRAME_RATE &&
+          bitrate == DefaultVideoStrategy.BITRATE_UNKNOWN;
     }
 
     @Override
@@ -2738,13 +3222,13 @@ public class Settings {
       if (o == null || getClass() != o.getClass()) return false;
       VideoLimit that = (VideoLimit) o;
       return fps == that.fps &&
-             bitrate == that.bitrate &&
-             size.equals(that.size);
+        bitrate == that.bitrate &&
+        size.equals(that.size);
     }
 
     @Override
     public int hashCode () {
-      return Objects.hash(size, fps, bitrate);
+      return ObjectUtils.hashCode(size, fps, bitrate);
     }
 
     public VideoLimit () {
@@ -2774,11 +3258,16 @@ public class Settings {
     }
 
     public int getOutputFrameRate (int frameRate) {
-      return fps > 0 ? Math.min(frameRate, this.fps) : DEFAULT_FRAME_RATE;
+      return Math.min(
+        frameRate > 0 ? frameRate : DEFAULT_FRAME_RATE,
+        fps > 0 ? fps : DEFAULT_FRAME_RATE
+      );
     }
 
+    public static final double BITRATE_SCALE = 0.109;
+
     public long getOutputBitrate (Settings.VideoSize size, int frameRate, long inputBitrate) {
-      return Math.round((size.majorSize * size.minorSize * frameRate) * 0.089);
+      return Math.round((size.majorSize * size.minorSize * frameRate) * BITRATE_SCALE);
     }
 
     @Nullable
@@ -2804,8 +3293,8 @@ public class Settings {
       int dataSize =
         /*bitrate != DefaultVideoStrategy.BITRATE_UNKNOWN ? 4 :*/ // never saving the bitrate as it is calculated automatically
         fps != DEFAULT_FRAME_RATE ? 3 :
-        size.majorSize != size.minorSize ? 2 :
-        size.majorSize != 0 ? 1 : 0;
+          size.majorSize != size.minorSize ? 2 :
+            size.majorSize != 0 ? 1 : 0;
       if (dataSize == 0)
         return null;
       int[] result = new int[dataSize];
@@ -3130,8 +3619,8 @@ public class Settings {
     return tdlibLogSettings.isEnabled() || Log.getLogLevel() > Log.LEVEL_ASSERT;
   }
 
-  public void applyLogSettings () {
-    tdlibLogSettings.apply();
+  public void applyLogSettings (boolean async) {
+    tdlibLogSettings.apply(async);
   }
 
   public void disableAllLogs () {
@@ -3139,10 +3628,12 @@ public class Settings {
     Log.setLogLevel(Log.LEVEL_ASSERT);
   }
 
-  public void deleteAllLogs (Runnable after) {
+  public void deleteAllLogs (boolean withTdlibLogs, Runnable after) {
     Background.instance().post(() -> {
       Log.deleteAll(Log.getLogFiles(), futureLogs -> {
-        TdlibManager.deleteAllLogFiles();
+        if (withTdlibLogs) {
+          TdlibManager.deleteAllLogFiles();
+        }
         if (after != null)
           after.run();
       }, null);
@@ -3177,18 +3668,18 @@ public class Settings {
 
   // EmojiLayout
 
-  public static final int EMOJI_MEDIA_SECTION_STICKERS = 0;
-  public static final int EMOJI_MEDIA_SECTION_GIFS = 1;
-
   public int getEmojiPosition () {
     return getInt(KEY_EMOJI_POSITION, 0);
   }
+
   public int getEmojiMediaSection () {
-    return getInt(KEY_EMOJI_MEDIA_SECTION, EMOJI_MEDIA_SECTION_STICKERS);
+    return getInt(KEY_EMOJI_MEDIA_SECTION, EmojiMediaType.STICKER);
   }
+
   public void setEmojiPosition (int position) {
     putInt(KEY_EMOJI_POSITION, position);
   }
+
   public void setEmojiMediaSection (int section) {
     putInt(KEY_EMOJI_MEDIA_SECTION, section);
   }
@@ -3293,7 +3784,7 @@ public class Settings {
     public double longitude;
     public float zoomOrAccuracy;
 
-    public LastLocation () { }
+    public LastLocation () {}
 
     public LastLocation (double latitude, double longitude, float zoomOrAccuracy) {
       this.latitude = latitude;
@@ -3907,13 +4398,22 @@ public class Settings {
   // type:byte[] description: Proxy configuration (constructor, server, port, ?username, ?password)
   private static final String KEY_PROXY_PREFIX_CONFIG = KEY_PROXY_ITEM_PREFIX + "config_"; // + proxy_id
   // type:long   description: Last connection time (in milliseconds)
+  @Deprecated
   private static final String KEY_PROXY_PREFIX_CONNECTION_TIME = KEY_PROXY_ITEM_PREFIX + "time_"; // + proxy_id + "_" + accountId
   // type:string description: Proxy description
   private static final String KEY_PROXY_PREFIX_DESCRIPTION = KEY_PROXY_ITEM_PREFIX + "desc_";
+  // type:int description: Amount of times proxy was connected
+  private static final String KEY_PROXY_PREFIX_CONNECTED_COUNT = KEY_PROXY_ITEM_PREFIX + "success_";
+  // type:long[] description: {time proxy connected, time elapsed since connection attempted}
+  private static final String KEY_PROXY_PREFIX_LAST_CONNECTION = KEY_PROXY_ITEM_PREFIX + "connect_";
+  // type:long[] description: {time pong received, ping value}
+  private static final String KEY_PROXY_PREFIX_LAST_PING = KEY_PROXY_ITEM_PREFIX + "ping_";
 
   public static final int PROXY_FLAG_ENABLED = 1;
   public static final int PROXY_FLAG_USE_FOR_CALLS = 1 << 1;
   public static final int PROXY_FLAG_SHOW_ERRORS = 1 << 2;
+  public static final int PROXY_FLAG_SWITCH_AUTOMATICALLY = 1 << 3;
+  public static final int PROXY_FLAG_SWITCH_ALLOW_DIRECT = 1 << 4;
 
   public static final int PROXY_ID_UNKNOWN = -1;
   public static final int PROXY_ID_NONE = 0;
@@ -3924,10 +4424,10 @@ public class Settings {
 
   /**
    * @return Identifier of proxy to be applied to TDLib client instances.
-   *         Returns {@link #PROXY_ID_NONE} in case {@link #PROXY_FLAG_ENABLED} is not set.
+   * Returns {@link #PROXY_ID_NONE} in case {@link #PROXY_FLAG_ENABLED} is not set.
    */
   public int getEffectiveProxyId () {
-    if ((getProxySettings() & PROXY_FLAG_ENABLED) != 0) {
+    if (BitwiseUtils.hasFlag(getProxySettings(), PROXY_FLAG_ENABLED)) {
       return getAvailableProxyId();
     }
     return PROXY_ID_NONE;
@@ -3938,7 +4438,7 @@ public class Settings {
    */
   public int getEffectiveCallsProxyId () {
     int settings = getProxySettings();
-    if ((settings & PROXY_FLAG_ENABLED) != 0 && (settings & PROXY_FLAG_USE_FOR_CALLS) != 0) {
+    if (BitwiseUtils.hasFlag(settings, PROXY_FLAG_ENABLED) && BitwiseUtils.hasFlag(settings, PROXY_FLAG_USE_FOR_CALLS)) {
       return getAvailableProxyId();
     }
     return PROXY_ID_NONE;
@@ -3946,7 +4446,7 @@ public class Settings {
 
   /**
    * @return Identifier of proxy to be applied to TDLib client instances.
-   *         Returns proxy identifier even when {@link #PROXY_FLAG_ENABLED} is not set.
+   * Returns proxy identifier even when {@link #PROXY_FLAG_ENABLED} is not set.
    */
   public int getAvailableProxyId () {
     return pmc.getInt(KEY_PROXY_CURRENT, PROXY_ID_NONE);
@@ -4012,17 +4512,14 @@ public class Settings {
     }
   }
 
-  private boolean setProxySettingImpl (int settings, int setting, boolean enabled) {
-    if (enabled == ((settings & setting) != 0)) {
+  private boolean setProxySettingImpl (final int oldSettings, int setting, boolean enabled) {
+    int newSettings = BitwiseUtils.setFlag(oldSettings, setting, enabled);
+    if (newSettings == oldSettings) {
       return enabled;
     }
-    if (enabled) {
-      settings |= setting;
-    } else {
-      settings &= ~setting;
-    }
     if (setting == PROXY_FLAG_ENABLED) {
-      int proxyId; Proxy proxy;
+      int proxyId;
+      Proxy proxy;
       if (enabled) {
         proxyId = getAvailableProxyId();
         if (proxyId <= PROXY_ID_NONE) {
@@ -4036,14 +4533,14 @@ public class Settings {
         proxyId = PROXY_ID_NONE;
         proxy = null;
       }
-      pmc.putByte(KEY_PROXY_SETTINGS, (byte) settings);
+      pmc.putByte(KEY_PROXY_SETTINGS, (byte) newSettings);
       if (proxy != null) {
-        dispatchProxyConfiguration(proxyId, proxy.server, proxy.port, proxy.type, proxy.description, true, false);
+        dispatchProxyConfiguration(proxyId, proxy.proxy, proxy.description, true, false);
       } else {
-        dispatchProxyConfiguration(PROXY_ID_NONE, null, 0, null, null, true, false);
+        dispatchProxyConfiguration(PROXY_ID_NONE, null, null, true, false);
       }
     } else {
-      pmc.putByte(KEY_PROXY_SETTINGS, (byte) settings);
+      pmc.putByte(KEY_PROXY_SETTINGS, (byte) newSettings);
     }
     return enabled;
   }
@@ -4114,10 +4611,10 @@ public class Settings {
           break;
         }
         default:
-          throw new IllegalArgumentException("typeId == " + typeId);
+          throw new UnsupportedOperationException(Integer.toString(typeId));
       }
 
-      return new Proxy(proxyId, server, port, type, null);
+      return new Proxy(proxyId, new TdApi.InternalLinkTypeProxy(server, port, type), null);
     } catch (Throwable t) {
       Log.w("Unable to read proxy configuration", t);
     }
@@ -4130,8 +4627,13 @@ public class Settings {
         return ((TdApi.ProxyTypeSocks5) type).username;
       case TdApi.ProxyTypeHttp.CONSTRUCTOR:
         return ((TdApi.ProxyTypeHttp) type).username;
+      case TdApi.ProxyTypeMtproto.CONSTRUCTOR:
+        return null;
+      default: {
+        Td.assertProxyType_bc1a1076();
+        throw Td.unsupported(type);
+      }
     }
-    return null;
   }
 
   public static String getProxyPassword (@NonNull TdApi.ProxyType type) {
@@ -4140,8 +4642,13 @@ public class Settings {
         return ((TdApi.ProxyTypeSocks5) type).password;
       case TdApi.ProxyTypeHttp.CONSTRUCTOR:
         return ((TdApi.ProxyTypeHttp) type).password;
+      case TdApi.ProxyTypeMtproto.CONSTRUCTOR:
+        return null;
+      default: {
+        Td.assertProxyType_bc1a1076();
+        throw Td.unsupported(type);
+      }
     }
-    return null;
   }
 
   public static int getProxyDefaultOrder (@NonNull TdApi.ProxyType type) {
@@ -4152,8 +4659,10 @@ public class Settings {
         return 2;
       case TdApi.ProxyTypeHttp.CONSTRUCTOR:
         return 3;
+      default:
+        Td.assertProxyType_bc1a1076();
+        throw Td.unsupported(type);
     }
-    throw new UnsupportedOperationException();
   }
 
   private static @Proxy.Type int getProxyType (@NonNull TdApi.ProxyType type) {
@@ -4164,36 +4673,38 @@ public class Settings {
         return Proxy.TYPE_MTPROTO;
       case TdApi.ProxyTypeHttp.CONSTRUCTOR:
         return Proxy.TYPE_HTTP;
+      default:
+        Td.assertProxyType_bc1a1076();
+        throw Td.unsupported(type);
     }
-    throw new UnsupportedOperationException();
   }
 
-  private static byte[] serializeProxy (@NonNull String server, int port, @NonNull TdApi.ProxyType type) {
-    @Proxy.Type int typeId = getProxyType(type);
+  private static byte[] serializeProxy (@NonNull TdApi.InternalLinkTypeProxy proxy) {
+    @Proxy.Type int typeId = getProxyType(proxy.type);
 
     final Blob blob;
     int size = 0;
 
-    size += Blob.sizeOf(server, false);
+    size += Blob.sizeOf(proxy.server, false);
     size += 4 /*port*/ + 1 /*typeId*/;
 
     switch (typeId) {
       case Proxy.TYPE_SOCKS5: {
-        TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) type;
+        TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) proxy.type;
 
         size += calculateProxyCredentialsSize(socks5.username, socks5.password);
 
         break;
       }
       case Proxy.TYPE_MTPROTO: {
-        TdApi.ProxyTypeMtproto mtproto = (TdApi.ProxyTypeMtproto) type;
+        TdApi.ProxyTypeMtproto mtproto = (TdApi.ProxyTypeMtproto) proxy.type;
 
         size += Blob.sizeOf(mtproto.secret != null ? mtproto.secret : "", true);
 
         break;
       }
       case Proxy.TYPE_HTTP: {
-        TdApi.ProxyTypeHttp http = (TdApi.ProxyTypeHttp) type;
+        TdApi.ProxyTypeHttp http = (TdApi.ProxyTypeHttp) proxy.type;
 
         size += calculateProxyCredentialsSize(http.username, http.password);
         size += 1;
@@ -4203,25 +4714,25 @@ public class Settings {
     }
 
     blob = new Blob(size);
-    blob.writeString(server);
-    blob.writeInt(port);
+    blob.writeString(proxy.server);
+    blob.writeInt(proxy.port);
     blob.writeByte((byte) typeId);
 
     switch (typeId) {
       case Proxy.TYPE_SOCKS5: {
-        TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) type;
+        TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) proxy.type;
         writeProxyCredentials(blob, socks5.username, socks5.password);
         break;
       }
       case Proxy.TYPE_MTPROTO: {
-        TdApi.ProxyTypeMtproto mtproto = (TdApi.ProxyTypeMtproto) type;
+        TdApi.ProxyTypeMtproto mtproto = (TdApi.ProxyTypeMtproto) proxy.type;
 
         blob.writeString(mtproto.secret != null ? mtproto.secret : "");
 
         break;
       }
       case Proxy.TYPE_HTTP: {
-        TdApi.ProxyTypeHttp http = (TdApi.ProxyTypeHttp) type;
+        TdApi.ProxyTypeHttp http = (TdApi.ProxyTypeHttp) proxy.type;
 
         writeProxyCredentials(blob, http.username, http.password);
         blob.writeByte((byte) (http.httpOnly ? 1 : 0));
@@ -4253,13 +4764,11 @@ public class Settings {
   /**
    * Get existing proxy identifier
    *
-   * @param server Proxy server
-   * @param port   Proxy port
-   * @param type   Proxy type
+   * @param proxy Proxy information
    * @return Proxy identifier, or {@link #PROXY_ID_NONE} if not found
    */
-  public int getExistingProxyId (@NonNull String server, int port, @NonNull TdApi.ProxyType type) {
-    final byte[] data = serializeProxy(server, port, type);
+  public int getExistingProxyId (@NonNull TdApi.InternalLinkTypeProxy proxy) {
+    final byte[] data = serializeProxy(proxy);
     if (data != null) {
       String existingKey = pmc.findByValue(KEY_PROXY_PREFIX_CONFIG, data);
       if (existingKey != null) {
@@ -4269,23 +4778,37 @@ public class Settings {
     return PROXY_ID_NONE;
   }
 
-  public int addOrUpdateProxy (@NonNull String server, int port, @NonNull TdApi.ProxyType type, @Nullable String proxyDescription, boolean setAsCurrent) {
-    return addOrUpdateProxy(server, port, type, proxyDescription, setAsCurrent, PROXY_ID_NONE);
+  public void trackSuccessfulConnection (int proxyId, long timestampMs, long resultMs, boolean isPing) {
+    if (proxyId <= Settings.PROXY_ID_UNKNOWN)
+      throw new IllegalArgumentException(Integer.toString(proxyId));
+    if (isPing) {
+      pmc.putLongArray(KEY_PROXY_PREFIX_LAST_PING + proxyId, new long[] {timestampMs, resultMs});
+    } else {
+      int connectedCount =
+        pmc.getInt(KEY_PROXY_PREFIX_CONNECTED_COUNT + proxyId, 0)
+          + 1;
+      pmc.edit()
+        .putLongArray(KEY_PROXY_PREFIX_LAST_CONNECTION + proxyId, new long[] {timestampMs, resultMs})
+        .putInt(KEY_PROXY_PREFIX_CONNECTED_COUNT + proxyId, connectedCount)
+        .apply();
+    }
+  }
+
+  public int addOrUpdateProxy (@NonNull TdApi.InternalLinkTypeProxy proxy, @Nullable String proxyDescription, boolean setAsCurrent) {
+    return addOrUpdateProxy(proxy, proxyDescription, setAsCurrent, PROXY_ID_NONE);
   }
 
   /**
    * Adds proxy configuration or returns identifier of existing one.
    *
-   * @param server Proxy server
-   * @param port   Proxy port
-   * @param type   Proxy type
+   * @param proxy            Proxy server
    * @param proxyDescription Nullable alias for the proxy.
-   * @param setAsCurrent If set to false, proxy will be saved for later use.
-   * @param existingProxyId Existing proxy identifier to be modified or {@link #PROXY_ID_NONE}
+   * @param setAsCurrent     If set to false, proxy will be saved for later use.
+   * @param existingProxyId  Existing proxy identifier to be modified or {@link #PROXY_ID_NONE}
    * @return proxy identifier
    */
-  public int addOrUpdateProxy (@NonNull String server, int port, @NonNull TdApi.ProxyType type, @Nullable String proxyDescription, boolean setAsCurrent, int existingProxyId) {
-    final byte[] data = serializeProxy(server, port, type);
+  public int addOrUpdateProxy (@NonNull TdApi.InternalLinkTypeProxy proxy, @Nullable String proxyDescription, boolean setAsCurrent, int existingProxyId) {
+    final byte[] data = serializeProxy(proxy);
     final int proxyId;
     if (proxyDescription != null) {
       proxyDescription = proxyDescription.trim();
@@ -4346,9 +4869,9 @@ public class Settings {
     editor.apply();
 
     if (isNewAdd) {
-      dispatchProxyAdded(new Proxy(proxyId, server, port, type, proxyDescription), setAsCurrent);
+      dispatchProxyAdded(new Proxy(proxyId, proxy, proxyDescription), setAsCurrent);
     }
-    dispatchProxyConfiguration(proxyId, server, port, type, proxyDescription, setAsCurrent || (availableProxyId == proxyId && (proxySettings & PROXY_FLAG_ENABLED) != 0), isNewAdd);
+    dispatchProxyConfiguration(proxyId, proxy, proxyDescription, setAsCurrent || (availableProxyId == proxyId && (proxySettings & PROXY_FLAG_ENABLED) != 0), isNewAdd);
     if (availableProxyId == PROXY_ID_NONE) {
       dispatchProxyAvailabilityChanged(true);
     }
@@ -4364,7 +4887,7 @@ public class Settings {
    */
   public boolean removeProxy (int proxyId) {
     if (proxyId <= PROXY_ID_NONE)
-      throw new IllegalArgumentException();
+      throw new IllegalArgumentException(Integer.toString(proxyId));
 
     int availableProxyId = getAvailableProxyId();
     int proxySettings = getProxySettings();
@@ -4402,11 +4925,11 @@ public class Settings {
   /**
    * Trace proxy connection time.
    * Call this method periodically when TDLib connection is established
-   *
+   * <p>
    * See {@link #PROXY_UPDATE_PERIOD_SECONDS}
    *
    * @param proxyId Proxy identifier. {@link #PROXY_ID_NONE} means connection without proxy.
-   * @param time Last successful connection time. Seconds
+   * @param time    Last successful connection time. Seconds
    */
   @Deprecated
   public void traceProxyConnected (int proxyId, int accountId, int time) {
@@ -4422,7 +4945,7 @@ public class Settings {
   @Deprecated
   public int getProxyConnectionTime (int proxyId, int accountId) {
     if (proxyId < PROXY_ID_NONE)
-      throw new IllegalArgumentException("proxyId == " + proxyId);
+      throw new IllegalArgumentException(Integer.toString(proxyId));
     return pmc.getInt(KEY_PROXY_PREFIX_CONNECTION_TIME + proxyId + "_" + accountId, 0);
   }
 
@@ -4436,7 +4959,8 @@ public class Settings {
       TYPE_MTPROTO,
       TYPE_HTTP
     })
-    public @interface Type {}
+    public @interface Type {
+    }
 
     private static final int TYPE_SOCKS5 = 1;
     private static final int TYPE_MTPROTO = 2;
@@ -4446,12 +4970,13 @@ public class Settings {
 
     public final int id;
 
-    public String server;
-    public int port;
-    public TdApi.ProxyType type;
+    public @Nullable TdApi.InternalLinkTypeProxy proxy;
 
     public int order = ORDER_UNSET;
     public @Nullable String description;
+    public int successfulConnectionsCount;
+    public long lastConnectionTime, lastConnectionDuration;
+    public long lastPingTime, lastPingResult;
 
     public int pingCount;
     public long pingMs = PROXY_TIME_UNSET;
@@ -4459,12 +4984,16 @@ public class Settings {
     public int pingErrorCount;
     public int winState;
 
-    public Proxy (int id, String server, int port, TdApi.ProxyType type, @Nullable String description) {
+    public Proxy (int id, @Nullable TdApi.InternalLinkTypeProxy proxy, @Nullable String description) {
+      if (id != PROXY_ID_NONE && proxy == null)
+        throw new IllegalArgumentException();
       this.id = id;
-      this.server = server;
-      this.port = port;
-      this.type = type;
+      this.proxy = proxy;
       this.description = description;
+    }
+
+    public boolean hasPong () {
+      return pingMs >= 0;
     }
 
     public static boolean canUseForCalls (@Nullable TdApi.ProxyType type) {
@@ -4478,19 +5007,19 @@ public class Settings {
     }
 
     public boolean canUseForCalls () {
-      return canUseForCalls(type);
+      return proxy != null && canUseForCalls(proxy.type);
     }
 
     public CharSequence getName () {
-      if (type == null) {
+      if (proxy == null) {
         return null;
       }
-      final String name = StringUtils.isEmpty(description) ? server + ":" + port : description;
+      final String name = StringUtils.isEmpty(description) ? proxy.server + ":" + proxy.port : description;
       int stringRes;
-      switch (type.getConstructor()) {
+      switch (proxy.type.getConstructor()) {
         case TdApi.ProxyTypeSocks5.CONSTRUCTOR: {
-          TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) type;
-          if (port == 9050 && StringUtils.isEmpty(socks5.username) && StringUtils.isEmpty(socks5.password) && U.isLocalhost(server.toLowerCase())) {
+          TdApi.ProxyTypeSocks5 socks5 = (TdApi.ProxyTypeSocks5) proxy.type;
+          if (proxy.port == 9050 && StringUtils.isEmpty(socks5.username) && StringUtils.isEmpty(socks5.password) && U.isLocalhost(proxy.server.toLowerCase())) {
             stringRes = R.string.ProxyTorNetwork;
           } else {
             stringRes = R.string.ProxySocks5;
@@ -4504,9 +5033,10 @@ public class Settings {
           stringRes = R.string.ProxyHttp;
           break;
         default:
-          throw new IllegalStateException();
+          Td.assertProxyType_bc1a1076();
+          throw Td.unsupported(proxy.type);
       }
-      return Lang.getString(stringRes, (target, argStart, argEnd, argIndex, needFakeBold) -> new CustomTypefaceSpan(null, R.id.theme_color_textLight), name);
+      return Lang.getString(stringRes, (target, argStart, argEnd, argIndex, needFakeBold) -> new CustomTypefaceSpan(null, ColorId.textLight), name);
     }
 
     @Override
@@ -4517,15 +5047,48 @@ public class Settings {
         return Integer.compare(o.id, id);
     }
 
+    public int defaultOrder () {
+      return proxy != null ? Settings.getProxyDefaultOrder(proxy.type) : -1;
+    }
+
+    public boolean isDirect () {
+      return proxy == null;
+    }
+
     @Override
     public String toString () {
       CharSequence name = getName();
       return name != null ? name.toString() : super.toString();
     }
+
+    public static Proxy noProxy (boolean loadStats) {
+      Proxy proxy = new Proxy(Settings.PROXY_ID_NONE, null, null);
+      if (loadStats) {
+        proxy.successfulConnectionsCount = Settings.instance().getInt(
+          KEY_PROXY_PREFIX_CONNECTED_COUNT + Settings.PROXY_ID_NONE, 0
+        );
+        long[] lastPingResult = Settings.instance().getLongArray(
+          KEY_PROXY_PREFIX_LAST_PING + Settings.PROXY_ID_NONE
+        );
+        if (lastPingResult != null) {
+          proxy.lastPingTime = lastPingResult.length > 0 ? lastPingResult[0] : 0;
+          proxy.lastPingResult = lastPingResult.length > 1 ? lastPingResult[1] : 0;
+        }
+        long[] lastConnectionInfo = Settings.instance().getLongArray(
+          KEY_PROXY_PREFIX_LAST_CONNECTION + Settings.PROXY_ID_NONE
+        );
+        if (lastConnectionInfo != null) {
+          proxy.lastConnectionTime = lastConnectionInfo.length > 0 ? lastConnectionInfo[0] : 0;
+          proxy.lastConnectionDuration = lastConnectionInfo.length > 0 ? lastConnectionInfo[1] : 0;
+        }
+      }
+      return proxy;
+    }
   }
 
   /**
    * Sets order of proxy list
+   *
    * @param proxyIds Array of proxy identifiers
    */
   public void setProxyOrder (@Nullable int[] proxyIds) {
@@ -4538,13 +5101,18 @@ public class Settings {
 
   /**
    * Get list of all available proxies in the descending order (last added first).
-   *
+   * <p>
    * This operation may take time, if there are too many proxies,
    * maybe it's good idea to invoke this method on background thread.
    *
    * @return list of available proxy configurations
    */
   public @NonNull List<Proxy> getAvailableProxies () {
+    // TODO cache
+    return loadAvailableProxies();
+  }
+
+  private @NonNull List<Proxy> loadAvailableProxies () {
     List<Proxy> proxies = new ArrayList<>();
     Blob blob = null;
     int[] order = pmc.getIntArray(KEY_PROXY_ORDER);
@@ -4554,6 +5122,7 @@ public class Settings {
       if (i == -1) {
         continue;
       }
+      String subKey = key.substring(0, i + 1);
       int proxyId = StringUtils.parseInt(key.substring(i + 1));
       if (proxyId < PROXY_ID_NONE) {
         Log.w("Unknown proxy id entry:%d", proxyId);
@@ -4562,7 +5131,7 @@ public class Settings {
       if (proxyId == PROXY_ID_NONE) {
         continue;
       }
-      if (key.startsWith(KEY_PROXY_PREFIX_CONFIG)) {
+      if (subKey.equals(KEY_PROXY_PREFIX_CONFIG)) {
         // Config itself
         byte[] data = entry.asByteArray();
         if (blob == null)
@@ -4579,16 +5148,30 @@ public class Settings {
         Proxy lastProxy = proxies.get(proxies.size() - 1);
         if (lastProxy.id == proxyId) {
           try {
-            /*if (key.startsWith(KEY_PROXY_PREFIX_CONNECTION_TIME)) {
-              int split = key.indexOf('_', KEY_PROXY_PREFIX_CONNECTION_TIME.length());
-              if (split != -1) {
-                int accountId = U.parseInt(key.substring(split + 1));
-                lastProxy.connectionTime.put(accountId, entry.asInt());
+            switch (key) {
+              case KEY_PROXY_PREFIX_DESCRIPTION: {
+                lastProxy.description = entry.asString();
+                break;
               }
-            } else*/if (key.startsWith(KEY_PROXY_PREFIX_DESCRIPTION)) {
-              lastProxy.description = entry.asString();
+              case KEY_PROXY_PREFIX_CONNECTED_COUNT: {
+                lastProxy.successfulConnectionsCount = entry.asInt();
+                break;
+              }
+              case KEY_PROXY_PREFIX_LAST_CONNECTION: {
+                long[] lastConnectionInfo = entry.asLongArray();
+                lastProxy.lastConnectionTime = lastConnectionInfo.length > 0 ? lastConnectionInfo[0] : 0;
+                lastProxy.lastConnectionDuration = lastConnectionInfo.length > 1 ? lastConnectionInfo[1] : 0;
+                break;
+              }
+              case KEY_PROXY_PREFIX_LAST_PING: {
+                long[] lastPingInfo = entry.asLongArray();
+                lastProxy.lastPingTime = lastPingInfo.length > 0 ? lastPingInfo[0] : 0;
+                lastProxy.lastPingResult = lastPingInfo.length > 1 ? lastPingInfo[1] : 0;
+                break;
+              }
             }
-          } catch (IllegalArgumentException ignored) { }
+          } catch (IllegalArgumentException ignored) {
+          }
         }
       }
     }
@@ -4597,8 +5180,10 @@ public class Settings {
   }
 
   public interface ProxyChangeListener {
-    void onProxyConfigurationChanged (int proxyId, @Nullable String server, int port, @Nullable TdApi.ProxyType type, @Nullable String description, boolean isCurrent, boolean isNewAdd);
+    void onProxyConfigurationChanged (int proxyId, @Nullable TdApi.InternalLinkTypeProxy proxy, @Nullable String description, boolean isCurrent, boolean isNewAdd);
+
     void onProxyAvailabilityChanged (boolean isAvailable);
+
     void onProxyAdded (Proxy proxy, boolean isCurrent);
   }
 
@@ -4614,16 +5199,15 @@ public class Settings {
 
   /**
    * Notifies that all TDLib instances must change proxy configuration.
-   *  @param id     Proxy identifier
-   * @param server Proxy server
-   * @param port   Proxy port
-   * @param type   Proxy type
+   *
+   * @param id        Proxy identifier
+   * @param proxy     Proxy details
    * @param isCurrent True when this proxy is applied to TDLib instances
    * @param isNewAdd
    */
-  private void dispatchProxyConfiguration (int id, @Nullable String server, int port, @Nullable TdApi.ProxyType type, @Nullable String description, boolean isCurrent, boolean isNewAdd) {
+  private void dispatchProxyConfiguration (int id, @Nullable TdApi.InternalLinkTypeProxy proxy, @Nullable String description, boolean isCurrent, boolean isNewAdd) {
     for (ProxyChangeListener listener : proxyListeners) {
-      listener.onProxyConfigurationChanged(id, server, port, type, description, isCurrent, isNewAdd);
+      listener.onProxyConfigurationChanged(id, proxy, description, isCurrent, isNewAdd);
     }
   }
 
@@ -4653,7 +5237,8 @@ public class Settings {
 
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({EARPIECE_MODE_NEVER, EARPIECE_MODE_PROXIMITY, EARPIECE_MODE_ALWAYS})
-  public @interface EarpieceMode {}
+  public @interface EarpieceMode {
+  }
 
   public static final int EARPIECE_MODE_NEVER = 0;
   public static final int EARPIECE_MODE_PROXIMITY = 1;
@@ -4823,7 +5408,7 @@ public class Settings {
     int num = 0;
     String errorHash = error != null ? Passcode.getPasscodeHash(error) : null;
     for (LevelDB.Entry entry : pmc.find(key)) {
-      if (errorHash != null && StringUtils.equalsOrBothEmpty(errorHash, entry.asString())){
+      if (errorHash != null && StringUtils.equalsOrBothEmpty(errorHash, entry.asString())) {
         entry.release();
         return;
       }
@@ -4980,7 +5565,7 @@ public class Settings {
   private static final String KEY_THEME_FLAGS = "theme_flags";
   private static final String KEY_THEME_HISTORY = "theme_history";
 
-  private static String themePropertyKey (int customThemeId, @ThemeProperty int propertyId) {
+  private static String themePropertyKey (int customThemeId, @PropertyId int propertyId) {
     return themePropertyKey(customThemeId, Theme.getPropertyName(propertyId));
   }
 
@@ -4988,7 +5573,7 @@ public class Settings {
     return KEY_THEME_FULL + customThemeId + "_p_" + colorName;
   }
 
-  private static String themeColorKey (int customThemeId, @ThemeColorId int colorId) {
+  private static String themeColorKey (int customThemeId, @ColorId int colorId) {
     return themeColorKey(customThemeId, Theme.getColorName(colorId));
   }
 
@@ -4996,7 +5581,7 @@ public class Settings {
     return KEY_THEME_FULL + customThemeId + "_c_" + colorName;
   }
 
-  private static String themeColorHistoryKey (int customThemeId, @ThemeColorId int colorId) {
+  private static String themeColorHistoryKey (int customThemeId, @ColorId int colorId) {
     return KEY_THEME_HISTORY + customThemeId + "_" + Theme.getColorName(colorId);
   }
 
@@ -5086,7 +5671,7 @@ public class Settings {
       }
       for (TdlibUi.ImportedTheme.Value value : theme.propertiesList) {
         putFloat(themePropertyKey(newThemeId, value.name), value.floatValue);
-        if (value.id == ThemeProperty.PARENT_THEME)
+        if (value.id == PropertyId.PARENT_THEME)
           hasParentTheme = true;
       }
       if (!StringUtils.isEmpty(theme.author)) {
@@ -5101,7 +5686,7 @@ public class Settings {
       }
     }
     if (!hasParentTheme) {
-      putFloat(themePropertyKey(newThemeId, ThemeProperty.PARENT_THEME), parentThemeId);
+      putFloat(themePropertyKey(newThemeId, PropertyId.PARENT_THEME), parentThemeId);
     }
     pmc.apply();
     return newThemeId;
@@ -5144,7 +5729,7 @@ public class Settings {
     pmc.apply();
   }
 
-  public float getThemeProperty (int customThemeId, @ThemeProperty int propertyId, float defValue) {
+  public float getThemeProperty (int customThemeId, @PropertyId int propertyId, float defValue) {
     return pmc.getFloat(themePropertyKey(customThemeId, propertyId), defValue);
   }
 
@@ -5156,7 +5741,7 @@ public class Settings {
     }
     int themeId = ThemeManager.serializeCustomThemeId(customThemeId);
     if (theme == null || theme.getId() != themeId) {
-      int parentThemeId = (int) getThemeProperty(customThemeId, ThemeProperty.PARENT_THEME, ThemeId.BLUE);
+      int parentThemeId = (int) getThemeProperty(customThemeId, PropertyId.PARENT_THEME, ThemeId.BLUE);
       theme = new ThemeInfo(themeId, entry.asString(), getCustomThemeWallpaper(customThemeId), parentThemeId, getCustomThemeFlags(customThemeId));
     }
     return theme;
@@ -5205,7 +5790,7 @@ public class Settings {
       case 'p': {
         float value = entry.asFloat();
         theme.addProperty(name, value);
-        if (theme.parentThemeId == ThemeId.NONE && ThemeProperties.getName(ThemeProperty.PARENT_THEME).equals(name)) {
+        if (theme.parentThemeId == ThemeId.NONE && ThemeProperties.getName(PropertyId.PARENT_THEME).equals(name)) {
           theme.parentThemeId = (int) value;
         }
         if (properties != null)
@@ -5219,7 +5804,7 @@ public class Settings {
   }
 
   public boolean hasCustomTheme (int customThemeId) {
-    return customThemeId > 0 && pmc.contains(themePropertyKey(customThemeId, ThemeProperty.PARENT_THEME));
+    return customThemeId > 0 && pmc.contains(themePropertyKey(customThemeId, PropertyId.PARENT_THEME));
   }
 
   public static class ThemeExportInfo {
@@ -5305,7 +5890,7 @@ public class Settings {
     } else {
       theme = new ThemeExportInfo(Lang.getString(ThemeManager.getBuiltinThemeName(themeId)), null);
       ThemeDelegate currentTheme = ThemeSet.getBuiltinTheme(themeId);
-      theme.parentThemeId = (int) currentTheme.getProperty(ThemeProperty.PARENT_THEME);
+      theme.parentThemeId = (int) currentTheme.getProperty(PropertyId.PARENT_THEME);
       if (theme.parentThemeId != ThemeId.NONE) {
         ThemeDelegate parentTheme = ThemeSet.getBuiltinTheme(theme.parentThemeId);
         for (Map.Entry<String, Integer> entry : colors.entrySet()) {
@@ -5317,7 +5902,7 @@ public class Settings {
 
         for (Map.Entry<String, Integer> entry : properties.entrySet()) {
           int propertyId = entry.getValue();
-          if (entry.getValue() == ThemeProperty.WALLPAPER_ID && currentTheme.getProperty(propertyId) == TGBackground.getDefaultWallpaperId(themeId))
+          if (entry.getValue() == PropertyId.WALLPAPER_ID && currentTheme.getProperty(propertyId) == TGBackground.getDefaultWallpaperId(themeId))
             continue;
           if (parentTheme.getProperty(propertyId) != currentTheme.getProperty(propertyId)) {
             theme.addProperty(entry.getKey(), currentTheme.getProperty(propertyId));
@@ -5332,7 +5917,7 @@ public class Settings {
       }
       for (Map.Entry<String, Integer> entry : properties.entrySet()) {
         float value = Theme.getProperty(entry.getValue(), parentThemeId);
-        if (!ThemeManager.isCustomTheme(themeId) && entry.getValue() == ThemeProperty.WALLPAPER_ID && value == TGBackground.getDefaultWallpaperId(themeId)) {
+        if (!ThemeManager.isCustomTheme(themeId) && entry.getValue() == PropertyId.WALLPAPER_ID && value == TGBackground.getDefaultWallpaperId(themeId)) {
           continue;
         }
         theme.addProperty(entry.getKey(), value);
@@ -5357,35 +5942,35 @@ public class Settings {
     return themes;
   }
 
-  public void setCustomThemeColor (int customThemeId, @ThemeColorId int colorId, @Nullable Integer newColor) {
+  public void setCustomThemeColor (int customThemeId, @ColorId int colorId, @Nullable Integer newColor) {
     if (newColor == null)
       pmc.remove(themeColorKey(customThemeId, colorId));
     else
       pmc.putInt(themeColorKey(customThemeId, colorId), newColor);
   }
 
-  public void setCustomThemeProperty (int customThemeId, @ThemeProperty int propertyId, @Nullable Float newValue) {
+  public void setCustomThemeProperty (int customThemeId, @PropertyId int propertyId, @Nullable Float newValue) {
     if (newValue == null)
       pmc.remove(themePropertyKey(customThemeId, propertyId));
     else
       pmc.putFloat(themePropertyKey(customThemeId, propertyId), newValue);
   }
 
-  public int getCustomThemeColor (int customThemeId, @ThemeColorId int colorId) {
+  public int getCustomThemeColor (int customThemeId, @ColorId int colorId) {
     try {
       return pmc.tryGetInt(themeColorKey(customThemeId, colorId));
     } catch (FileNotFoundException e) {
-      return ThemeSet.getColor((int) getCustomThemeProperty(customThemeId, ThemeProperty.PARENT_THEME), colorId);
+      return ThemeSet.getColor((int) getCustomThemeProperty(customThemeId, PropertyId.PARENT_THEME), colorId);
     }
   }
 
-  public float getCustomThemeProperty (int customThemeId, @ThemeProperty int propertyId) {
+  public float getCustomThemeProperty (int customThemeId, @PropertyId int propertyId) {
     try {
       return pmc.tryGetFloat(themePropertyKey(customThemeId, propertyId));
     } catch (FileNotFoundException e) {
-      if (propertyId == ThemeProperty.PARENT_THEME)
+      if (propertyId == PropertyId.PARENT_THEME)
         return ThemeId.BLUE;
-      return ThemeSet.getProperty((int) getCustomThemeProperty(customThemeId, ThemeProperty.PARENT_THEME), propertyId);
+      return ThemeSet.getProperty((int) getCustomThemeProperty(customThemeId, PropertyId.PARENT_THEME), propertyId);
     }
   }
 
@@ -5447,7 +6032,7 @@ public class Settings {
 
   public static final int THEME_FLAG_INSTALLED = 1;
   public static final int THEME_FLAG_COPY = 1 << 1;
-  
+
   public int getCustomThemeFlags (int customThemeId) {
     return pmc.getByte(KEY_THEME_FLAGS + customThemeId, (byte) 0);
   }
@@ -5456,7 +6041,7 @@ public class Settings {
     int flags = getCustomThemeFlags(customThemeId);
     return (flags & THEME_FLAG_INSTALLED) == 0 || (flags & THEME_FLAG_COPY) != 0;
   }
-  
+
   public String getThemeAuthor (int customThemeId) {
     return pmc.getString(KEY_THEME_AUTHOR + customThemeId, null);
   }
@@ -5576,7 +6161,7 @@ public class Settings {
   }
 
   public boolean checkUtilityFeature (int feature) {
-    return BitwiseUtils.getFlag(getUtilityFeatures(), feature);
+    return BitwiseUtils.hasFlag(getUtilityFeatures(), feature);
   }
 
   public boolean forceDisableNetwork () {
@@ -5647,11 +6232,88 @@ public class Settings {
     return pmc.getBoolean(KEY_IS_EMULATOR, false);
   }
 
-  public void markAsEmulator () {
-    if (!isEmulator()) {
-      putBoolean(KEY_IS_EMULATOR, true);
-      TdlibManager.instance().setIsEmulator(true);
+  public static class EmulatorDetectionResult {
+    public final long time, installationId, elapsed, result;
+
+    public EmulatorDetectionResult (long time, long installationId, long elapsed, long result) {
+      this.time = time;
+      this.installationId = installationId;
+      this.elapsed = elapsed;
+      this.result = result;
     }
+
+    public boolean isEmulatorDetected () {
+      return result != 0;
+    }
+
+    @SuppressWarnings("all")
+    public boolean mayBeFalsePositive () {
+      int testId = BitwiseUtils.splitLongToSecondInt(result);
+      switch (BuildConfig.FLAVOR) {
+        case "x86":
+        case "x64":
+          return false;
+        case "arm64":
+        case "arm32":
+        default:
+          return testId == 2;
+      }
+    }
+
+    public String toHumanReadableFormat () {
+      return "0x" + Long.toString(result, 16);
+    }
+
+    public long[] toLongArray () {
+      return new long[] {
+        time,
+        installationId,
+        elapsed,
+        result
+      };
+    }
+
+    public static EmulatorDetectionResult restore (long[] array) {
+      if (array == null || array.length != 4) {
+        return null;
+      }
+      return new EmulatorDetectionResult(
+        array[0],
+        array[1],
+        array[2],
+        array[3]
+      );
+    }
+  }
+
+  @Nullable
+  public EmulatorDetectionResult getLastEmulatorDetectionResult () {
+    long[] emulatorDetectionResult = pmc.getLongArray(KEY_EMULATOR_DETECTION_RESULT);
+    if (emulatorDetectionResult == null) {
+      return null;
+    }
+    return EmulatorDetectionResult.restore(emulatorDetectionResult);
+  }
+
+  @NonNull
+  public EmulatorDetectionResult trackEmulatorDetectionResult (long installationId, long elapsed, long emulatorCheckResult) {
+    EmulatorDetectionResult result = new EmulatorDetectionResult(
+      System.currentTimeMillis(),
+      installationId,
+      elapsed,
+      emulatorCheckResult
+    );
+    long[] data = result.toLongArray();
+    pmc.putLongArray(KEY_EMULATOR_DETECTION_RESULT, data);
+    boolean wasEmulator = isEmulator();
+    if (wasEmulator != result.isEmulatorDetected()) {
+      if (result.isEmulatorDetected()) {
+        putBoolean(KEY_IS_EMULATOR, true);
+      } else {
+        pmc.remove(KEY_IS_EMULATOR);
+      }
+    }
+    return result;
   }
 
   private List<String> authenticationTokens;
@@ -5762,14 +6424,14 @@ public class Settings {
         String crashedTdlibCommit = crashedBuildInfo != null ? crashedBuildInfo.getTdlibCommitFull() : null;
         if (StringUtils.isEmpty(crashedTdlibCommit) ||
           !crashedTdlibCommit.equalsIgnoreCase(getCurrentBuildInformation().getTdlibCommitFull()) ||
-          !BitwiseUtils.getFlag(flags, Crash.Flags.SOURCE_TDLIB | Crash.Flags.SOURCE_TDLIB_PARAMETERS)) {
+          !BitwiseUtils.hasFlag(flags, Crash.Flags.SOURCE_TDLIB | Crash.Flags.SOURCE_TDLIB_PARAMETERS)) {
           break;
         }
       }
-      if (!BitwiseUtils.getFlag(flags, Crash.Flags.SAVE_APPLICATION_LOG_EVENT)) {
+      if (!BitwiseUtils.hasFlag(flags, Crash.Flags.SAVE_APPLICATION_LOG_EVENT)) {
         continue;
       }
-      if (BitwiseUtils.getFlag(flags, Crash.Flags.APPLICATION_LOG_EVENT_SAVED)) {
+      if (BitwiseUtils.hasFlag(flags, Crash.Flags.APPLICATION_LOG_EVENT_SAVED)) {
         break;
       }
       Crash crash = getCrash(crashId, false);
@@ -5795,7 +6457,7 @@ public class Settings {
     final String keyPrefix = makeCrashPrefix(crashId);
     if (forApplicationStart) {
       @Crash.Flags int flags = Crash.restoreFlags(pmc, keyPrefix);
-      if (BitwiseUtils.getFlag(flags, Crash.Flags.RESOLVED)) {
+      if (BitwiseUtils.hasFlag(flags, Crash.Flags.RESOLVED)) {
         // Do not attempt to read any other fields, if user pressed "Launch App"
         return null;
       }
@@ -5831,17 +6493,65 @@ public class Settings {
 
   // Push token
 
-  public void setDeviceToken (String token) {
-    if (StringUtils.isEmpty(token)) {
-      pmc.remove(KEY_PUSH_DEVICE_TOKEN);
-    } else if (!token.equals(getDeviceToken())) {
+  public static void storeDeviceToken (@NonNull TdApi.DeviceToken deviceToken, SharedPreferences.Editor editor, final String keyTokenType, final String keyTokenOrEndpoint) {
+    @DeviceTokenType int tokenType = TdlibNotificationUtils.getDeviceTokenType(deviceToken);
+    final String tokenOrEndpoint;
+    switch (tokenType) {
+      case DeviceTokenType.FIREBASE_CLOUD_MESSAGING:
+        tokenOrEndpoint = ((TdApi.DeviceTokenFirebaseCloudMessaging) deviceToken).token;
+        break;
+      case DeviceTokenType.HUAWEI_PUSH_SERVICE:
+        tokenOrEndpoint = ((TdApi.DeviceTokenHuaweiPush) deviceToken).token;
+        break;
+      case DeviceTokenType.SIMPLE_PUSH_SERVICE:
+        tokenOrEndpoint = ((TdApi.DeviceTokenSimplePush) deviceToken).endpoint;
+        break;
+      default:
+        Td.assertDeviceToken_de4a4f61();
+        throw Td.unsupported(deviceToken);
+    }
+    editor
+      .putInt(keyTokenType, tokenType)
+      .putString(keyTokenOrEndpoint, tokenOrEndpoint);
+  }
+
+  public void setDeviceToken (TdApi.DeviceToken token) {
+    if (token == null) {
+      pmc.edit()
+        .remove(KEY_PUSH_DEVICE_TOKEN_TYPE)
+        .remove(KEY_PUSH_DEVICE_TOKEN_OR_ENDPOINT)
+        .apply();
+    } else if (!Td.equalsTo(token, getDeviceToken())) {
       resetTokenPushMessageCount();
-      pmc.putString(KEY_PUSH_DEVICE_TOKEN, token);
+      SharedPreferences.Editor editor = pmc.edit();
+      Settings.storeDeviceToken(token, editor,
+        KEY_PUSH_DEVICE_TOKEN_TYPE,
+        KEY_PUSH_DEVICE_TOKEN_OR_ENDPOINT
+      );
+      editor.apply();
     }
   }
 
-  public String getDeviceToken () {
-    return pmc.getString(KEY_PUSH_DEVICE_TOKEN, null);
+  public static TdApi.DeviceToken newDeviceToken (@DeviceTokenType int tokenType, @Nullable String tokenOrEndpoint) {
+    if (StringUtils.isEmpty(tokenOrEndpoint)) {
+      return null;
+    }
+    switch (tokenType) {
+      case DeviceTokenType.FIREBASE_CLOUD_MESSAGING:
+        return new TdApi.DeviceTokenFirebaseCloudMessaging(tokenOrEndpoint, true);
+      case DeviceTokenType.SIMPLE_PUSH_SERVICE:
+        return new TdApi.DeviceTokenSimplePush(tokenOrEndpoint);
+      case DeviceTokenType.HUAWEI_PUSH_SERVICE:
+        return new TdApi.DeviceTokenHuaweiPush(tokenOrEndpoint, true);
+    }
+    return null;
+  }
+
+  @Nullable
+  public TdApi.DeviceToken getDeviceToken () {
+    @DeviceTokenType int tokenType = pmc.getInt(KEY_PUSH_DEVICE_TOKEN_TYPE, DeviceTokenType.FIREBASE_CLOUD_MESSAGING);
+    String tokenOrEndpoint = pmc.getString(KEY_PUSH_DEVICE_TOKEN_OR_ENDPOINT, null);
+    return newDeviceToken(tokenType, tokenOrEndpoint);
   }
 
   // Device ID used to anonymously identify crashes from the same client
@@ -5855,8 +6565,8 @@ public class Settings {
     if (StringUtils.isEmpty(crashDeviceId)) {
       crashDeviceId = U.sha256(
         U.getUsefulMetadata(null) + "\n" +
-        StringUtils.random("abcdefABCDEF0123456789", 16) + "\n" +
-        (long) ((double) Long.MAX_VALUE * Math.random())
+          StringUtils.random("abcdefABCDEF0123456789", 16) + "\n" +
+          (long) ((double) Long.MAX_VALUE * Math.random())
       );
       pmc.putString(KEY_CRASH_DEVICE_ID, crashDeviceId);
     }
@@ -5895,6 +6605,7 @@ public class Settings {
       boolean isValidSetting = false, hideName = false;
       if (document.caption != null && document.caption.entities != null && document.caption.entities.length > 0) {
         for (TdApi.TextEntity entity : document.caption.entities) {
+          //noinspection SwitchIntDef
           switch (entity.type.getConstructor()) {
             case TdApi.TextEntityTypeHashtag.CONSTRUCTOR: {
               String hashtag = Td.substring(document.caption.text, entity);
@@ -5935,10 +6646,12 @@ public class Settings {
     public final TdApi.File getFile () {
       return file;
     }
+
     @Nullable
     public final ImageFile getPreviewFile () {
       return previewFile;
     }
+
     public final String getDisplayName () {
       return displayName;
     }
@@ -5979,11 +6692,13 @@ public class Settings {
     }
 
     public abstract void install (@NonNull RunnableBool callback);
+
     public abstract boolean isBuiltIn ();
 
     public static final int STATE_NOT_INSTALLED = 0;
     public static final int STATE_INSTALLED = 1;
     public static final int STATE_UPDATE_NEEDED = 2;
+
     public abstract int getInstallState (boolean fast);
 
     public final boolean isInstalled () {
@@ -6069,19 +6784,21 @@ public class Settings {
   }
 
   private String[] quickReactions;
+
   public void setQuickReactions (String reactions[]) {
     pmc.putStringArray(KEY_QUICK_REACTIONS, reactions);
     quickReactions = reactions;
   }
 
-  public String[] getQuickReactions () {
+  public String[] getQuickReactions (Tdlib tdlib) {
     if (quickReactions == null) {
       quickReactions = pmc.getStringArray(KEY_QUICK_REACTIONS);
       if (quickReactions == null) {
-        quickReactions = new String[]{ "\uD83D\uDC4D" };
+        quickReactions = new String[] {
+          tdlib.defaultEmojiReaction()
+        };
       }
     }
-
     return quickReactions;
   }
 
@@ -6236,7 +6953,7 @@ public class Settings {
     return pmc.getLong(KEY_APP_INSTALLATION_ID, 0);
   }
 
-  public void trackInstalledApkVersion () {
+  private void trackInstalledApkVersion () {
     final long knownCommitDate = pmc.getLong(KEY_APP_COMMIT_DATE, 0);
     if (AppBuildInfo.maxBuiltInCommitDate() <= knownCommitDate) {
       // Track only updates with more recent commits.
@@ -6246,11 +6963,113 @@ public class Settings {
     AppBuildInfo buildInfo = new AppBuildInfo(installationId);
     pmc.edit()
       .putLong(KEY_APP_INSTALLATION_ID, installationId)
-      .putLong(KEY_APP_COMMIT_DATE, buildInfo.getCommitDate());
+      .putLong(KEY_APP_COMMIT_DATE, buildInfo.maxCommitDate());
     buildInfo.saveTo(pmc, KEY_APP_INSTALLATION_PREFIX + installationId);
     pmc.apply();
     this.currentBuildInformation = buildInfo;
     resetAppVersionPushMessageCount();
+  }
+
+  private void trackChangesInAvailableFeatures () {
+    final long currentlyAvailableFeatures = FeatureAvailability.currentlyAvailableFeatures();
+    long previouslyAvailableFeatures;
+    boolean saveFeatures = false;
+    try {
+      previouslyAvailableFeatures = pmc.tryGetLong(KEY_FEATURES);
+    } catch (FileNotFoundException e) {
+      long previousInstallationId = currentBuildInformation != null ? currentBuildInformation.getInstallationId() - 1 : -1;
+      int previouslyInstalledVersionCode = previousInstallationId != -1 ?
+        AppBuildInfo.restoreVersionCode(pmc, KEY_APP_INSTALLATION_PREFIX + previousInstallationId) : 0;
+      previouslyAvailableFeatures = FeatureAvailability.recoverAvailableFeaturesForAppVersionCode(previouslyInstalledVersionCode);
+      saveFeatures = true;
+    }
+    if (currentlyAvailableFeatures != previouslyAvailableFeatures) {
+      final long recentlyAddedFeatures = currentlyAvailableFeatures & (~previouslyAvailableFeatures);
+      final long recentlyRemovedFeatures = previouslyAvailableFeatures & (~currentlyAvailableFeatures);
+
+      long addedFeaturesNotifications = pmc.getLong(KEY_FEATURES_ADDED_NOTIFICATIONS, 0);
+      long removedFeaturesNotifications = pmc.getLong(KEY_FEATURES_REMOVED_NOTIFICATIONS, 0);
+
+      addedFeaturesNotifications &= ~recentlyRemovedFeatures;
+      addedFeaturesNotifications |= recentlyAddedFeatures;
+
+      removedFeaturesNotifications &= ~recentlyAddedFeatures;
+      removedFeaturesNotifications |= recentlyRemovedFeatures;
+
+      pmc.edit()
+        .putLong(KEY_FEATURES_ADDED_NOTIFICATIONS, addedFeaturesNotifications)
+        .putLong(KEY_FEATURES_REMOVED_NOTIFICATIONS, removedFeaturesNotifications)
+        .apply();
+
+      this._addedFeaturesNotifications = addedFeaturesNotifications;
+      this._removedFeaturesNotifications = removedFeaturesNotifications;
+
+      saveFeatures = true;
+    }
+    if (saveFeatures) {
+      pmc.putLong(KEY_FEATURES, currentlyAvailableFeatures);
+    }
+  }
+
+  public interface FeatureAvailabilityNotificationDismissListener {
+    void onDismissFeatureAvailabilityNotification (@FeatureAvailability.Feature long feature, boolean wasAdded, boolean wasRemoved);
+  }
+
+  private ReferenceList<FeatureAvailabilityNotificationDismissListener> featureNotificationDismissListeners;
+
+  public void addFeatureAvailabilityNotificationDismissListener (FeatureAvailabilityNotificationDismissListener listener) {
+    if (this.featureNotificationDismissListeners == null) {
+      this.featureNotificationDismissListeners = new ReferenceList<>();
+    }
+    this.featureNotificationDismissListeners.add(listener);
+  }
+
+  public void removeFeatureAvailabilityNotificationDismissListener (FeatureAvailabilityNotificationDismissListener listener) {
+    if (this.featureNotificationDismissListeners != null) {
+      this.featureNotificationDismissListeners.remove(listener);
+    }
+  }
+
+  private Long _addedFeaturesNotifications, _removedFeaturesNotifications;
+
+  public long getAddedFeaturesNotifications () {
+    if (_addedFeaturesNotifications == null) {
+      _addedFeaturesNotifications = pmc.getLong(KEY_FEATURES_ADDED_NOTIFICATIONS, 0);
+    }
+    return _addedFeaturesNotifications;
+  }
+
+  public long getRemovedFeaturesNotifications () {
+    if (_removedFeaturesNotifications == null) {
+      _removedFeaturesNotifications = pmc.getLong(KEY_FEATURES_REMOVED_NOTIFICATIONS, 0);
+    }
+    return _removedFeaturesNotifications;
+  }
+
+  public void revokeFeatureNotifications (@FeatureAvailability.Feature long feature) {
+    long addedFeaturesNotifications = getAddedFeaturesNotifications();
+    long removedFeaturesNotifications = getRemovedFeaturesNotifications();
+    boolean wasAdded = BitwiseUtils.hasFlag(addedFeaturesNotifications, feature);
+    boolean wasRemoved = BitwiseUtils.hasFlag(removedFeaturesNotifications, feature);
+    if (wasAdded || wasRemoved) {
+      addedFeaturesNotifications &= ~feature;
+      removedFeaturesNotifications &= ~feature;
+      pmc.edit()
+        .putLong(KEY_FEATURES_ADDED_NOTIFICATIONS, addedFeaturesNotifications)
+        .putLong(KEY_FEATURES_REMOVED_NOTIFICATIONS, removedFeaturesNotifications)
+        .apply();
+      this._addedFeaturesNotifications = addedFeaturesNotifications;
+      this._removedFeaturesNotifications = removedFeaturesNotifications;
+      if (featureNotificationDismissListeners != null) {
+        for (FeatureAvailabilityNotificationDismissListener listener : featureNotificationDismissListeners) {
+          listener.onDismissFeatureAvailabilityNotification(feature, wasAdded, wasRemoved);
+        }
+      }
+    }
+  }
+
+  public boolean hasPendingFeatureAddedNotification (@FeatureAvailability.Feature long feature) {
+    return BitwiseUtils.hasAllFlags(getAddedFeaturesNotifications(), feature);
   }
 
   public AppBuildInfo getFirstBuildInformation () {
@@ -6369,5 +7188,35 @@ public class Settings {
 
   public long getReportedPushServiceErrorDate () {
     return pmc.getLong(KEY_PUSH_REPORTED_ERROR_DATE, 0);
+  }
+
+  public String getDefaultLanguageForTranslateDraft () {
+    return pmc.getString(KEY_DEFAULT_LANGUAGE_FOR_TRANSLATE_DRAFT, "en");
+  }
+
+  public void setDefaultLanguageForTranslateDraft (String language) {
+    pmc.putString(KEY_DEFAULT_LANGUAGE_FOR_TRANSLATE_DRAFT, language);
+  }
+
+  public boolean chatFoldersEnabled () {
+    return FeatureAvailability.Released.CHAT_FOLDERS;
+  }
+
+  public boolean showPeerIds () {
+    return isExperimentEnabled(EXPERIMENT_FLAG_SHOW_PEER_IDS);
+  }
+
+  @Nullable
+  private Integer _playbackSpeed;
+
+  public void setPlaybackSpeed (int speed) {
+    pmc.putInt(KEY_PLAYBACK_SPEED, _playbackSpeed = speed);
+  }
+
+  public int getPlaybackSpeed () {
+    if (_playbackSpeed == null) {
+      _playbackSpeed = pmc.getInt(KEY_PLAYBACK_SPEED, 100);
+    }
+    return _playbackSpeed;
   }
 }

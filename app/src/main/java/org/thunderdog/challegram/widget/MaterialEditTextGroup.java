@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,14 +37,15 @@ import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.HeightChangeListener;
+import org.thunderdog.challegram.v.EditText;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.BoolAnimator;
@@ -53,7 +54,7 @@ import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.StringUtils;
 
-@SuppressWarnings("NullableProblems")
+@SuppressWarnings("ViewConstructor")
 public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocusChangeListener, FactorAnimator.Target, TextWatcher, TextView.OnEditorActionListener {
   public interface EmptyListener {
     void onTextEmptyStateChanged (MaterialEditTextGroup v, boolean isEmpty);
@@ -82,14 +83,14 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
   private @Nullable FocusListener focusListener;
   private @Nullable HeightChangeListener heightChangeListener;
 
-  public MaterialEditTextGroup (Context context) {
+  public MaterialEditTextGroup (Context context, Tdlib tdlib) {
     super(context);
-    init(context, true);
+    init(context, tdlib, true);
   }
 
-  public MaterialEditTextGroup (Context context, boolean needHint) {
+  public MaterialEditTextGroup (Context context, Tdlib tdlib, boolean needHint) {
     super(context);
-    init(context, needHint);
+    init(context, tdlib, needHint);
   }
 
   private void setIsNotEmpty (boolean isNotEmpty) {
@@ -109,10 +110,10 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
     this.heightChangeListener = heightChangeListener;
   }
 
-  @ThemeColorId
-  private int textColorId = R.id.theme_color_text;
+  @ColorId
+  private int textColorId = ColorId.text;
 
-  public void setTextColorId (@ThemeColorId int colorId) {
+  public void setTextColorId (@ColorId int colorId) {
     if (this.textColorId != colorId) {
       this.textColorId = colorId;
       editText.setTextColor(Theme.getColor(colorId));
@@ -124,7 +125,7 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
 
   public void setInputEnabled (boolean enabled) {
     editText.setEnabled(enabled);
-    setTextColorId(enabled ? R.id.theme_color_text : R.id.theme_color_textLight);
+    setTextColorId(enabled ? ColorId.text : ColorId.textLight);
   }
 
   public interface NextCallback {
@@ -137,16 +138,16 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
     this.nextCallback = forceNextButton;
   }
 
-  private void init (Context context, boolean needHint) {
+  private void init (Context context, Tdlib tdlib, boolean needHint) {
     FrameLayoutFix.LayoutParams params;
 
     params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     params.topMargin = Screen.dp(needHint ? 20f : 8f);
 
-    editText = new MaterialEditText(context) {
+    editText = new MaterialEditText(context, tdlib) {
       @Override
-      public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-        InputConnection conn = super.onCreateInputConnection(outAttrs);
+      public InputConnection createInputConnection (EditorInfo outAttrs) {
+        InputConnection conn = super.createInputConnection(outAttrs);
         if (nextCallback != null && nextCallback.needNextButton(MaterialEditTextGroup.this)) {
           outAttrs.imeOptions &= ~EditorInfo.IME_FLAG_NO_ENTER_ACTION;
         }
@@ -229,7 +230,7 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
           lengthCounter.setText("");
         } else {
           lengthCounter.setText(Strings.buildCounter(remaining));
-          lengthCounter.setTextColor(Theme.getColor(remaining <= 0 ? R.id.theme_color_textNegative : R.id.theme_color_textLight));
+          lengthCounter.setTextColor(Theme.getColor(remaining <= 0 ? ColorId.textNegative : ColorId.textLight));
         }
       }
     }
@@ -293,12 +294,12 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
     if (themeProvider != null) {
       themeProvider.addThemeTextColorListener(editText, textColorId);
       if (hintView != null)
-        themeProvider.addThemeTextColorListener(hintView, R.id.theme_color_textPlaceholder);
+        themeProvider.addThemeTextColorListener(hintView, ColorId.textPlaceholder);
       themeProvider.addThemeInvalidateListener(editText);
-      themeProvider.addThemeHighlightColorListener(editText, R.id.theme_color_textSelectionHighlight);
-      themeProvider.addThemeHintTextColorListener(editText, R.id.theme_color_textPlaceholder);
+      themeProvider.addThemeHighlightColorListener(editText, ColorId.textSelectionHighlight);
+      themeProvider.addThemeHintTextColorListener(editText, ColorId.textPlaceholder);
       if (lengthCounter != null) {
-        themeProvider.addThemeTextColorListener(lengthCounter, R.id.theme_color_textLight);
+        themeProvider.addThemeTextColorListener(lengthCounter, ColorId.textLight);
       }
       if (radioView != null) {
         themeProvider.addThemeInvalidateListener(radioView);
@@ -422,7 +423,7 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
     }
   }
 
-  private String lastInput;
+  private CharSequence lastInput;
   private boolean ignoreChanges;
 
   @Override
@@ -442,15 +443,14 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
     }
 
     updateRemainingCharCount();
-    String str = s.toString();
-    if (lastInput == null || !lastInput.equals(str)) {
-      this.lastInput = str;
+    if (lastInput == null || !lastInput.equals(s)) {
+      this.lastInput = EditText.nonModifiableCopy(s);
       if (useTextChangeAnimations && hasFocus) {
-        forceAlphaFactor(str.trim().length() > 0 ? 1f : 0f);
+        forceAlphaFactor(StringUtils.trim(s).length() > 0 ? 1f : 0f);
       }
-      setIsNotEmpty(!str.isEmpty());
+      setIsNotEmpty(!StringUtils.isEmpty(s));
       if (textListener != null) {
-        textListener.onTextChanged(this, str);
+        textListener.onTextChanged(this, s);
       }
     }
   }
@@ -493,7 +493,7 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
 
   private void setTextImpl (CharSequence text) {
     editText.setText(text);
-    Views.setSelection(editText, text != null ? text.length() : 0);
+    editText.setSelection(text != null ? text.length() : 0);
   }
 
   public void setText (CharSequence text, boolean animated) {
@@ -747,7 +747,7 @@ public class MaterialEditTextGroup extends FrameLayoutFix implements View.OnFocu
       editText.setIsPassword(pendingTextIsPassword);
       if (!StringUtils.isEmpty(pendingText)) {
         editText.setText(pendingText);
-        Views.setSelection(editText, pendingText.length());
+        editText.setSelection(pendingText.length());
       } else {
         editText.setText("");
       }

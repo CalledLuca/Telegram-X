@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,16 +15,15 @@
 package org.thunderdog.challegram.loader.gif;
 
 import android.graphics.Bitmap;
-import android.media.MediaMetadataRetriever;
-import android.os.Build;
 import android.view.View;
 
+import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.N;
 import org.thunderdog.challegram.U;
@@ -34,26 +33,34 @@ import org.thunderdog.challegram.data.TGMessageSticker;
 import org.thunderdog.challegram.emoji.Emoji;
 import org.thunderdog.challegram.player.TGPlayerController;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.telegram.TdlibManager;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.ui.EmojiMediaListController;
 import org.thunderdog.challegram.ui.StickersListController;
+import org.thunderdog.challegram.unsorted.Settings;
 
 import java.io.File;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import me.vkryl.android.ViewUtils;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 @SuppressWarnings ("JniMissingFunction")
 public class GifActor implements GifState.Callback, TGPlayerController.TrackChangeListener {
-  private static final int FLAG_CANCELLED = 0x01;
-  private static final int FLAG_LOADING_FILE = 0x02;
-  private static final int FLAG_AWAITING = 0x04;
+  private static final int FLAG_CANCELLED = 1;
+  private static final int FLAG_LOADING_FILE = 1 << 1;
+  private static final int FLAG_AWAITING = 1 << 2;
+  private static final int FLAG_AWAITING_FROM_RESTART = 1 << 3;
 
   private static final int LOTTIE_CACHE_NONE = 0;
   private static final int LOTTIE_CACHE_CREATING = 1;
@@ -79,15 +86,13 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   private final Client.ResultHandler fileLoadHandler;
 
   private final double maxFrameRate;
-  private static final int DEFAULT_MAX_STICKER_RESOLUTION = 384;
-  private static final int REDUCED_MAX_STICKER_RESOLUTION = 160;
 
   private final boolean isPlayOnce;
 
   public GifActor (final GifFile file, GifThread thread) {
     this.isPlayOnce = file.isPlayOnce();
     file.setVibrationPattern(Emoji.VIBRATION_PATTERN_NONE);
-    this.maxFrameRate = file.needOptimize() ? REDUCED_MAX_FRAME_RATE : DEFAULT_MAX_FRAME_RATE;
+    this.maxFrameRate = file.hasOptimizations() || Settings.instance().getNewSetting(Settings.SETTING_FLAG_LIMIT_STICKERS_FPS) ? REDUCED_MAX_FRAME_RATE : DEFAULT_MAX_FRAME_RATE;
     this.isLottie = file.getGifType() == GifFile.TYPE_TG_LOTTIE;
     this.metadata = new int[4];
     this.lottieMetadata = new double[3];
@@ -108,7 +113,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
               flags |= FLAG_LOADING_FILE;
               if (!resultFile.local.isDownloadingActive) {
                 if (!Config.DEBUG_DISABLE_DOWNLOAD) {
-                  file.tdlib().client().send(new TdApi.DownloadFile(resultFile.id, 1, 0, 0, false), fileLoadHandler);
+                  file.tdlib().client().send(new TdApi.DownloadFile(resultFile.id, TdlibFilesManager.PRIORITY_GIFS, 0, 0, false), fileLoadHandler);
                 }
               }
             }
@@ -155,7 +160,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
     if (this.isPlaybackFrozen != isFrozen) {
       this.isPlaybackFrozen = isFrozen;
       if (!isFrozen) {
-        onDrawNextFrame();
+        onRequestNextFrame();
       }
     }
   }
@@ -170,7 +175,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
       if (gif != null) {
         gif.setFrozen(isPlayingRoundVideo && lastTimeStamp == 0);
       }
-      onDrawNextFrame();
+      onRequestNextFrame();
     }
   }
 
@@ -179,7 +184,8 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   public void act () {
     TdApi.File file = this.file.getFile();
 
-    if (TD.isFileLoadedAndExists(file)) {
+    boolean isLoaded = this.file.tdlib() == null ? TD.isFileLoaded(file) : TD.isFileLoadedAndExists(file);
+    if (isLoaded) {
       onLoad(file);
       return;
     }
@@ -189,7 +195,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
     } else {
       flags |= FLAG_LOADING_FILE;
       if (!Config.DEBUG_DISABLE_DOWNLOAD) {
-        this.file.tdlib().client().send(new TdApi.DownloadFile(file.id, 1, 0, 0, false), fileLoadHandler);
+        this.file.tdlib().client().send(new TdApi.DownloadFile(file.id, TdlibFilesManager.PRIORITY_GIFS, 0, 0, false), fileLoadHandler);
       }
     }
   }
@@ -297,7 +303,12 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
           nativePtr = 0;
         }
         if (lottieCacheFile != null) {
-          LottieCache.instance().checkFile(file, lottieCacheFile, deleteLottieCacheFile || file.needOptimize(), lottieCacheFileSize, file.getFitzpatrickType());
+          LottieCache.instance().checkFile(file,
+            lottieCacheFile,
+            deleteLottieCacheFile || file.isOneTimeCache(),
+            lottieCacheFileSize,
+            file.getFitzpatrickType()
+          );
         }
       } else {
         N.destroyDecoder(nativePtr);
@@ -324,13 +335,30 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
       file.setTotalFrameCount(totalFrameCount);
       frameRate = lottieMetadata[1];
       double durationSeconds = lottieMetadata[2];
-      width = height = file.needOptimize() ? Math.min(Math.max(EmojiMediaListController.getEstimateColumnResolution(), StickersListController.getEstimateColumnResolution()), REDUCED_MAX_STICKER_RESOLUTION) : Math.min(Screen.dp(TGMessageSticker.MAX_STICKER_SIZE), DEFAULT_MAX_STICKER_RESOLUTION);
-      error = totalFrameCount <= 0 || frameRate <= 0 || durationSeconds <= 0; // || durationSeconds > 3.0 || frameRate % 30.0 != 0;
+      final int resolution;
+      switch (file.getOptimizationMode()) {
+        case GifFile.OptimizationMode.EMOJI:
+          resolution = Math.min(100, Screen.dp(20f));
+          break;
+        case GifFile.OptimizationMode.STICKER_PREVIEW:
+          resolution = Math.min(Math.max(EmojiMediaListController.getEstimateColumnResolution(), StickersListController.getEstimateColumnResolution()), 160);
+          break;
+        case GifFile.OptimizationMode.EMOJI_PREVIEW:
+          resolution = Math.min(Screen.dp(40), 120);
+          break;
+        case GifFile.OptimizationMode.NONE:
+          resolution = Math.min(Screen.dp(TGMessageSticker.MAX_STICKER_SIZE), 384);
+          break;
+        default:
+          throw new UnsupportedOperationException();
+      }
+      width = height = file.getRequestedSize() != 0 ? Math.min(file.getRequestedSize(), resolution) : resolution;
+      error = totalFrameCount <= 0 || frameRate <= 0 || (durationSeconds <= 0 && totalFrameCount > 1);
       if (totalFrameCount == 1) {
         file.setIsStill(true);
       }
     } else {
-      nativePtr = N.createDecoder(path, metadata);
+      nativePtr = N.createDecoder(path, metadata, file.getStartMediaTimestamp());
       width = metadata[0];
       height = metadata[1];
       error = (width <= 0 || height <= 0);
@@ -341,16 +369,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
     if (nativePtr == 0) {
       return;
     }
-    int rotation = 0;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && !isLottie) {
-      MediaMetadataRetriever retriever = null;
-      try {
-        retriever = U.openRetriever(path);
-        String rotationString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
-        rotation = StringUtils.parseInt(rotationString);
-      } catch (Throwable ignored) { }
-      U.closeRetriever(retriever);
-    }
+    int rotation = !isLottie ? U.getVideoRotation(path) : 0;
     int queueSize = file.isStill() ? 1 : isLottie ? 2 : GifState.DEFAULT_QUEUE_SIZE;
     GifState gif = new GifState(width, height, rotation, this, queueSize);
     gif.setFrozen(isPlayingRoundVideo);
@@ -360,7 +379,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
         if (isLottie) {
           long startFrame = file.needDecodeLastFrame() || file.hasLooped() ? totalFrameCount - 1 : 0;
           synchronized (nativeSync) {
-            if (nativePtr != 0 && N.getLottieFrame(nativePtr, frame.bitmap, lastFrameNo = startFrame)) {
+            if (nativePtr != 0 && N.getLottieFrame(nativePtr, frame.bitmap, (long) (lastFrameNo = startFrame))) {
               frame.no = startFrame;
               return true;
             }
@@ -389,7 +408,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   }
 
   private volatile int lastTimeStamp;
-  private volatile long lastFrameNo;
+  private volatile double lastFrameNo;
   private long totalFrameCount;
   private double frameRate;
 
@@ -402,15 +421,26 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
       thread.prepareNextFrame(this);
       scheduleNext(false);
     } else {
-      GifBridge.instance().dispatchGifFrameChanged(file, gif);
+      GifBridge.instance().dispatchGifFrameChanged(file, gif, false);
     }
   }
 
-  public void seekToStart () {
+  private double findLastFrameNo () {
+    final double delta = frameDelta();
+    double frameNo = 0;
+    while (frameNo + delta < totalFrameCount) {
+      frameNo += delta;
+    }
+    return frameNo;
+  }
+
+  public boolean seekToStart () {
     if (!seekToStart && lastTimeStamp != 0) {
       seekToStart = true;
-      onDrawNextFrame();
+      onRequestNextFrame();
+      return true;
     }
+    return seekToStart;
   }
 
   // Decoder thread
@@ -424,19 +454,25 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
     }
   }
 
-  private static final double DEFAULT_MAX_FRAME_RATE = /*BuildConfig.DEBUG ? 60.0 :*/ 30.0;
+  private static final double DEFAULT_MAX_FRAME_RATE = 60.0;
   private static final double REDUCED_MAX_FRAME_RATE = 30.0;
 
   private File lottieCacheFile;
   private int lottieCacheFileSize;
 
-  private long frameDelta () {
-    return Math.max(1, (long) (frameRate / maxFrameRate));
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    LottieCacheStatus.OK,
+    LottieCacheStatus.NEED_CREATE,
+    LottieCacheStatus.ERROR,
+    LottieCacheStatus.CANCELED
+  })
+  public @interface LottieCacheStatus {
+    int OK = 0, NEED_CREATE = 1, ERROR = 2, CANCELED = 3;
   }
 
   // Decoder thread
   public void prepareNextFrame () {
-
     GifState gif;
     synchronized (gifLock) {
       gif = this.gif;
@@ -444,20 +480,21 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
     if (gif == null) {
       return;
     }
+    boolean gifRestarted = false;
     boolean success = false;
     boolean async = false;
     final GifState.Frame free = gif.takeFree();
     if (free != null) {
-      long desiredNextFrameNo;
+      double desiredNextFrameNo;
       if (isLottie) {
-        long frameDelta = frameDelta();
+        double frameDelta = frameDelta();
         desiredNextFrameNo = lastFrameNo + frameDelta;
-        if (desiredNextFrameNo >= totalFrameCount) {
+        if ((long) desiredNextFrameNo >= totalFrameCount) {
           file.onLoop();
           desiredNextFrameNo = 0;
           file.onFrameChange(0, 0);
         } else {
-          if (desiredNextFrameNo + frameDelta >= totalFrameCount && isPlayOnce) {
+          if ((long) (desiredNextFrameNo + frameDelta) >= totalFrameCount && isPlayOnce) {
             file.setLooped(true);
           }
           file.onFrameChange(desiredNextFrameNo, frameDelta);
@@ -465,7 +502,6 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
       } else {
         desiredNextFrameNo = 0;
       }
-      boolean gifRestarted = false;
       if (seekToStart && !isLottie) {
         gif.clearBusy();
         seekToStart = false;
@@ -473,57 +509,75 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
         desiredNextFrameNo = 0;
         gifRestarted = true;
       }
-      final long nextFrameNo = desiredNextFrameNo;
+      final double nextFrameNo = desiredNextFrameNo;
 
       if (isLottie) {
-        // lottieCacheState = LOTTIE_CACHE_ERROR;
         switch (lottieCacheState) {
           case LOTTIE_CACHE_NONE: {
-            lottieCacheFile = LottieCache.getCacheFile(file, file.needOptimize(), lottieCacheFileSize = Math.max(free.getWidth(), free.getHeight()), file.getFitzpatrickType(), TimeUnit.MINUTES.toMillis(15), 8);
+            lottieCacheFile = LottieCache.getCacheFile(
+              file,
+              file.isOneTimeCache(),
+              lottieCacheFileSize = Math.max(free.getWidth(), free.getHeight()),
+              file.getFitzpatrickType(),
+              file.getOptimizationMode() == GifFile.OptimizationMode.EMOJI ? TimeUnit.MINUTES.toMillis(30) : TimeUnit.MINUTES.toMillis(2),
+              8
+            );
+            // final boolean cacheExisted = lottieCacheFile != null && lottieCacheFile.exists();
             int status;
+            boolean skipOddFrames = frameRate == 60.0 && maxFrameRate == 30.0;
+            // final long startTime = SystemClock.uptimeMillis();
             synchronized (nativeSync) {
-              status = nativePtr == 0 ? 3 : lottieCacheFile == null ? 2 : N.createLottieCache(nativePtr, lottieCacheFile.getPath(), gif.getBitmap(false), free.bitmap, false, (file.needOptimize() ? REDUCED_MAX_FRAME_RATE : DEFAULT_MAX_FRAME_RATE) == 30.0);
+              status =
+                nativePtr == 0 ? LottieCacheStatus.CANCELED :
+                lottieCacheFile == null ? LottieCacheStatus.ERROR :
+                N.createLottieCache(nativePtr, lottieCacheFile.getPath(), gif.getBitmap(false), free.bitmap, false, skipOddFrames);
             }
             switch (status) {
-              case 0: {
+              case LottieCacheStatus.OK: {
+                // Log.i("validated lottie cache file in %dms", SystemClock.uptimeMillis() - startTime);
                 lottieCacheState = LOTTIE_CACHE_CREATED;
                 synchronized (nativeSync) {
                   if (nativePtr != 0) {
-                    N.getLottieFrame(nativePtr, free.bitmap, free.no = lastFrameNo = nextFrameNo);
+                    N.getLottieFrame(nativePtr, free.bitmap, free.no = (long) (lastFrameNo = nextFrameNo));
                     success = true;
                   }
                 }
                 break;
               }
-              case 1: {
+              case LottieCacheStatus.NEED_CREATE: {
+                /*if (cacheExisted) {
+                  Log.e("failed lottie cache file in %dms", SystemClock.uptimeMillis() - startTime);
+                }*/
                 lottieCacheState = LOTTIE_CACHE_CREATING;
                 async = true;
-                LottieCache.instance().thread(file.needOptimize()).post(() -> {
+                LottieCache.instance().thread(file.getOptimizationMode()).post(() -> {
                   int newStatus;
                   synchronized (nativeSync) {
                     if (nativePtr == 0)
                       return;
-                    newStatus = N.createLottieCache(nativePtr, lottieCacheFile.getPath(), gif.getBitmap(false), free.bitmap, true, (file.needOptimize() ? REDUCED_MAX_FRAME_RATE : DEFAULT_MAX_FRAME_RATE) == 30.0);
+                    // long elapsed = SystemClock.uptimeMillis();
+                    newStatus = N.createLottieCache(nativePtr, lottieCacheFile.getPath(), gif.getBitmap(false), free.bitmap, true, skipOddFrames);
+                    // Log.i("created lottie cache in %dms, skipOdd:%b, resolution:%d", SystemClock.uptimeMillis() - elapsed, skipOddFrames, lottieCacheFileSize);
                   }
                   if (newStatus == 0) {
-                    free.no = lastFrameNo = totalFrameCount - frameDelta();
+                    free.no = (long) (lastFrameNo = findLastFrameNo());
                     lottieCacheState = LOTTIE_CACHE_CREATED;
                     if (free.no != nextFrameNo) {
                       synchronized (nativeSync) {
                         if (nativePtr == 0)
                           return;
-                        N.getLottieFrame(nativePtr, free.bitmap, free.no = lastFrameNo = nextFrameNo);
+                        N.getLottieFrame(nativePtr, free.bitmap, free.no = (long) (lastFrameNo = nextFrameNo));
                       }
                     }
                     gif.addBusy(free);
-                    GifBridge.instance().nextFrameReady(this);
+                    GifBridge.instance().nextFrameReady(this, false);
                   } else {
                     gif.addFree(free);
                   }
                 }, 0);
                 break;
               }
-              case 3:
+              case LottieCacheStatus.ERROR:
               default: {
                 lottieCacheState = LOTTIE_CACHE_ERROR;
                 break;
@@ -535,7 +589,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
           case LOTTIE_CACHE_ERROR: {
             synchronized (nativeSync) {
               if (nativePtr != 0) {
-                N.getLottieFrame(nativePtr, free.bitmap, free.no = lastFrameNo = nextFrameNo);
+                N.getLottieFrame(nativePtr, free.bitmap, free.no = (long) (lastFrameNo = nextFrameNo));
                 success = true;
               }
             }
@@ -544,10 +598,16 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
         }
       } else {
         int ret = N.getVideoFrame(nativePtr, free.bitmap, metadata);
-        free.no = metadata[3];
-        success = true;
-        if (ret == 2 && isPlayOnce) {
-          file.setLooped(true);
+        if (ret != 0) {
+          free.no = metadata[3];
+          success = true;
+        }
+        if (ret == 2) {
+          if (isPlayOnce) {
+            file.setLooped(true);
+          } else {
+            file.onLoop();
+          }
         }
       }
       if (!async) {
@@ -558,49 +618,78 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
         }
       }
     }
+    if (isCancelled()) {
+      return;
+    }
     if (success) {
-      GifBridge.instance().nextFrameReady(this);
+      GifBridge.instance().nextFrameReady(this, gifRestarted);
     }
   }
 
   // GifStage thread
-  public void nextFrameReady () {
+  public void nextFrameReady (boolean restarted) {
     synchronized (this) {
-      if ((flags & FLAG_AWAITING) != 0) {
+      if (BitwiseUtils.hasFlag(flags, FLAG_AWAITING)) {
+        boolean fromRestart = BitwiseUtils.hasFlag(flags, FLAG_AWAITING_FROM_RESTART);
         flags &= ~FLAG_AWAITING;
-        onNextFrame(false);
+        flags &= ~FLAG_AWAITING_FROM_RESTART;
+        onNextFrame(false, fromRestart || restarted);
       }
     }
+  }
+
+  private double frameDelta () {
+    return Math.max(1.0, frameRate / maxFrameRate());
+  }
+
+  private double maxFrameRate () {
+    double maxFrameRate = Math.min(Screen.refreshRate(), this.maxFrameRate);
+    if (Settings.instance().getNewSetting(Settings.SETTING_FLAG_LIMIT_STICKERS_FPS)) {
+      maxFrameRate = Math.min(maxFrameRate, REDUCED_MAX_FRAME_RATE);
+    }
+    if (file.getOptimizationMode() != GifFile.OptimizationMode.NONE) {
+      maxFrameRate = Math.min(30.0, maxFrameRate);
+    }
+    return maxFrameRate;
   }
 
   // GifStage thread
   private void scheduleNext (boolean force) {
-    int frameTime;
-    int lastTimeStamp;
+    final double frameDelay;
+    final int nextTimeStamp;
 
+    final float screenFrameRate = Screen.refreshRate();
+    final double screenFrameRateDelay = 1000.0 / screenFrameRate;
+
+    final double avgFrameRate;
     if (isLottie) {
-      frameTime = Math.max(/*BuildConfig.DEBUG ? 2 :*/ 5, (int) (1000.0 / Math.min(maxFrameRate, frameRate) - 17)); // 16; // Math.max(5, (int) (1000.0 / frameRate) - 20);
-      lastTimeStamp = 0;
+      avgFrameRate = Math.min(maxFrameRate(), frameRate);
     } else {
-      lastTimeStamp = this.lastTimeStamp;
-      if (metadata[3] < lastTimeStamp) {
-        lastTimeStamp = 0;
-      }
-
-      if (metadata[3] - lastTimeStamp != 0) {
-        frameTime = metadata[3] - lastTimeStamp;
-      } else {
-        frameTime = 50;
-      }
-      lastTimeStamp = metadata[3];
-      frameTime = Math.max(5, frameTime - 17);
+      avgFrameRate = metadata[2] != 0 ? (double) metadata[2] / 1000.0 : 25.0;
     }
+    final double avgFrameRateDelay = 1000.0 / avgFrameRate;
+    if (isLottie) {
+      frameDelay = Math.max(screenFrameRateDelay, avgFrameRateDelay);
+      nextTimeStamp = 0;
+    } else {
+      final int lastTimeStamp = this.lastTimeStamp;
+      nextTimeStamp = metadata[3];
+
+      if (nextTimeStamp > lastTimeStamp) {
+        final int differenceMs = nextTimeStamp - lastTimeStamp;
+        frameDelay = Math.max(screenFrameRateDelay, differenceMs);
+      } else {
+        frameDelay = Math.max(screenFrameRateDelay, avgFrameRateDelay);
+      }
+    }
+
+    final long frameDelayMs = Math.max(file.hasOptimizations() ? 5 : frameRate <= 30.0 ? 4 : 1, (long) (frameDelay - Math.floor(screenFrameRateDelay)));
 
     synchronized (this) {
       if ((flags & FLAG_CANCELLED) == 0) {
-        if (GifBridge.instance().scheduleNextFrame(this, file.getFileId(), force ? 0 : frameTime, force)) {
+        if (GifBridge.instance().scheduleNextFrame(this, file.getFileId(), force ? 0 : frameDelayMs, force)) {
           if (gif == null || !gif.isFrozen()) {
-            this.lastTimeStamp = lastTimeStamp;
+            this.lastTimeStamp = nextTimeStamp;
           }
         }
       }
@@ -608,13 +697,16 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   }
 
   // GifStage thread
-  public void onNextFrame (boolean allowAwait) {
+  public void onNextFrame (boolean allowAwait, boolean restarted) {
     synchronized (this) {
       if ((flags & FLAG_CANCELLED) == 0 && gif != null) {
         if (gif.hasNext()) {
-          GifBridge.instance().dispatchGifFrameChanged(file, gif);
+          GifBridge.instance().dispatchGifFrameChanged(file, gif, restarted);
         } else if (allowAwait) {
           flags |= FLAG_AWAITING;
+          if (restarted) {
+            flags |= FLAG_AWAITING_FROM_RESTART;
+          }
         }
       }
     }
@@ -623,7 +715,7 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   private boolean awaitingResume;
 
   @Override
-  public boolean onDraw () {
+  public boolean onDraw (long frameNo) {
     if (awaitingResume && !file.hasLooped()) {
       awaitingResume = false;
       return true;
@@ -636,13 +728,13 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   private static final int VIBRATE_NONE = 0;
 
   @Override
-  public void onApplyNextFrame (long no) {
+  public void onApplyNextFrame (long frameNo) {
     if (isLottie) {
       int vibrationPattern = file.getVibrationPattern();
       if (vibrationPattern == Emoji.VIBRATION_PATTERN_NONE)
         return;
-      double ms = (no % frameRate) / frameRate;
-      double seconds = (int) (no / frameRate);
+      double ms = (frameNo % frameRate) / frameRate;
+      double seconds = (int) (frameNo / frameRate);
       int vibrateMode = VIBRATE_NONE;
       switch (vibrationPattern) {
         case Emoji.VIBRATION_PATTERN_HEARTBEAT: {
@@ -679,18 +771,18 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
 
   @UiThread
   @Override
-  public void onDrawNextFrame () {
+  public boolean onRequestNextFrame () {
     synchronized (this) {
       if ((flags & FLAG_CANCELLED) == 0) {
         if (seekToStart && lastTimeStamp == 0) {
           seekToStart = false;
         }
         if (isPlaybackFrozen && !seekToStart) {
-          return;
+          return false;
         }
         if (isPlayOnce && file.hasLooped()) {
           awaitingResume = true;
-          return;
+          return false;
         }
         if (isPlayingRoundVideo) {
           if (TdlibManager.instance().player().isPlayingMessage(file.getChatId(), file.getMessageId())) {
@@ -699,14 +791,16 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
               scheduleNext(true);
             }
           }
-          return;
+          return false;
         }
         if (GifBridge.instance().canScheduleNextFrame(this, file.getFileId())) {
           thread.prepareNextFrame(this);
           scheduleNext(false);
+          return true;
         }
       }
     }
+    return false;
   }
 
   // Decoder thread
@@ -808,20 +902,80 @@ public class GifActor implements GifState.Callback, TGPlayerController.TrackChan
   }
 
   public static void restartGif (@NonNull GifFile gifFile) {
+    restartGif(gifFile, null);
+  }
+
+  private static Map<String, List<Runnable>> restartCallbacks = null;
+
+  public static void restartGif (@NonNull GifFile gifFile, @Nullable Runnable after) {
     if (gifFile.isStill() || gifFile.isRoundVideo() || gifFile.isLottie()) {
+      U.run(after);
       return;
     }
+    boolean fail = false;
     if (activeActors == null) {
       synchronized (GifActor.class) {
         if (activeActors == null) {
-          return;
+          fail = true;
         }
       }
     }
+    if (fail) {
+      U.run(after);
+      return;
+    }
+    boolean seekToStart = false;
     String key = gifFile.toString();
+    List<Runnable> callbacks = null;
+    if (after != null) {
+      synchronized (GifActor.class) {
+        callbacks = restartCallbacks != null ? restartCallbacks.get(key) : null;
+        if (callbacks == null) {
+          callbacks = new ArrayList<>();
+          if (restartCallbacks == null) {
+            restartCallbacks = new HashMap<>();
+          }
+          restartCallbacks.put(key, callbacks);
+        }
+        callbacks.add(after);
+      }
+    }
     for (GifActor actor : activeActors) {
       if (actor.file.toString().equals(key)) {
-        actor.seekToStart();
+        if (actor.seekToStart()) {
+          seekToStart = true;
+        }
+      }
+    }
+    if (after != null && !seekToStart) {
+      synchronized (GifActor.class) {
+        callbacks.remove(after);
+        if (callbacks.isEmpty()) {
+          restartCallbacks.remove(key);
+          if (restartCallbacks.isEmpty()) {
+            restartCallbacks = null;
+          }
+        }
+      }
+      U.run(after);
+    }
+  }
+
+  static void onGifRestarted (@NonNull GifFile gifFile) {
+    String key = gifFile.toString();
+    List<Runnable> callbacks;
+    synchronized (GifActor.class) {
+      if (restartCallbacks == null) {
+        return;
+      }
+      callbacks = restartCallbacks.remove(key);
+      if (restartCallbacks.isEmpty()) {
+        restartCallbacks = null;
+      }
+    }
+    if (callbacks != null) {
+      for (Runnable callback : callbacks) {
+        callback.run();
       }
     }
   }

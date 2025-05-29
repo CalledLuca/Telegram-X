@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.chat.MediaPreview;
@@ -30,6 +30,8 @@ import org.thunderdog.challegram.component.inline.CustomResultView;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.emoji.Emoji;
 import org.thunderdog.challegram.loader.ComplexReceiver;
+import org.thunderdog.challegram.mediaview.MediaViewThumbLocation;
+import org.thunderdog.challegram.mediaview.data.MediaItem;
 import org.thunderdog.challegram.player.TGPlayerController;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.theme.Theme;
@@ -45,9 +47,8 @@ import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.util.MultipleViewProvider;
 import me.vkryl.core.ColorUtils;
-import me.vkryl.core.reference.ReferenceList;
 
-public abstract class InlineResult <T> implements MessageSourceProvider, MultipleViewProvider.InvalidateContentProvider {
+public abstract class InlineResult <T> implements MessageSourceProvider {
   public static final int TYPE_ARTICLE = 0;
   public static final int TYPE_VIDEO = 1;
   public static final int TYPE_CONTACT = 2;
@@ -87,7 +88,6 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
     this.id = id;
     this.data = data;
     this.currentViews = new MultipleViewProvider();
-    this.currentViews.setContentProvider(this);
   }
 
   public final T data () {
@@ -300,6 +300,10 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
     }
   }
 
+  public final void rebuildLayout () {
+    layoutInternal(lastLayoutWidth);
+  }
+
   private int lastLayoutWidth;
 
   public final void layout (int width, ComplexReceiver receiver) {
@@ -317,6 +321,10 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
     requestContent(receiver, false);
   }
 
+  public void requestTextMedia (ComplexReceiver textMediaReceiver) {
+    textMediaReceiver.clear();
+  }
+
   private MediaPreview mediaPreview;
 
   protected final void setMediaPreview (MediaPreview mediaPreview) {
@@ -329,18 +337,6 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
 
   public void requestContent (ComplexReceiver receiver, boolean isInvalidate) {
     receiver.clear();
-  }
-
-  @Override
-  public void invalidateContent () {
-    ReferenceList<View> views = currentViews.getViewsList();
-    for (View view : views) {
-      if (view instanceof CustomResultView) {
-        ((CustomResultView) view).invalidateContent(this);
-      } else if (view instanceof MultipleViewProvider.InvalidateContentProvider) {
-        ((MultipleViewProvider.InvalidateContentProvider) view).invalidateContent();
-      }
-    }
   }
 
   private FactorAnimator highlightAnimator;
@@ -401,9 +397,14 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
     return false;
   }
 
+  public boolean setThumbLocation (MediaViewThumbLocation location, View view, int index, MediaItem mediaItem) {
+    return false;
+  }
+
   // Static stuff
 
   public static InlineResult<?> valueOf (BaseActivity context, Tdlib tdlib, TdApi.Message message) {
+    //noinspection SwitchIntDef
     switch (message.content.getConstructor()) {
       case TdApi.MessageAudio.CONSTRUCTOR: {
         return new InlineResultCommon(context, tdlib, message, (TdApi.MessageAudio) message.content, null).setMessage(message);
@@ -463,7 +464,7 @@ public abstract class InlineResult <T> implements MessageSourceProvider, Multipl
       case TdApi.InlineQueryResultDocument.CONSTRUCTOR: {
         TdApi.InlineQueryResultDocument doc = (TdApi.InlineQueryResultDocument) result;
         if (TGMimeType.isAudioMimeType(doc.document.mimeType)) {
-          TdApi.InlineQueryResultAudio audio = new TdApi.InlineQueryResultAudio(doc.id, new TdApi.Audio(0, doc.title, doc.description, doc.document.fileName, doc.document.mimeType, doc.document.minithumbnail, doc.document.thumbnail, doc.document.document));
+          TdApi.InlineQueryResultAudio audio = new TdApi.InlineQueryResultAudio(doc.id, new TdApi.Audio(0, doc.title, doc.description, doc.document.fileName, doc.document.mimeType, doc.document.minithumbnail, doc.document.thumbnail, null, doc.document.document));
           return new InlineResultCommon(context, tdlib, audio, builder);
         } else {
           return new InlineResultCommon(context, tdlib, doc);

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.component.chat.MessageView;
 import org.thunderdog.challegram.component.chat.MessagesManager;
 import org.thunderdog.challegram.config.Config;
@@ -32,10 +32,15 @@ import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.mediaview.MediaViewThumbLocation;
+import org.thunderdog.challegram.telegram.MessageEditMediaPending;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.unsorted.Settings;
+import org.thunderdog.challegram.util.text.Highlight;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.util.text.TextWrapper;
@@ -49,11 +54,11 @@ import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.animator.ListAnimator;
 import me.vkryl.android.animator.ReplaceAnimator;
 import me.vkryl.android.animator.VariableFloat;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
-import me.vkryl.core.BitwiseUtils;
-import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.td.Td;
+import tgx.td.Td;
+import tgx.td.TdConstants;
 
 public class TGMessageFile extends TGMessage {
   private int objectCount;
@@ -64,12 +69,14 @@ public class TGMessageFile extends TGMessage {
     public FileComponent component;
     public TdApi.FormattedText serverCaption;
     public TdApi.FormattedText pendingCaption;
+    public TdApi.FormattedText translatedCaption;
 
     public FactorAnimator checkAnimator;
 
     private TdApi.FormattedText effectiveCaption;
     public final ReplaceAnimator<TextWrapper> caption;
     private TextWrapper captionWrapper;
+    private long captionMediaKeyOffset;
     private final VariableFloat lastLineWidth = new VariableFloat(0);
     private final VariableFloat needBottomLineExpand = new VariableFloat(1f);
 
@@ -86,8 +93,12 @@ public class TGMessageFile extends TGMessage {
       this.caption = new ReplaceAnimator<>(animator -> {
         files.measure(needAnimateChanges());
         invalidate();
-      }, AnimatorUtils.DECELERATE_INTERPOLATOR, 200l);
+      }, AnimatorUtils.DECELERATE_INTERPOLATOR, TEXT_CROSS_FADE_DURATION_MS);
       updateCaption(false);
+    }
+
+    public boolean hasTextMedia () {
+      return captionWrapper != null && captionWrapper.hasMedia();
     }
 
     @Override
@@ -105,12 +116,27 @@ public class TGMessageFile extends TGMessage {
     }
 
     private boolean updateCaption (boolean animated) {
-      TdApi.FormattedText caption = this.pendingCaption != null ? this.pendingCaption : this.serverCaption;
-      if (!Td.equalsTo(this.effectiveCaption, caption)) {
+      return updateCaption(animated, false);
+    }
+
+    private boolean updateCaption (boolean animated, boolean force) {
+      TdApi.FormattedText caption = translatedCaption != null ? translatedCaption : (this.pendingCaption != null ? this.pendingCaption : this.serverCaption);
+      if (!Td.equalsTo(this.effectiveCaption, caption) || force) {
         this.effectiveCaption = Td.isEmpty(caption) ? null : caption;
+        if (this.captionWrapper != null) {
+          this.captionMediaKeyOffset += this.captionWrapper.getMaxMediaCount();
+        }
         TextWrapper wrapper;
         if (!Td.isEmpty(caption)) {
-          wrapper = new TextWrapper(caption.text, getTextStyleProvider(), getTextColorSet(), TextEntity.valueOf(tdlib, caption, openParameters())).addTextFlags(Text.FLAG_BIG_EMOJI).setClickCallback(clickCallback());
+          wrapper = new TextWrapper(caption.text, getTextStyleProvider(), getTextColorSet())
+            .setEntities(TextEntity.valueOf(tdlib, caption, openParameters()), (wrapper1, text, specificMedia) -> {
+              if (captionWrapper == wrapper1) {
+                invalidateTextMediaReceiver(text, specificMedia);
+              }
+            })
+            .setHighlightText(getHighlightedText(Highlight.Pool.KEY_FILE_CAPTION, caption.text))
+            .addTextFlags(Text.FLAG_BIG_EMOJI)
+            .setClickCallback(clickCallback());
           wrapper.setViewProvider(currentViews);
           wrapper.prepare(getContentMaxWidth());
         } else {
@@ -162,14 +188,25 @@ public class TGMessageFile extends TGMessage {
     }
 
     private boolean needExpandHeight () {
-      int bottomLineWidth = calculateLastLineWidth();
-      return bottomLineWidth == BOTTOM_LINE_EXPAND_HEIGHT || needExpandBubble(bottomLineWidth);
+      if (useBubbles()) {
+        int maxLineWidth = getRealContentMaxWidth();
+        int lastLineWidth = calculateLastLineWidth();
+        int bubbleTimePartWidth = computeBubbleTimePartWidth(/* includePadding */ true);
+        return needExpandBubble(lastLineWidth, bubbleTimePartWidth, maxLineWidth);
+      }
+      return false;
     }
 
     private int calculateVisualLastLineWidth () {
-      int lineWidth = calculateLastLineWidth();
-      boolean needExpand = lineWidth == BOTTOM_LINE_EXPAND_HEIGHT || needExpandBubble(lineWidth);
-      return needExpand ? getWidth() - getBubbleTimePartWidth() : lineWidth;
+      int lastLineWidth = calculateLastLineWidth();
+      if (useBubbles()) {
+        int maxLineWidth = getRealContentMaxWidth();
+        int bubbleTimePartWidth = computeBubbleTimePartWidth(/* includePadding */ true);
+        if (needExpandBubble(lastLineWidth, bubbleTimePartWidth, maxLineWidth)) {
+          return getWidth() - bubbleTimePartWidth;
+        }
+      }
+      return lastLineWidth;
     }
 
     @Override
@@ -214,31 +251,36 @@ public class TGMessageFile extends TGMessage {
 
   @NonNull
   private CaptionedFile newFile (TGMessage context, TdApi.Message message) {
+    return newFile(context, message, message.content);
+  }
+
+  private CaptionedFile newFile (TGMessage context, TdApi.Message message, TdApi.MessageContent content) {
     FileComponent component;
     TdApi.FormattedText caption;
     boolean disallowTouch = true;
-    switch (message.content.getConstructor()) {
+    //noinspection SwitchIntDef
+    switch (content.getConstructor()) {
       case TdApi.MessageDocument.CONSTRUCTOR: {
-        TdApi.MessageDocument document = (TdApi.MessageDocument) message.content;
-        component = new FileComponent(context, document.document);
+        TdApi.MessageDocument document = (TdApi.MessageDocument) content;
+        component = new FileComponent(context, message, document.document);
         caption = document.caption;
         break;
       }
       case TdApi.MessageAudio.CONSTRUCTOR: {
-        TdApi.MessageAudio audio = (TdApi.MessageAudio) message.content;
-        component = new FileComponent(context, audio.audio, message, context.manager);
+        TdApi.MessageAudio audio = (TdApi.MessageAudio) content;
+        component = new FileComponent(context, message, audio.audio, message, context.manager);
         caption = audio.caption;
         break;
       }
       case TdApi.MessageVoiceNote.CONSTRUCTOR: {
-        TdApi.MessageVoiceNote voiceNote = (TdApi.MessageVoiceNote) message.content;
-        component = new FileComponent(context, voiceNote.voiceNote, message, context.manager);
+        TdApi.MessageVoiceNote voiceNote = (TdApi.MessageVoiceNote) content;
+        component = new FileComponent(context, message, voiceNote.voiceNote, message, context.manager);
         caption = voiceNote.caption;
         disallowTouch = false;
         break;
       }
       default: {
-        throw new IllegalArgumentException(message.content.toString());
+        throw new IllegalArgumentException(content.toString());
       }
     }
     if (disallowTouch) {
@@ -249,13 +291,22 @@ public class TGMessageFile extends TGMessage {
   }
 
   protected TGMessageFile (MessagesManager context, TdApi.Message msg) {
+    this(context, msg, msg.content);
+  }
+
+  protected TGMessageFile (MessagesManager context, TdApi.Message msg, TdApi.MessageContent messageContent) {
     super(context, msg);
-    filesList.add(newFile(this, msg));
+    checkHasEditedMedia();
+    filesList.add(newFile(this, msg, messageContent));
     files.reset(filesList, false);
   }
 
   @Override
   protected boolean isBeingEdited () {
+    if (hasEditedMedia) {
+      return true;
+    }
+
     for (CaptionedFile file : filesList) {
       if (file.pendingCaption != null)
         return true;
@@ -264,16 +315,23 @@ public class TGMessageFile extends TGMessage {
   }
 
   @Override
+  protected boolean isSupportedMessageContent (TdApi.Message message, TdApi.MessageContent messageContent) {
+    return messageContent.getConstructor() == TdApi.MessageVoiceNote.CONSTRUCTOR
+      || messageContent.getConstructor() == TdApi.MessageAudio.CONSTRUCTOR
+      || messageContent.getConstructor() == TdApi.MessageDocument.CONSTRUCTOR;
+  }
+
+  @Override
+  protected boolean isSupportedMessagePendingContent (@NonNull MessageEditMediaPending pending) {
+    return pending.isDocument() || pending.isAudio();
+  }
+
+  @Override
   protected int onMessagePendingContentChanged (long chatId, long messageId, int oldHeight) {
-    boolean updated = false;
-    for (CaptionedFile file : filesList) {
-      if (file.messageId == messageId) {
-        file.pendingCaption = tdlib.getPendingMessageCaption(chatId, messageId);
-        file.updateCaption(needAnimateChanges());
-        updated = true;
-      }
-    }
-    return updated ? MESSAGE_INVALIDATED : MESSAGE_NOT_CHANGED;
+    checkHasEditedMedia();
+
+    final TdApi.Message message = getMessage(messageId);
+    return updateMessageContentImpl(chatId, messageId, message != null ? message.content : null) != 0 ? MESSAGE_INVALIDATED : MESSAGE_NOT_CHANGED;
   }
 
   @Override
@@ -303,62 +361,148 @@ public class TGMessageFile extends TGMessage {
 
   @Override
   protected boolean updateMessageContent (TdApi.Message message, TdApi.MessageContent newContent, boolean isBottomMessage) {
-    boolean captionsChanged = false;
-    boolean filesChanged = false;
+    return updateMessageContentImpl(message.chatId, message.id, newContent) != 0;
+  }
+
+  @Nullable
+  private CaptionedFile findCaptionedFile (long messageId) {
     for (CaptionedFile file : filesList) {
-      if (file.messageId != message.id) {
-        continue;
+      if (file.messageId == messageId) {
+        return file;
       }
-      boolean fileChanged = false;
-      TdApi.FormattedText serverCaption;
-      FileComponent component = file.component;
-      switch (newContent.getConstructor()) {
-        case TdApi.MessageAudio.CONSTRUCTOR: {
-          TdApi.MessageAudio audio = (TdApi.MessageAudio) newContent;
-          TdApi.Audio oldAudio = ((TdApi.MessageAudio) message.content).audio;
-          if (component != null && oldAudio.audio.id != audio.audio.audio.id) {
-            component.getFileProgress().replaceFile(audio.audio.audio, message);
-            fileChanged = true;
+    }
+
+    return null;
+  }
+
+  @Nullable
+  public FileComponent findFileComponent (long messageId) {
+    CaptionedFile file = findCaptionedFile(messageId);
+    return file != null ? file.component : null;
+  }
+
+  private static final int FLAG_CHANGED_LAYOUT = 1;
+  private static final int FLAG_CHANGED_TEXT_RECEIVERS = 1 << 1;
+  private static final int FLAG_CHANGED_CONTENT_RECEIVERS = 1 << 2;
+
+  private int updateMessageContentImpl (long chatId, long messageId, @Nullable TdApi.MessageContent content) {
+    final CaptionedFile file = findCaptionedFile(messageId);
+    final TdApi.Message message = getMessage(messageId);
+    if (file == null || message == null) {
+      return 0;
+    }
+
+    FileComponent component = file.component;
+    if (component == null) {
+      return 0;
+    }
+
+    int result = 0;
+    FileComponent newComponent = null;
+
+
+    final TdApi.FormattedText pendingCaption = tdlib.getPendingMessageCaption(chatId, messageId);
+    file.pendingCaption = pendingCaption;
+    boolean hadMedia = file.hasTextMedia();
+    if (file.updateCaption(needAnimateChanges()) && (hadMedia || file.hasTextMedia())) {
+      result |= FLAG_CHANGED_TEXT_RECEIVERS | FLAG_CHANGED_LAYOUT;
+    }
+
+    final MessageEditMediaPending pending = tdlib.getPendingMessageMedia(chatId, messageId);
+    if (pending != null && pending.getFile() != null) {
+      if (pending.isDocument()) {
+        if (component.isDocument()) {
+          component.setDoc(pending.getDocument());
+        } else {
+          newComponent = new FileComponent(this, message, pending.getDocument());
+        }
+        result |= FLAG_CHANGED_CONTENT_RECEIVERS | FLAG_CHANGED_LAYOUT;
+      } else if (pending.isAudio()) {
+        if (component.isAudio()) {
+          component.setAudio(pending.getAudio(), getMessage(messageId), manager);
+        } else {
+          newComponent = new FileComponent(this, message, pending.getAudio(), message, manager);
+        }
+        result |= FLAG_CHANGED_CONTENT_RECEIVERS | FLAG_CHANGED_LAYOUT;
+      }
+    } else if (content != null && pendingCaption == null) {
+      TdApi.FormattedText serverCaption = null;
+      switch (content.getConstructor()) {
+        case TdApi.MessageDocument.CONSTRUCTOR: {
+          TdApi.MessageDocument document = (TdApi.MessageDocument) content;
+          serverCaption = document.caption;
+          if (component.isDocument()) {
+            component.setDoc(document.document);
+          } else {
+            newComponent = new FileComponent(this, message, document.document);
           }
-          serverCaption = audio.caption;
+          result |= FLAG_CHANGED_CONTENT_RECEIVERS | FLAG_CHANGED_LAYOUT;
           break;
         }
-        case TdApi.MessageDocument.CONSTRUCTOR: {
-          TdApi.MessageDocument document = (TdApi.MessageDocument) newContent;
-          TdApi.Document oldDocument = ((TdApi.MessageDocument) message.content).document;
-          if (component != null && oldDocument.document.id != document.document.document.id) {
-            component.getFileProgress().replaceFile(document.document.document, message);
-            fileChanged = true;
+        case TdApi.MessageAudio.CONSTRUCTOR: {
+          TdApi.MessageAudio audio = (TdApi.MessageAudio) content;
+          serverCaption = audio.caption;
+          if (component.isAudio()) {
+            component.setAudio(audio.audio, getMessage(messageId), manager);
+          } else {
+            newComponent = new FileComponent(this, message, audio.audio, message, manager);
           }
-          serverCaption = document.caption;
+          result |= FLAG_CHANGED_CONTENT_RECEIVERS | FLAG_CHANGED_LAYOUT;
           break;
         }
         case TdApi.MessageVoiceNote.CONSTRUCTOR: {
-          TdApi.MessageVoiceNote voiceNote = (TdApi.MessageVoiceNote) newContent;
-          TdApi.VoiceNote oldVoiceNote = ((TdApi.MessageVoiceNote) message.content).voiceNote;
-          if (component != null && oldVoiceNote.voice.id != voiceNote.voiceNote.voice.id) {
-            component.getFileProgress().replaceFile(voiceNote.voiceNote.voice, message);
-            fileChanged = true;
-          }
+          TdApi.MessageVoiceNote voiceNote = (TdApi.MessageVoiceNote) content;
           serverCaption = voiceNote.caption;
+          if (component.isVoice()) {
+            component.setVoice(voiceNote.voiceNote, getMessage(messageId), manager);
+          } else {
+            newComponent = new FileComponent(this, message, voiceNote.voiceNote, message, manager);
+          }
+          result |= FLAG_CHANGED_CONTENT_RECEIVERS | FLAG_CHANGED_LAYOUT;
           break;
         }
-        default: {
-          return false;
-        }
+        default:
+          break;
       }
 
+      boolean hadTextMedia = file.hasTextMedia();
       file.serverCaption = serverCaption;
       boolean changed = file.updateCaption(needAnimateChanges());
+      if (changed && (hadTextMedia || file.hasTextMedia())) {
+        result |= FLAG_CHANGED_TEXT_RECEIVERS;
+      }
+    }
 
-      captionsChanged = changed || captionsChanged;
-      filesChanged = fileChanged || filesChanged;
+    if (newComponent != null) {
+      file.component.performDestroy();
+      file.component = newComponent;
+      component = newComponent;
+      component.buildLayout(getContentMaxWidth());
     }
-    if (captionsChanged) {
+
+    if (BitwiseUtils.hasFlag(result, FLAG_CHANGED_TEXT_RECEIVERS)) {
+      invalidateTextMediaReceiver();
+    }
+    if (BitwiseUtils.hasFlag(result, FLAG_CHANGED_CONTENT_RECEIVERS)) {
+      invalidateContentReceiver(messageId, file.receiverId);
+    }
+    if (BitwiseUtils.hasFlag(result, FLAG_CHANGED_LAYOUT)) {
+      if (newComponent == null) {
+        component.rebuildLayout();
+      }
       files.measure(needAnimateChanges());
-      return true;
     }
-    return filesChanged;
+
+    return result;
+  }
+
+  @Override
+  protected void onUpdateHighlightedText () {
+    if (filesList == null) return;
+    for (CaptionedFile file : filesList) {
+      file.updateCaption(needAnimateChanges(), true);
+    }
+    rebuildContent();
   }
 
   @Override
@@ -401,17 +545,37 @@ public class TGMessageFile extends TGMessage {
   protected void onMessageContainerDestroyed () {
     for (CaptionedFile file : filesList) {
       file.component.performDestroy();
+      file.caption.clear(false);
+    }
+  }
+
+  @Override
+  public void requestTextMedia (ComplexReceiver textMediaReceiver) {
+    final int maxMediaCountPerMessage = Integer.MAX_VALUE / (TdConstants.MAX_MESSAGE_GROUP_SIZE * 10);
+    int startKey = 0;
+    for (CaptionedFile file : filesList) {
+      if (file.captionWrapper != null) {
+        if (maxMediaCountPerMessage <= file.captionMediaKeyOffset)
+          throw new IllegalStateException();
+        file.captionWrapper.requestMedia(textMediaReceiver, startKey + file.captionMediaKeyOffset, maxMediaCountPerMessage - file.captionMediaKeyOffset);
+      }
+      startKey += maxMediaCountPerMessage;
     }
   }
 
   @Override
   protected void drawContent (MessageView view, Canvas c, final int startX, final int startY, int maxWidth, ComplexReceiver receiver) {
+    float alpha = getTranslationLoadingAlphaValue();
+
     final int backgroundColor = getContentBackgroundColor();
     final int contentReplaceColor = getContentReplaceColor();
     final boolean clip = useBubbles();
+    final int restoreToCount;
     if (clip) {
-      c.save();
+      restoreToCount = Views.save(c);
       c.clipRect(getActualLeftContentEdge(), getTopContentEdge(), getActualRightContentEdge(), getBottomContentEdge());
+    } else {
+      restoreToCount = -1;
     }
     for (ListAnimator.Entry<CaptionedFile> entry : files) {
       ImageReceiver imageReceiver = receiver.getImageReceiver(entry.item.receiverId);
@@ -442,11 +606,11 @@ public class TGMessageFile extends TGMessage {
       entry.item.component.draw(view, c, startX, contentStartY, previewReceiver, imageReceiver, backgroundColor, useBubbles() ? ColorUtils.compositeColor(contentReplaceColor, pressColor) : contentReplaceColor, entry.getVisibility(), entry.item.getCheckFactor());
       for (ListAnimator.Entry<TextWrapper> caption : entry.item.caption) {
         int right = useBubbles() ? startX + getContentWidth() : startX + Math.max(entry.item.component.getWidth(), caption.item.getWidth());
-        caption.item.draw(c, startX, right, 0, contentStartY + entry.item.component.getHeight() + Screen.dp(TEXT_MARGIN), null, entry.getVisibility() * caption.getVisibility());
+        caption.item.draw(c, startX, right, 0, contentStartY + entry.item.component.getHeight() + Screen.dp(TEXT_MARGIN), null, entry.getVisibility() * caption.getVisibility() * alpha, view.getTextMediaReceiver());
       }
     }
     if (clip) {
-      c.restore();
+      Views.restore(c, restoreToCount);
     }
   }
 
@@ -477,12 +641,12 @@ public class TGMessageFile extends TGMessage {
   }
 
   @Override
-  protected float getBubbleExpandFactor () {
+  protected float getIntermediateBubbleExpandFactor () {
     return filesList.get(filesList.size() - 1).needBottomLineExpand.get();
   }
 
   @Override
-  protected int getAnimatedBottomLineWidth () {
+  protected int getAnimatedBottomLineWidth (int bubbleTimePartWidth) {
     return Math.round(filesList.get(filesList.size() - 1).lastLineWidth.get());
   }
 
@@ -514,6 +678,8 @@ public class TGMessageFile extends TGMessage {
 
   @Override
   protected void onMessageCombinedWithOtherMessage (TdApi.Message otherMessage, boolean atBottom, boolean local) {
+    checkHasEditedMedia();
+
     CaptionedFile file = newFile(this, otherMessage);
     if (local) {
       int maxWidth = getContentMaxWidth();
@@ -606,6 +772,16 @@ public class TGMessageFile extends TGMessage {
     return res;
   }
 
+  @Override
+  public MediaViewThumbLocation getMediaThumbLocation (long messageId, View view, int viewTop, int viewBottom, int top) {
+    for (ListAnimator.Entry<CaptionedFile> entry : files) {
+      if (entry.item.messageId == messageId) {
+        return entry.item.component.getMediaThumbLocation(view, viewTop, viewBottom, top);
+      }
+    }
+    return null;
+  }
+
   // Document actions
 
   @Override
@@ -615,5 +791,93 @@ public class TGMessageFile extends TGMessage {
       changed = entry.item.component.onLocaleChange() || changed;
     }
     return changed;
+  }
+
+  private TdApi.FormattedText getTranslationSafeText (TdApi.FormattedText text) {
+    if (translationStyleMode() == Settings.TRANSLATE_MODE_POPUP) return text;
+    return new TdApi.FormattedText(text.text.replaceAll("\uD83D\uDCC4", "\uD83D\uDCD1"), text.entities);
+  }
+
+  @Nullable
+  @Override
+  public TdApi.FormattedText getTextToTranslateImpl () {
+    if (filesList == null) {
+      return null;
+    }
+    if (filesList.size() == 1) {
+      CaptionedFile file = filesList.get(0);
+      return file.hasCaption() ? getTranslationSafeText(file.serverCaption) : null;
+    }
+
+    TdApi.FormattedText resultText = new TdApi.FormattedText("", new TdApi.TextEntity[0]);
+    TdApi.FormattedText sep = new TdApi.FormattedText(translationStyleMode() == Settings.TRANSLATE_MODE_POPUP ? "\n\n": "\n\n\uD83D\uDCC4\n", new TdApi.TextEntity[0]);
+    int filesWithCaption = 0;
+
+    for (CaptionedFile file : filesList) {
+      if (file.hasCaption()) {
+        resultText = Td.concat(resultText, sep, getTranslationSafeText(file.serverCaption));
+        filesWithCaption++;
+      } else {
+        resultText = Td.concat(resultText, sep);
+      }
+    }
+
+    return filesWithCaption > 0 ? Td.trim(resultText) : null;
+  }
+
+  @Override
+  protected void setTranslationResult (@Nullable TdApi.FormattedText text) {
+    ArrayList<TdApi.FormattedText> translatedParts = null;
+    if (text != null) {
+      translatedParts = new ArrayList<>(filesList.size());
+      String sep = "\uD83D\uDCC4";
+      int indexStart = text.text.startsWith(sep) ? sep.length() : 0;
+      while (true) {
+        int index = text.text.indexOf(sep, indexStart);
+        TdApi.FormattedText part = (index == -1) ? Td.substring(text, indexStart) : Td.substring(text, indexStart, index);
+        translatedParts.add(Td.trim(part));
+        if (index == -1) {
+          break;
+        };
+        indexStart = index + sep.length();
+      }
+    }
+
+    if (translatedParts != null && translatedParts.size() != filesList.size()) {
+      translatedParts = null;
+    }
+
+    for (int a = 0; a < filesList.size(); a++) {
+      CaptionedFile file = filesList.get(a);
+      TdApi.FormattedText caption = translatedParts != null ? translatedParts.get(a) : null;
+      file.translatedCaption = !Td.isEmpty(caption) ? caption : null;
+      file.updateCaption(needAnimateChanges(), true);
+    }
+    rebuildAndUpdateContent();
+    invalidateTextMediaReceiver();
+    super.setTranslationResult(text);
+  }
+
+
+
+  private boolean hasEditedMedia;
+
+  private void checkHasEditedMedia () {
+    boolean hasEditedMedia = false;
+
+    synchronized (this) {
+      ArrayList<TdApi.Message> combinedMessages = getCombinedMessagesUnsafely();
+      if (combinedMessages != null && !combinedMessages.isEmpty()) {
+        for (TdApi.Message message: combinedMessages) {
+          final MessageEditMediaPending pending = tdlib.getPendingMessageMedia(message.chatId, message.id);
+          hasEditedMedia |= pending != null;
+        }
+      } else {
+        final MessageEditMediaPending pending = tdlib.getPendingMessageMedia(msg.chatId, msg.id);
+        hasEditedMedia = pending != null;
+      }
+    }
+
+    this.hasEditedMedia = hasEditedMedia;
   }
 }

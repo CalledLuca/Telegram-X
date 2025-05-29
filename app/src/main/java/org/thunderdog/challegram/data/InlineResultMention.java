@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,20 +17,21 @@ package org.thunderdog.challegram.data;
 import android.graphics.Canvas;
 import android.text.TextUtils;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.inline.CustomResultView;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ComplexReceiver;
-import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeId;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 
 import me.vkryl.core.StringUtils;
+import tgx.td.Td;
 
 public class InlineResultMention extends InlineResult<UserContext> {
   private static final float TEXT_SIZE_DP = 14f;
@@ -43,11 +44,13 @@ public class InlineResultMention extends InlineResult<UserContext> {
     super(context, tdlib, TYPE_MENTION, null, new UserContext(tdlib, user));
     this.userContext = data;
     this.isInlineBot = isInlineBot;
-    this.description = userContext.getUser() != null && !userContext.getUser().username.isEmpty() ? "@" + userContext.getUser().username : null;
+    String username = userContext.getUsername();
+    this.description = !StringUtils.isEmpty(username) ? "@" + username : null;
   }
 
   private static String getMention (TdApi.User user, boolean forceUsernameless) {
-    return user != null ? forceUsernameless || user.username.isEmpty() ? (!StringUtils.isEmpty(user.firstName) ? user.firstName : TD.getUserName(user.firstName, user.lastName)) : "@" + user.username : null;
+    String username = Td.primaryUsername(user);
+    return user != null ? forceUsernameless || StringUtils.isEmpty(username) ? (!StringUtils.isEmpty(user.firstName) ? user.firstName : TD.getUserName(user.firstName, user.lastName)) : "@" + username : null;
   }
 
   public boolean isInlineBot () {
@@ -63,7 +66,7 @@ public class InlineResultMention extends InlineResult<UserContext> {
   }
 
   public boolean isUsernameless () {
-    return userContext.getUser() != null && userContext.getUser().username.isEmpty();
+    return StringUtils.isEmpty(userContext.getUsername());
   }
 
   public String getMention (boolean forceUsernameless) {
@@ -80,9 +83,9 @@ public class InlineResultMention extends InlineResult<UserContext> {
     String lowerLast = user.lastName.toLowerCase();
     String check2 = TD.getUserName(lowerFirst, lowerLast);
     if (check2.startsWith(check) || lowerLast.startsWith(check)) {
-      return allowUsernameless || !StringUtils.isEmpty(user.username);
+      return allowUsernameless || Td.hasUsername(user);
     }
-    return (allowUsernameless || !user.username.isEmpty()) && user.username.toLowerCase().startsWith(check);
+    return (allowUsernameless || Td.hasUsername(user)) && Td.findUsernameByPrefix(user, check);
   }
 
   private String trimmedDescription;
@@ -107,34 +110,29 @@ public class InlineResultMention extends InlineResult<UserContext> {
 
   @Override
   public void requestContent (ComplexReceiver receiver, boolean isInvalidate) {
-    receiver.clearReceivers((receiverType, receiver1, key) -> receiverType == ComplexReceiver.RECEIVER_TYPE_IMAGE && key == 0);
-    receiver.getImageReceiver(0).requestFile(userContext.getImageFile());
+    receiver.clearReceivers((receiverType, receiver1, key) -> receiverType == ComplexReceiver.ReceiverType.IMAGE && key == 0);
+    receiver.getAvatarReceiver(0).requestUser(tdlib, userContext.getId(), AvatarReceiver.Options.NONE);
   }
 
   @Override
   protected void drawInternal (CustomResultView view, Canvas c, ComplexReceiver receiver, int viewWidth, int viewHeight, int startY) {
-    if (userContext.hasPhoto()) {
-      ImageReceiver imageReceiver = receiver.getImageReceiver(0);
-      imageReceiver.setRadius(Screen.dp(14f));
-      imageReceiver.setBounds(Screen.dp(14f), startY + Screen.dp(4f), Screen.dp(14f) + Screen.dp(14f) * 2, startY + Screen.dp(4f) + Screen.dp(14f) * 2);
-      if (imageReceiver.needPlaceholder()) {
-        imageReceiver.drawPlaceholder(c);
-      }
-      imageReceiver.draw(c);
-    } else {
-      userContext.drawPlaceholder(c, Screen.dp(14f), Screen.dp(14f), startY + Screen.dp(4f), 12f);
+    AvatarReceiver avatarReceiver = receiver.getAvatarReceiver(0);
+    avatarReceiver.setBounds(Screen.dp(14f), startY + Screen.dp(4f), Screen.dp(14f) + Screen.dp(14f) * 2, startY + Screen.dp(4f) + Screen.dp(14f) * 2);
+    if (avatarReceiver.needPlaceholder()) {
+      avatarReceiver.drawPlaceholder(c);
     }
+    avatarReceiver.draw(c);
 
     int startX = Screen.dp(14f) * 3 + Screen.dp(12f);
     if (userContext.getTrimmedName() != null) {
-      final int textColor = forceDarkMode ? Theme.getColor(R.id.theme_color_text, ThemeId.NIGHT_BLACK) : Theme.textAccentColor();
+      final int textColor = forceDarkMode ? Theme.getColor(ColorId.text, ThemeId.NIGHT_BLACK) : Theme.textAccentColor();
       c.drawText(userContext.getTrimmedName(), startX, startY + Screen.dp(4f) + Screen.dp(14f) + Screen.dp(5f), Paints.getMediumTextPaint(TEXT_SIZE_DP, textColor, false));
       startX += userContext.getTrimmedNameWidth();
       startX += Screen.dp(8f);
     }
 
     if (trimmedDescription != null) {
-      final int textColor = forceDarkMode ? Theme.getColor(R.id.theme_color_textLight, ThemeId.NIGHT_BLACK) : Theme.textDecentColor();
+      final int textColor = forceDarkMode ? Theme.getColor(ColorId.textLight, ThemeId.NIGHT_BLACK) : Theme.textDecentColor();
       c.drawText(trimmedDescription, startX, startY + Screen.dp(4f) + Screen.dp(14f) + Screen.dp(5f), Paints.getCommandPaint(textColor));
     }
   }

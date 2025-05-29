@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
 package org.thunderdog.challegram.widget;
 
 import android.content.Context;
+
+import androidx.annotation.NonNull;
 
 import org.thunderdog.challegram.tool.Views;
 
@@ -56,7 +58,7 @@ public class ScalableTextView extends NoScrollTextView implements FactorAnimator
     if (this.factor != factor) {
       this.factor = factor;
       if (factor >= .5f && futureReplacement != null) {
-        Views.setMediumText(this, futureReplacement);
+        onReplaceText(futureReplacement);
         futureReplacement = null;
       }
       float alpha = (factor <= .5f ? 1f - factor / .5f : (factor - .5f) / .5f);
@@ -75,5 +77,9 @@ public class ScalableTextView extends NoScrollTextView implements FactorAnimator
   @Override
   public void onFactorChangeFinished (int id, float finalFactor, FactorAnimator callee) {
 
+  }
+
+  protected void onReplaceText (@NonNull CharSequence replacement) {
+    Views.setMediumText(this, replacement);
   }
 }

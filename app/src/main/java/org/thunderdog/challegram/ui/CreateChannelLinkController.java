@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,12 +30,11 @@ import android.widget.Toast;
 import androidx.annotation.IdRes;
 import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.Log;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ComplexHeaderView;
@@ -44,6 +43,7 @@ import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.RippleSupport;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Keyboard;
@@ -58,10 +58,10 @@ import org.thunderdog.challegram.widget.RadioView;
 
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.TdConstants;
+import tgx.td.ChatId;
+import tgx.td.TdConstants;
 
-public class CreateChannelLinkController extends ViewController<CreateChannelLinkController.Args> implements View.OnClickListener, Client.ResultHandler, Unlockable {
+public class CreateChannelLinkController extends ViewController<CreateChannelLinkController.Args> implements View.OnClickListener, Unlockable {
   public static class Args {
     private TdApi.Chat chat;
     private ImageFile photo;
@@ -118,7 +118,7 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
     iconView.setScaleType(ImageView.ScaleType.CENTER);
     iconView.setImageResource(R.drawable.baseline_link_24);
     iconView.setColorFilter(Theme.iconColor());
-    addThemeFilterListener(iconView, R.id.theme_color_icon);
+    addThemeFilterListener(iconView, ColorId.icon);
     iconView.setLayoutParams(new LinearLayout.LayoutParams(Screen.dp(24f), Screen.dp(46f)));
 
     LinearLayout.LayoutParams params;
@@ -168,11 +168,7 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
     headerView.initWithController(this, true);
     headerView.setInnerMargins(Screen.dp(56f), 0);
     headerView.setText(chat.title, Lang.plural(R.string.xMembers, 1));
-    if (photo == null) {
-      headerView.setAvatarPlaceholder(tdlib.chatPlaceholder(chat, true, ComplexHeaderView.getBaseAvatarRadiusDp(), null));
-    } else {
-      headerView.setAvatar(photo);
-    }
+    headerView.getAvatarReceiver().requestChat(tdlib, chat != null ? chat.id : 0, AvatarReceiver.Options.NONE);
 
     final Runnable scroller = () -> scrollView.fullScroll(View.FOCUS_DOWN);
 
@@ -184,7 +180,7 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
       }
     };
     scrollView.setHeaderView(headerView);
-    ViewSupport.setThemedBackground(scrollView, R.id.theme_color_filling, this);
+    ViewSupport.setThemedBackground(scrollView, ColorId.filling, this);
     scrollView.addView(contentView);
     scrollView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     return scrollView;
@@ -213,25 +209,21 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
 
   @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_publicChannel: {
-        if (privateRadio.isChecked()) {
-          privateRadio.toggleChecked();
-          publicRadio.toggleChecked();
-          updateLink();
-          hintView.setText(Lang.getString(R.string.ChannelUsernameHelp));
-        }
-        break;
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_publicChannel) {
+      if (privateRadio.isChecked()) {
+        privateRadio.toggleChecked();
+        publicRadio.toggleChecked();
+        updateLink();
+        hintView.setText(Lang.getString(R.string.ChannelUsernameHelp));
       }
-      case R.id.btn_privateChannel: {
-        if (publicRadio.isChecked()) {
-          username = linkView.getSuffix();
-          publicRadio.toggleChecked();
-          privateRadio.toggleChecked();
-          updateLink();
-          hintView.setText(Lang.getString(R.string.ChannelPrivateLinkHelp));
-        }
-        break;
+    } else if (viewId == R.id.btn_privateChannel) {
+      if (publicRadio.isChecked()) {
+        username = linkView.getSuffix();
+        publicRadio.toggleChecked();
+        privateRadio.toggleChecked();
+        updateLink();
+        hintView.setText(Lang.getString(R.string.ChannelPrivateLinkHelp));
       }
     }
   }
@@ -318,33 +310,24 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
   private void loadInviteLink () {
     if (!linkRequested) {
       linkRequested = true;
-      tdlib.getPrimaryChatInviteLink(chat.id, this);
+      tdlib.getPrimaryChatInviteLink(chat.id, (chatInviteLink, error) -> {
+        if (error != null) {
+          UI.showError(error);
+        } else {
+          inviteLink = StringUtils.urlWithoutProtocol(chatInviteLink.inviteLink);
+          for (String host : TdConstants.TME_HOSTS) {
+            if (inviteLink.startsWith(host)) {
+              inviteLink = inviteLink.substring(host.length() + 1);
+              break;
+            }
+          }
+          runOnUiThreadOptional(this::updateLink);
+        }
+      });
     }
   }
 
   private String inviteLink;
-
-  @Override
-  public void onResult (TdApi.Object object) {
-    switch (object.getConstructor()) {
-      case TdApi.ChatInviteLink.CONSTRUCTOR: {
-        inviteLink = StringUtils.urlWithoutProtocol(((TdApi.ChatInviteLink) object).inviteLink);
-        for (String host : TdConstants.TELEGRAM_HOSTS) {
-          if (inviteLink.startsWith(host)) {
-            inviteLink = inviteLink.substring(host.length() + 1);
-            break;
-          }
-        }
-
-        UI.post(() -> updateLink());
-        break;
-      }
-      case TdApi.Error.CONSTRUCTOR: {
-        UI.showError(object);
-        break;
-      }
-    }
-  }
 
   @Override
   public View getCustomHeaderCell () {
@@ -404,22 +387,12 @@ public class CreateChannelLinkController extends ViewController<CreateChannelLin
     }
     usernameRequested = true;
     setEnabled(false);
-    tdlib.client().send(new TdApi.SetSupergroupUsername(getSupergroupId(), username), object -> {
-      switch (object.getConstructor()) {
-        case TdApi.Ok.CONSTRUCTOR: {
-          UI.post(this::nextStep);
-          break;
-        }
-        case TdApi.Error.CONSTRUCTOR: {
-          UI.showError(object);
-          UI.unlock(CreateChannelLinkController.this);
-          break;
-        }
-        default: {
-          Log.unexpectedTdlibResponse(object, TdApi.SetSupergroupUsername.class, TdApi.Ok.class);
-          UI.unlock(CreateChannelLinkController.this);
-          break;
-        }
+    tdlib.send(new TdApi.SetSupergroupUsername(getSupergroupId(), username), (ok, error) -> {
+      if (error != null) {
+        UI.showError(error);
+        UI.unlock(CreateChannelLinkController.this);
+      } else {
+        UI.post(this::nextStep);
       }
     });
   }

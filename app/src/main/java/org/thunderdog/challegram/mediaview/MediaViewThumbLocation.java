@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,16 +19,15 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Paints;
 
 public class MediaViewThumbLocation {
   public int left, top, right, bottom;
   public int clipLeft, clipTop, clipRight, clipBottom;
-  public int topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius;
+  public float topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius;
 
   private static final int FLAG_NO_BOUNCE = 0x01;
   private static final int FLAG_NO_PLACEHOLDER = 0x02;
@@ -98,8 +97,8 @@ public class MediaViewThumbLocation {
     return bottom - clipBottom;
   }
 
-  private @ThemeColorId
-  int colorId = R.id.theme_color_filling;
+  private @ColorId
+  int colorId = ColorId.filling;
 
   public void setColorId (int colorId) {
     this.colorId = colorId;
@@ -115,7 +114,7 @@ public class MediaViewThumbLocation {
 
   private Path path;
 
-  public void setRoundings (int topLeftRadius, int topRightRadius, int bottomRightRadius, int bottomLeftRadius) {
+  public void setRoundings (float topLeftRadius, float topRightRadius, float bottomRightRadius, float bottomLeftRadius) {
     if (this.topLeftRadius != topLeftRadius || this.topRightRadius != topRightRadius || this.bottomRightRadius != bottomRightRadius || this.bottomLeftRadius != bottomLeftRadius) {
       this.topLeftRadius = topLeftRadius;
       this.topRightRadius = topRightRadius;
@@ -145,7 +144,7 @@ public class MediaViewThumbLocation {
   }
 
   private int lastLeft, lastTop, lastRight, lastBottom;
-  private int lastTopLeft, lastTopRight, lastBottomRight, lastBottomLeft;
+  private float lastTopLeft, lastTopRight, lastBottomRight, lastBottomLeft;
 
   private void preparePath (int left, int top, int right, int bottom) {
     if (path == null ||
@@ -173,7 +172,7 @@ public class MediaViewThumbLocation {
     }
   }
 
-  public int getRadius () {
+  public float getRadius () {
     return bottomLeftRadius == bottomRightRadius && bottomLeftRadius == topLeftRadius && bottomLeftRadius == topRightRadius ? bottomLeftRadius : 0;
   }
 

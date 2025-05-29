@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@ import android.view.View;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -113,7 +114,7 @@ public class VoiceVideoButtonView extends View implements FactorAnimator.Target,
   private Paint paint;
 
   private Paint getIconPaint () {
-    int color = Theme.getColor(R.id.theme_color_circleButtonRegularIcon);
+    int color = Theme.getColor(ColorId.circleButtonRegularIcon);
     if (paint == null || paint.getColor() != color)
       paint = Paints.createPorterDuffPaint(paint, color);
     return paint;

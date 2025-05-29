@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,22 +16,21 @@ package org.thunderdog.challegram.data;
 
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.Log;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Background;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextPart;
 
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.MessageId;
+import tgx.td.MessageId;
 
-public class TGSourceChat extends TGSource implements Client.ResultHandler, Runnable {
+public class TGSourceChat extends TGSource implements Runnable {
   private final long chatId;
   private final String authorSignature;
   private final long messageId;
@@ -39,14 +38,14 @@ public class TGSourceChat extends TGSource implements Client.ResultHandler, Runn
   private String title;
   private TdApi.ChatPhotoInfo photo;
 
-  public TGSourceChat (TGMessage msg, TdApi.MessageForwardOriginChannel channel) {
+  public TGSourceChat (TGMessage msg, TdApi.MessageOriginChannel channel) {
     super(msg);
     this.chatId = channel.chatId;
     this.authorSignature = channel.authorSignature;
     this.messageId = channel.messageId;
   }
 
-  public TGSourceChat (TGMessage msg, TdApi.MessageForwardOriginChat chat) {
+  public TGSourceChat (TGMessage msg, TdApi.MessageOriginChat chat) {
     super(msg);
     this.chatId = chat.senderChatId;
     this.authorSignature = chat.authorSignature;
@@ -60,13 +59,29 @@ public class TGSourceChat extends TGSource implements Client.ResultHandler, Runn
       if (chat != null) {
         setChat(chat);
       } else {
-        msg.tdlib().client().send(new TdApi.GetChat(chatId), this);
+        msg.tdlib().send(new TdApi.GetChat(chatId), (remoteChat, error) -> {
+          if (error != null) {
+            this.title = Lang.getString(R.string.ChannelPrivate);
+            this.isReady = true;
+            this.photo = null;
+            Background.instance().post(() -> {
+              msg.rebuildForward();
+              msg.postInvalidate();
+            });
+          } else {
+            setChat(msg.tdlib().chat(remoteChat.id));
+            Background.instance().post(() -> {
+              msg.rebuildForward();
+              msg.postInvalidate();
+            });
+          }
+        });
       }
     }
   }
 
   private void setChat (TdApi.Chat chat) {
-    if (!StringUtils.isEmpty(authorSignature) && !(msg.forceForwardedInfo())) {
+    if (!StringUtils.isEmpty(authorSignature) && !(msg.forceForwardOrImportInfo())) {
       this.title = Lang.getString(R.string.format_channelAndSignature, chat.title, authorSignature);
     } else {
       this.title = chat.title;
@@ -79,34 +94,6 @@ public class TGSourceChat extends TGSource implements Client.ResultHandler, Runn
   public void run () {
     msg.rebuildForward();
     msg.postInvalidate();
-  }
-
-  @Override
-  public void onResult (TdApi.Object object) {
-    switch (object.getConstructor()) {
-      case TdApi.Chat.CONSTRUCTOR: {
-        setChat(msg.tdlib().chat(((TdApi.Chat) object).id));
-        Background.instance().post(() -> {
-          msg.rebuildForward();
-          msg.postInvalidate();
-        });
-        break;
-      }
-      case TdApi.Error.CONSTRUCTOR: {
-        this.title = Lang.getString(R.string.ChannelPrivate);
-        this.isReady = true;
-        this.photo = null;
-        Background.instance().post(() -> {
-          msg.rebuildForward();
-          msg.postInvalidate();
-        });
-        break;
-      }
-      default: {
-        Log.unexpectedTdlibResponse(object, TdApi.GetChat.class, TdApi.Chat.class);
-        break;
-      }
-    }
   }
 
   @Override
@@ -133,12 +120,16 @@ public class TGSourceChat extends TGSource implements Client.ResultHandler, Runn
   }
 
   @Override
-  public ImageFile getAvatar () {
-    return photo != null ? TD.getAvatar(msg.tdlib, photo) : null;
+  public TdlibAccentColor getAuthorAccentColor () {
+    return msg.tdlib().chatAccentColor(chatId);
   }
 
   @Override
-  public AvatarPlaceholder.Metadata getAvatarPlaceholderMetadata () {
-    return msg.tdlib().chatPlaceholderMetadata(chatId, false);
+  public void requestAvatar (AvatarReceiver receiver) {
+    if (msg.tdlib.isSelfChat(chatId)) {
+      receiver.requestUser(msg.tdlib, msg.tdlib.chatUserId(chatId), AvatarReceiver.Options.NONE);
+    } else {
+      receiver.requestChat(msg.tdlib, chatId, AvatarReceiver.Options.NONE);
+    }
   }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,15 +18,14 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.view.View;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Paints;
 
 import me.vkryl.core.ColorUtils;
 
 public class RippleRevealView extends View {
-  private @ThemeColorId int colorId = R.id.theme_color_filling;
+  private @ColorId int colorId = ColorId.filling;
   private float revealFactor;
 
   public RippleRevealView (Context context) {

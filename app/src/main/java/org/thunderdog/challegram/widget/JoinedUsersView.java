@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,8 +31,8 @@ import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
@@ -86,7 +86,7 @@ public class JoinedUsersView extends View implements Destroyable, FactorAnimator
       setUserIdsImpl(userIds, count, false);
     }
 
-    this.inviteText = Strings.replaceBoldTokens(Lang.getString(R.string.NoChatsText), ThemeColorId.NONE);
+    this.inviteText = Strings.replaceBoldTokens(Lang.getString(R.string.NoChatsText), ColorId.NONE);
 
     tdlib.contacts().addAvatarExpector(this);
   }
@@ -349,7 +349,7 @@ public class JoinedUsersView extends View implements Destroyable, FactorAnimator
   // Drawing
 
   private void drawPlaceholder (Canvas c, AvatarInfo info, int cx, int cy, float factor) {
-    c.drawCircle(cx, cy, Screen.dp(AVATAR_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(factor, Theme.getColor(info.avatarColorId))));
+    c.drawCircle(cx, cy, Screen.dp(AVATAR_RADIUS), Paints.fillingPaint(ColorUtils.alphaColor(factor, info.accentColor.getPrimaryColor())));
     Paint paint = Paints.whiteMediumPaint(15f, info.letters.needFakeBold, false);
     paint.setAlpha((int) (255f * factor));
     c.drawText(info.letters.text, cx - info.lettersWidth15dp / 2, cy + Screen.dp(5.5f), paint);
@@ -438,7 +438,7 @@ public class JoinedUsersView extends View implements Destroyable, FactorAnimator
         c.scale(scale, scale, cx, centerY);
       }
       if (i == 4 && moreCounter != null) {
-        c.drawCircle(cx, centerY, avatarRadius, Paints.fillingPaint(ColorUtils.alphaColor(factor, Theme.getColor(R.id.theme_color_avatarSavedMessages))));
+        c.drawCircle(cx, centerY, avatarRadius, Paints.fillingPaint(ColorUtils.alphaColor(factor, Theme.getColor(ColorId.avatarSavedMessages))));
         Paint paint = Paints.whiteMediumPaint(COUNTER_MEDIUM_DP, false, false);
         paint.setAlpha((int) (255f * factor));
         int padding = Screen.dp(3f);

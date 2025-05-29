@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ import android.view.View;
 import android.webkit.WebView;
 import android.widget.LinearLayout;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.DoubleHeaderView;
@@ -76,12 +76,9 @@ public class GameController extends WebkitController<GameController.Args> implem
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_game: {
-        header.addForwardButton(menu, this);
-        header.addMoreButton(menu, this);
-        break;
-      }
+    if (id == R.id.menu_game) {
+      header.addForwardButton(menu, this);
+      header.addMoreButton(menu, this);
     }
   }
 
@@ -105,37 +102,29 @@ public class GameController extends WebkitController<GameController.Args> implem
 
   private void checkPlaying () {
     if (getArgumentsStrict().ownerController != null) {
-      getArgumentsStrict().ownerController.setBroadcastAction(isFocused() && !isDestroyed() && context.getActivityState() == UI.STATE_RESUMED ? TdApi.ChatActionStartPlayingGame.CONSTRUCTOR : TdApi.ChatActionCancel.CONSTRUCTOR);
+      getArgumentsStrict().ownerController.setBroadcastAction(isFocused() && !isDestroyed() && context.getActivityState() == UI.State.RESUMED ? TdApi.ChatActionStartPlayingGame.CONSTRUCTOR : TdApi.ChatActionCancel.CONSTRUCTOR);
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_more: {
-        showMore(new int[] {R.id.btn_openLink}, new String[] {Lang.getString(R.string.OpenInExternalApp)}, 0);
-        break;
-      }
-      case R.id.menu_btn_forward: {
-        if (getArguments() != null) {
-          Args args = getArgumentsStrict();
-          ShareController c = new ShareController(context, tdlib);
-          c.setArguments(new ShareController.Args(args.game, args.userId, args.message, false));
-          c.show();
-        }
-        break;
+    if (id == R.id.menu_btn_more) {
+      showMore(new int[] {R.id.btn_openLink}, new String[] {Lang.getString(R.string.OpenInExternalApp)}, 0);
+    } else if (id == R.id.menu_btn_forward) {
+      if (getArguments() != null) {
+        Args args = getArgumentsStrict();
+        ShareController c = new ShareController(context, tdlib);
+        c.setArguments(new ShareController.Args(args.game, args.userId, args.message, false));
+        c.show();
       }
     }
   }
 
   @Override
   public void onMoreItemPressed (int id) {
-    switch (id) {
-      case R.id.btn_openLink: {
-        if (getArguments() != null) {
-          Intents.openUri(getArguments().gameUrl);
-        }
-        break;
+    if (id == R.id.btn_openLink) {
+      if (getArguments() != null) {
+        Intents.openUri(getArguments().gameUrl);
       }
     }
   }

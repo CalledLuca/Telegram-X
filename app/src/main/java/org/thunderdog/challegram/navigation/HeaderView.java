@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,8 +48,8 @@ import org.thunderdog.challegram.component.base.SwitchDrawable;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeDeprecated;
 import org.thunderdog.challegram.theme.ThemeListenerList;
 import org.thunderdog.challegram.tool.Fonts;
@@ -61,7 +61,7 @@ import org.thunderdog.challegram.unsorted.Size;
 import org.thunderdog.challegram.util.ToggleDelegate;
 import org.thunderdog.challegram.v.HeaderEditText;
 import org.thunderdog.challegram.widget.ClearButton;
-import org.thunderdog.challegram.widget.NoScrollTextView;
+import org.thunderdog.challegram.widget.EmojiTextView;
 import org.thunderdog.challegram.widget.PopupLayout;
 
 import java.util.ArrayList;
@@ -145,7 +145,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
   }
 
   @Override
-  public void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     if (textTitle != null) {
       textTitle.invalidate();
     }
@@ -208,7 +208,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
 
   private int currentHeaderOffset = -1;
 
-  private int getCurrentHeaderOffset () {
+  public int getCurrentHeaderOffset () {
     return currentHeaderOffset != -1 ? currentHeaderOffset : 0;
   }
 
@@ -307,6 +307,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     if (!animating || preview.getHeaderColorId() == c.getHeaderColorId()) {
       filling.setColor(getHeaderColor(c, true));
       invalidateHeader();
+      backButton.invalidate();
     }
   }
 
@@ -647,11 +648,11 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     }
   }
 
-  public HeaderButton genButton (@IdRes int id, @DrawableRes int drawableRes, @ThemeColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width, OnClickListener listener) {
+  public HeaderButton genButton (@IdRes int id, @DrawableRes int drawableRes, @ColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width, OnClickListener listener) {
     return genButton(id, drawableRes, themeColorId, themeProvider, width, ThemeDeprecated.headerSelector(), listener);
   }
 
-  public HeaderButton genButton (@IdRes int id, @DrawableRes int image, @ThemeColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width, int resource, OnClickListener listener) {
+  public HeaderButton genButton (@IdRes int id, @DrawableRes int image, @ColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width, int resource, OnClickListener listener) {
     HeaderButton btn = new HeaderButton(getContext());
     btn.setButtonBackground(resource);
     btn.setId(id);
@@ -724,43 +725,43 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     return addDoneButton(menu, themeProvider, themeProvider.getHeaderIconColorId());
   }
 
-  public HeaderButton addDoneButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addDoneButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_done, R.drawable.baseline_check_24, colorId, themeProvider, Screen.dp(56f), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addReplyButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addReplyButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_reply, R.drawable.baseline_reply_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerSelector(), this).setThemeColorId(colorId), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addEditButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addEditButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_edit, R.drawable.baseline_edit_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addCopyButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addCopyButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_copy, R.drawable.baseline_content_copy_24, colorId, themeProvider, Screen.dp(50f), ThemeDeprecated.headerSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addViewButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addViewButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_view, R.drawable.baseline_visibility_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerLightSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addRetryButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addRetryButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_retry, R.drawable.baseline_repeat_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addDeleteButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addDeleteButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_delete, R.drawable.baseline_delete_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
@@ -770,7 +771,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     return addForwardButton(menu, themeProvider, themeProvider.getHeaderIconColorId());
   }
 
-  public HeaderButton addForwardButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addForwardButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
     menu.addView(button = genButton(R.id.menu_btn_forward, R.drawable.baseline_forward_24, colorId, themeProvider, Screen.dp(52f), ThemeDeprecated.headerSelector(), this), Lang.rtl() ? 0 : -1);
     return button;
@@ -780,19 +781,21 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     return addMoreButton(menu, themeProvider, themeProvider.getHeaderIconColorId());
   }
 
-  public HeaderButton addMoreButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
-    HeaderButton button;
-    menu.addView(button = genButton(R.id.menu_btn_more, R.drawable.baseline_more_vert_24, colorId, themeProvider, Screen.dp(49f), this), Lang.rtl() ? 0 : -1);
-    return button;
+  public HeaderButton addMoreButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
+    return addButton(menu, R.id.menu_btn_more, R.drawable.baseline_more_vert_24, 49f, themeProvider, colorId);
   }
 
   public HeaderButton addSearchButton (LinearLayout menu, @NonNull ViewController<?> themeProvider) {
     return addSearchButton(menu, themeProvider, themeProvider.getHeaderIconColorId());
   }
 
-  public HeaderButton addSearchButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ThemeColorId int colorId) {
+  public HeaderButton addSearchButton (LinearLayout menu, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
+    return addButton(menu, R.id.menu_btn_search, R.drawable.baseline_search_24, 49f, themeProvider, colorId);
+  }
+
+  public HeaderButton addButton (LinearLayout menu, @IdRes int buttonId, @DrawableRes int iconRes, float widthDp, @Nullable ViewController<?> themeProvider, @ColorId int colorId) {
     HeaderButton button;
-    menu.addView(button = genButton(R.id.menu_btn_search, R.drawable.baseline_search_24, colorId, themeProvider, Screen.dp(49f), this), Lang.rtl() ? 0 : -1);
+    menu.addView(button = genButton(buttonId, iconRes, colorId, themeProvider, Screen.dp(widthDp), this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
@@ -817,13 +820,13 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
 
   // Buttons core
 
-  public HeaderButton addButton (LinearLayout menu, @IdRes int id, @DrawableRes int drawableRes, @ThemeColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width) {
+  public HeaderButton addButton (LinearLayout menu, @IdRes int id, @DrawableRes int drawableRes, @ColorId int themeColorId, @Nullable ViewController<?> themeProvider, int width) {
     HeaderButton button;
     menu.addView(button = genButton(id, drawableRes, themeColorId, themeProvider, width, this), Lang.rtl() ? 0 : -1);
     return button;
   }
 
-  public HeaderButton addButton (LinearLayout menu, @IdRes int id, @ThemeColorId int themeColorId, @Nullable ViewController<?> themeProvider, @DrawableRes int drawableRes, int width, int resource) {
+  public HeaderButton addButton (LinearLayout menu, @IdRes int id, @ColorId int themeColorId, @Nullable ViewController<?> themeProvider, @DrawableRes int drawableRes, int width, int resource) {
     HeaderButton button;
     menu.addView(button = genButton(id, drawableRes, themeColorId, themeProvider, width, resource, this), Lang.rtl() ? 0 : -1);
     return button;
@@ -837,7 +840,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     return addClearButton(menu, c.getHeaderIconColorId(), c.getBackButtonResource());
   }
 
-  public ClearButton addClearButton (LinearLayout menu, @ThemeColorId int colorId, int background) {
+  public ClearButton addClearButton (LinearLayout menu, @ColorId int colorId, int background) {
     ClearButton button;
     button = new ClearButton(getContext());
     button.setId(R.id.menu_btn_clear);
@@ -868,7 +871,8 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
   public TextView genTextTitle (Context context) {
     FrameLayoutFix.LayoutParams params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | (Lang.rtl() ? Gravity.RIGHT : Gravity.LEFT));
     params.topMargin = Screen.dp(15f) + getCurrentHeaderOffset();
-    TextView text = new NoScrollTextView(context);
+    EmojiTextView text = new EmojiTextView(context);
+    text.setScrollDisabled(true);
     text.setTag(this);
     text.setMovementMethod(LinkMovementMethod.getInstance());
     text.setHighlightColor(Theme.textLinkHighlightColor());
@@ -948,7 +952,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
 
   // Counter
 
-  public static CounterHeaderView genCounterHeader (Context context, @ThemeColorId int colorId) {
+  public static CounterHeaderView genCounterHeader (Context context, @ColorId int colorId) {
     FrameLayoutFix.LayoutParams params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.WRAP_CONTENT, Screen.dp(53f), Gravity.TOP | (Lang.rtl() ? Gravity.RIGHT : Gravity.LEFT));
     if (Lang.rtl()) {
       params.rightMargin = Screen.dp(68f);
@@ -973,15 +977,15 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
       params.leftMargin = Screen.dp(68f);
     }
     HeaderEditText view = HeaderEditText.createStyled(parent, isLight);
-    view.setTextColor(Theme.getColor(R.id.theme_color_headerText));
+    view.setTextColor(Theme.getColor(ColorId.headerText));
     if (themeProvider != null)
-      themeProvider.addThemeHighlightColorListener(view, R.id.theme_color_textSelectionHighlight);
+      themeProvider.addThemeHighlightColorListener(view, ColorId.textSelectionHighlight);
     view.checkRtl();
     if (themeProvider != null)
-      themeProvider.addThemeTextColorListener(view, R.id.theme_color_headerText);
+      themeProvider.addThemeTextColorListener(view, ColorId.headerText);
     view.setHintTextColor(ColorUtils.alphaColor(Theme.HEADER_TEXT_DECENT_ALPHA, Theme.headerTextColor()));
     if (themeProvider != null)
-      themeProvider.addThemeHintTextColorListener(view, R.id.theme_color_headerText).setAlpha(Theme.HEADER_TEXT_DECENT_ALPHA);
+      themeProvider.addThemeHintTextColorListener(view, ColorId.headerText).setAlpha(Theme.HEADER_TEXT_DECENT_ALPHA);
     view.setLayoutParams(params);
     return view;
   }
@@ -999,11 +1003,11 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     }
     HeaderEditText view = HeaderEditText.createGreyStyled(parent);
     view.setTextColor(Theme.textAccentColor());
-    themeProvider.addThemeHighlightColorListener(view, R.id.theme_color_textSelectionHighlight);
+    themeProvider.addThemeHighlightColorListener(view, ColorId.textSelectionHighlight);
     view.checkRtl();
-    themeProvider.addThemeTextColorListener(view, R.id.theme_color_text);
+    themeProvider.addThemeTextColorListener(view, ColorId.text);
     view.setHintTextColor(Theme.textDecentColor());
-    themeProvider.addThemeHintTextColorListener(view, R.id.theme_color_textLight);
+    themeProvider.addThemeHintTextColorListener(view, ColorId.textLight);
     view.setLayoutParams(params);
     return view;
   }
@@ -1058,8 +1062,12 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     }
     PopupLayout popupLayout = new PopupLayout(getContext());
     popupLayout.init(true);
-    popupLayout.setNeedRootInsets();
-    popupLayout.setOverlayStatusBar(true);
+    if (!isLayered) {
+      popupLayout.setNeedRootInsets();
+      popupLayout.setOverlayStatusBar(true);
+    } else {
+      popupLayout.setIgnoreAllInsets(true);
+    }
     /*if (!isLayered) {
       popupLayout.setNeedRootInsets();
     }*/
@@ -1670,7 +1678,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
     } else if (isOwningStack && stack != null && !stack.isEmpty()) {
       c = stack.getCurrent();
     }
-    if (c != null && getBackButton(c, true) == BackHeaderButton.TYPE_BACK && (c.getKeyboardState() || c.needPreventiveKeyboardHide())) {
+    if (c != null && getBackButton(c, true) == BackHeaderButton.TYPE_BACK && c.needHideKeyboardOnTouchBackButton() && (c.getKeyboardState() || c.needPreventiveKeyboardHide())) {
       c.hideSoftwareKeyboard();
     }
   }
@@ -1678,6 +1686,10 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
   private int transformMode;
 
   private void transform (final ViewController<?> controller, final int mode, int arg, final boolean open, boolean animated, final Runnable after) {
+    transform(controller, mode, arg, open, animated, after, true);
+  }
+
+  private void transform (final ViewController<?> controller, final int mode, int arg, final boolean open, boolean animated, final Runnable after, boolean needUpdateKeyboard) {
     this.transformMode = mode;
 
     openPreview(controller, null, open, MODE_FADE, translationFactor);
@@ -1701,7 +1713,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
       switch (mode) {
         case TRANSFORM_MODE_SEARCH: {
           controller.onLeaveSearchMode();
-          controller.updateSearchMode(false);
+          controller.updateSearchMode(false, needUpdateKeyboard);
           break;
         }
         case TRANSFORM_MODE_CUSTOM: {
@@ -1733,7 +1745,7 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
         } else {
           switch (mode) {
             case TRANSFORM_MODE_SEARCH: {
-              controller.updateSearchMode(true);
+              controller.updateSearchMode(true, needUpdateKeyboard);
               break;
             }
             case TRANSFORM_MODE_CUSTOM: {
@@ -1894,24 +1906,28 @@ public class HeaderView extends FrameLayoutFix implements View.OnClickListener, 
 
   // Search mode
 
-  public void openSearchMode () {
+  public void openSearchMode (boolean animated, boolean needUpdateKeyboard) {
     final ViewController<?> controller = stack.getCurrent();
 
     if (isAnimating || controller == null || controller.inTransformMode() || Color.alpha(overlayColor) > 0) {
       return;
     }
 
-    isAnimating = true;
+    isAnimating = animated;
     controller.enterSearchMode();
     translationFactor = 1f;
 
-    transform(controller, TRANSFORM_MODE_SEARCH, 0, true, true, null);
+    transform(controller, TRANSFORM_MODE_SEARCH, 0, true, animated, null, needUpdateKeyboard);
+  }
+
+  public void openSearchMode () {
+    openSearchMode(true, true);
   }
 
   public void closeSearchMode (boolean animated, Runnable after) {
     final ViewController<?> controller = stack.getCurrent();
 
-    if (isAnimating || controller == null || !controller.inSearchMode()) {
+    if (isAnimating || controller == null || !controller.inSearchMode() || !controller.onBeforeLeaveSearchMode()) {
       return;
     }
 

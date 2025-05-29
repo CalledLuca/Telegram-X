@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,14 +22,14 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.data.TGMessageBotInfo;
-import org.thunderdog.challegram.data.TGMessageChat;
 import org.thunderdog.challegram.data.TGMessageMedia;
 import org.thunderdog.challegram.data.TGMessagePoll;
+import org.thunderdog.challegram.data.ThreadInfo;
 import org.thunderdog.challegram.mediaview.data.MediaItem;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.v.MessagesRecyclerView;
@@ -38,7 +38,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import me.vkryl.td.MessageId;
+import tgx.td.MessageId;
 
 public class MessagesAdapter extends RecyclerView.Adapter<MessagesHolder> {
   private static final int INITIAL_CAPACITY = 15;
@@ -68,17 +68,11 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesHolder> {
     }
   }
 
-  public void invalidateServiceMessages () {
+  public void checkAllMessages () {
     if (items != null) {
       for (TGMessage message : items) {
-        if (message instanceof TGMessageChat) {
-          message.invalidate();
-        }
+        message.checkHighlightedText();
       }
-    }
-    MessagesRecyclerView recyclerView = manager.controller().getMessagesView();
-    if (recyclerView != null) {
-      recyclerView.invalidate();
     }
   }
 
@@ -479,11 +473,11 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesHolder> {
 
     TGMessage bottomMessage = top ? null : getMessage(0);
     TGMessage topMessage = top ? getMessage(getMessageCount() - 1) : null;
-    boolean sponsoredFlag = bottomMessage != null && bottomMessage.isSponsored();
+    boolean sponsoredFlag = bottomMessage != null && bottomMessage.isSponsoredMessage();
 
     if (sponsoredFlag && items != null) {
       for (TGMessage msg : items) {
-        if (!msg.isSponsored()) {
+        if (!msg.isSponsoredMessage()) {
           bottomMessage = msg;
           break;
         }
@@ -502,12 +496,17 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesHolder> {
       if ((!needScrollToBottom || message.isOld()) && !message.isOutgoing() && message.checkIsUnread(false) && !hasUnreadSeparator()) {
         TdApi.Chat chat = message.tdlib().chat(message.getChatId());
         if (chat != null) {
-          message.setShowUnreadBadge(chat.unreadCount > 0);
+          ThreadInfo messageThread = message.messagesController().getMessageThread();
+          if (messageThread != null) {
+            message.setShowUnreadBadge(messageThread.hasUnreadMessages(chat));
+          } else {
+            message.setShowUnreadBadge(chat.unreadCount > 0);
+          }
         }
       }
     }
     message.mergeWith(bottomMessage, !top || this.items == null || this.items.isEmpty());
-    if (bottomMessage != null && getBottomMessage().isSponsored() && !message.isSponsored()) {
+    if (bottomMessage != null && getBottomMessage().isSponsoredMessage() && !message.isSponsoredMessage()) {
       bottomMessage.setNeedExtraPresponsoredPadding(false);
       bottomMessage.setNeedExtraPadding(false);
       message.setNeedExtraPresponsoredPadding(true);
@@ -616,7 +615,12 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesHolder> {
           if (!message.isOutgoing() /*&& (message.isOld() || )*/ && message.checkIsUnread(false)) {
             TdApi.Chat chat = message.tdlib().chat(message.getChatId());
             if (chat != null) {
-              message.setShowUnreadBadge(chat.unreadCount > 0);
+              ThreadInfo messageThread = message.messagesController().getMessageThread();
+              if (messageThread != null) {
+                message.setShowUnreadBadge(messageThread.hasUnreadMessages(chat));
+              } else {
+                message.setShowUnreadBadge(chat.unreadCount > 0);
+              }
             }
             break;
           }

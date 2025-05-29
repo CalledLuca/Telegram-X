@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,11 +31,12 @@ import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.UiThread;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
+import org.thunderdog.challegram.data.ContentPreview;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.emoji.Emoji;
@@ -45,16 +46,18 @@ import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.telegram.TdlibDelegate;
 import org.thunderdog.challegram.telegram.TdlibManager;
 import org.thunderdog.challegram.telegram.TdlibNotificationGroup;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
+import org.thunderdog.challegram.util.StringList;
 import org.thunderdog.challegram.util.text.Text;
-import org.thunderdog.challegram.util.text.TextEntity;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.text.DateFormatSymbols;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -75,7 +78,9 @@ import me.vkryl.core.DateUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
+import tgx.td.MediaType;
+import tgx.td.Td;
 
 @SuppressWarnings(value = "SpellCheckingInspection")
 public class Lang {
@@ -148,15 +153,80 @@ public class Lang {
     return keys;
   }
 
+  public static String escapeMarkdown (String str) {
+    if (str == null || str.isEmpty()) {
+      return str;
+    }
+    return str.replaceAll("([_~|*`\\[\\]()])", "\u200B$1");
+  }
+
+  public static CharSequence escapeMarkdown (CharSequence cs) {
+    if (cs == null) {
+      return null;
+    }
+    if (cs instanceof String) {
+      return escapeMarkdown((String) cs);
+    }
+    SpannableStringBuilder b = new SpannableStringBuilder(cs);
+    int index = b.length() - 1;
+    while (index >= 0) {
+      char c = b.charAt(index);
+      if (needMarkdownEscape(c)) {
+        b.insert(index, "\u200B");
+      }
+      index--;
+    }
+    return b;
+  }
+
+  private static boolean needMarkdownEscape (char c) {
+    switch (c) {
+      case '_':
+      case '~':
+      case '|':
+      case '*':
+      case '`':
+      case '[': case ']': case '(': case ')':
+        return true;
+    }
+    return false;
+  }
+
+
+  private static void sanitizeMarkdownFormatArgs (Object[] args) {
+    if (args == null || args.length == 0) {
+      return;
+    }
+    for (int i = 0; i < args.length; i++) {
+      Object arg = args[i];
+      if (arg instanceof CharSequence) {
+        args[i] = escapeMarkdown((CharSequence) arg);
+      }
+    }
+  }
+
+  public static CharSequence getMarkdownPlural (TdlibDelegate context, @StringRes int resId, long num, Object... formatArgs) {
+    sanitizeMarkdownFormatArgs(formatArgs);
+    return Strings.buildMarkdown(context, Lang.plural(resId, num, formatArgs), null);
+  }
+
+  public static CharSequence getMarkdownPlural (TdlibDelegate context, @StringRes int resId, long num, SpanCreator spanCreator, Object... formatArgs) {
+    sanitizeMarkdownFormatArgs(formatArgs);
+    return Strings.buildMarkdown(context, Lang.plural(resId, num, spanCreator, formatArgs), null);
+  }
+
   public static CharSequence getMarkdownString (TdlibDelegate context, @StringRes int resId, SpanCreator spanCreator, Object... formatArgs) {
+    sanitizeMarkdownFormatArgs(formatArgs);
     return Strings.buildMarkdown(context, Lang.getString(resId, spanCreator, formatArgs), null);
   }
 
   public static CharSequence getMarkdownString (TdlibDelegate context, @StringRes int resId, Object... formatArgs) {
+    sanitizeMarkdownFormatArgs(formatArgs);
     return Strings.buildMarkdown(context, Lang.getString(resId, formatArgs), null);
   }
 
   public static CharSequence getMarkdownStringSecure (TdlibDelegate context, @StringRes int resId, Object... formatArgs) {
+    sanitizeMarkdownFormatArgs(formatArgs);
     return Strings.buildMarkdown(context, Lang.getStringSecure(resId, formatArgs), null);
   }
 
@@ -311,14 +381,6 @@ public class Lang {
     return getCharSequence(resource, formatArgs).toString();
   }
 
-  public static TextEntity[] toEntities (CharSequence text) {
-    if (text instanceof Spanned) {
-      TextEntity[] entities = ((Spanned) text).getSpans(0, text.length(), TextEntity.class);
-      return entities != null && entities.length > 0 ? entities : null;
-    }
-    return null;
-  }
-
   public static CharSequence boldify (CharSequence text) {
     return wrap(text, boldCreator());
   }
@@ -421,21 +483,15 @@ public class Lang {
     return (target, argStart, argEnd, argIndex, needFakeBold) -> TD.toSpan(entity);
   }
 
-  public static CustomTypefaceSpan newSenderSpan (TdlibDelegate context, TdApi.MessageSender senderId) {
-    switch (senderId.getConstructor()) {
-      case TdApi.MessageSenderUser.CONSTRUCTOR:
-        return newUserSpan(context, ((TdApi.MessageSenderUser) senderId).userId);
-      case TdApi.MessageSenderChat.CONSTRUCTOR:
-        return null; // TODO
+  public static Object newUserSpan (TdlibDelegate context, long userId) {
+    Object span = TD.toDisplaySpan(new TdApi.TextEntityTypeMentionName(userId));
+    if (span instanceof CustomTypefaceSpan) {
+      ((CustomTypefaceSpan) span).setOnClickListener((view, span1, clickedText) -> {
+        TD.handleLegacyClick(context, clickedText, span1);
+        return true;
+      });
     }
-    throw new UnsupportedOperationException(senderId.toString());
-  }
-
-  public static CustomTypefaceSpan newUserSpan (TdlibDelegate context, long userId) {
-    return TD.toDisplaySpan(new TdApi.TextEntityTypeMentionName(userId)).setOnClickListener((view, span, clickedText) -> {
-      context.tdlib().ui().openPrivateProfile(context, userId, null);
-      return true;
-    });
+    return span;
   }
 
   public static CharSequence getString (@StringRes int resId, SpanCreator creator, Object... formatArgs) {
@@ -696,7 +752,7 @@ public class Lang {
 
   private static String systemTime (long timeInMillis, int style, String fallbackPattern) {
     try {
-      String language = dateFormatLocale().getLanguage();
+      /*String language = dateFormatLocale().getLanguage();
       if (language.equals(Locale.getDefault().getLanguage())) {
         Formatter f = new Formatter(new StringBuilder(50), dateFormatLocale());
         return android.text.format.DateUtils.formatDateRange(UI.getAppContext(), f, timeInMillis, timeInMillis, android.text.format.DateUtils.FORMAT_SHOW_TIME).toString();
@@ -708,7 +764,7 @@ public class Lang {
         try {
           return android.icu.text.DateFormat.getTimeInstance(translateStyle(style, true), dateFormatLocale()).format(DateUtils.dateInstance(timeInMillis));
         } catch (Throwable ignored) { }
-      }
+      }*/
       return java.text.DateFormat.getTimeInstance(translateStyle(style, false), dateFormatLocale()).format(DateUtils.dateInstance(timeInMillis));
     } catch (Throwable ignored) {
       return dateFormat(fallbackPattern, timeInMillis);
@@ -1006,18 +1062,23 @@ public class Lang {
     }
     String text = TD.getTextFromMessageSpoilerless(message);
     if (!needPerson) {
-      if (StringUtils.isEmpty(text))
-        text = Lang.lowercase(TD.buildShortPreview(tdlib, message, true));
+      if (StringUtils.isEmpty(text)) {
+        ContentPreview preview = ContentPreview.getNotificationPreview(tdlib, message.chatId, message, true);
+        text = Lang.lowercase(preview.buildText(false));
+      }
       return Lang.getString(R.string.format_pinned, text);
     }
     if (userName == null) {
-      if (StringUtils.isEmpty(text))
-        text = Lang.lowercase(TD.buildShortPreview(tdlib, message, true));
+      if (StringUtils.isEmpty(text)) {
+        ContentPreview preview = ContentPreview.getNotificationPreview(tdlib, message.chatId, message, true);
+        text = Lang.lowercase(preview.buildText(false));
+      }
       return Lang.getString(R.string.NewPinnedMessage, text);
     }
     if (!StringUtils.isEmpty(text)) {
       return Lang.getString(R.string.ActionPinnedText, userName, text);
     }
+    String format = null;
     int res = R.string.ActionPinnedNoText;
     switch (message.content.getConstructor()) {
       case TdApi.MessageAnimation.CONSTRUCTOR:
@@ -1037,8 +1098,35 @@ public class Lang {
       case TdApi.MessageExpiredVideo.CONSTRUCTOR:
         res = R.string.ActionPinnedVideo;
         break;
+      case TdApi.MessagePaidMedia.CONSTRUCTOR: {
+        TdApi.MessagePaidMedia paidMedia = (TdApi.MessagePaidMedia) message.content;
+        MediaType type = MediaType.valueOf(paidMedia);
+        if (paidMedia.media.length == 1) {
+          switch (type) {
+            case PHOTOS: res = R.string.ActionPinnedPaidPhoto; break;
+            case VIDEOS: res = R.string.ActionPinnedPaidVideo; break;
+            case MIXED: res = message != null && message.isChannelPost ? R.string.ActionPinnedPaidPost : R.string.ActionPinnedPaidContent; break;
+            default: throw new UnsupportedOperationException();
+          }
+        } else {
+          int pluralRes;
+          switch (type) {
+            case PHOTOS: pluralRes = R.string.ActionPinnedXPaidPhotos; break;
+            case VIDEOS: pluralRes = R.string.ActionPinnedXPaidVideos; break;
+            case MIXED: pluralRes = R.string.ActionPinnedXPaidMedia; break;
+            default: throw new UnsupportedOperationException();
+          }
+          format = Lang.plural(pluralRes, paidMedia.media.length);
+        }
+        break;
+      }
       case TdApi.MessageVoiceNote.CONSTRUCTOR:
+      case TdApi.MessageExpiredVoiceNote.CONSTRUCTOR:
         res = R.string.ActionPinnedVoice;
+        break;
+      case TdApi.MessageVideoNote.CONSTRUCTOR:
+      case TdApi.MessageExpiredVideoNote.CONSTRUCTOR:
+        res = R.string.ActionPinnedRound;
         break;
       case TdApi.MessageContact.CONSTRUCTOR:
         res = R.string.ActionPinnedContact;
@@ -1055,8 +1143,8 @@ public class Lang {
       case TdApi.MessageVenue.CONSTRUCTOR:
         res = R.string.ActionPinnedGeo;
         break;
-      case TdApi.MessageVideoNote.CONSTRUCTOR:
-        res = R.string.ActionPinnedRound;
+      case TdApi.MessageStory.CONSTRUCTOR:
+        res = R.string.ActionPinnedStory;
         break;
       case TdApi.MessageGame.CONSTRUCTOR: {
         String gameName = TD.getGameName(((TdApi.MessageGame) message.content).game, true);
@@ -1065,34 +1153,74 @@ public class Lang {
         res = R.string.ActionPinnedGameNoName;
         break;
       }
+      case TdApi.MessageText.CONSTRUCTOR:
+      case TdApi.MessageAnimatedEmoji.CONSTRUCTOR:
+      case TdApi.MessageDice.CONSTRUCTOR:
+      case TdApi.MessageGameScore.CONSTRUCTOR:
+      case TdApi.MessageInvoice.CONSTRUCTOR:
+      case TdApi.MessageGiftedPremium.CONSTRUCTOR:
+      case TdApi.MessageGiftedStars.CONSTRUCTOR:
+      case TdApi.MessageGift.CONSTRUCTOR:
+      case TdApi.MessageUpgradedGift.CONSTRUCTOR:
+      case TdApi.MessageRefundedUpgradedGift.CONSTRUCTOR:
+      case TdApi.MessagePremiumGiftCode.CONSTRUCTOR:
+      case TdApi.MessageGiveawayCreated.CONSTRUCTOR:
+      case TdApi.MessageGiveawayCompleted.CONSTRUCTOR:
+      case TdApi.MessageGiveawayWinners.CONSTRUCTOR:
+      case TdApi.MessageGiveaway.CONSTRUCTOR:
+      case TdApi.MessageGiveawayPrizeStars.CONSTRUCTOR:
+      case TdApi.MessageChatBoost.CONSTRUCTOR:
       case TdApi.MessageBasicGroupChatCreate.CONSTRUCTOR:
       case TdApi.MessageCall.CONSTRUCTOR:
+      case TdApi.MessageGroupCall.CONSTRUCTOR:
       case TdApi.MessageChatAddMembers.CONSTRUCTOR:
       case TdApi.MessageChatChangePhoto.CONSTRUCTOR:
       case TdApi.MessageChatChangeTitle.CONSTRUCTOR:
       case TdApi.MessageChatDeleteMember.CONSTRUCTOR:
       case TdApi.MessageChatDeletePhoto.CONSTRUCTOR:
       case TdApi.MessageChatJoinByLink.CONSTRUCTOR:
-      case TdApi.MessageChatSetTtl.CONSTRUCTOR:
+      case TdApi.MessageChatSetMessageAutoDeleteTime.CONSTRUCTOR:
       case TdApi.MessageChatUpgradeFrom.CONSTRUCTOR:
       case TdApi.MessageChatUpgradeTo.CONSTRUCTOR:
       case TdApi.MessageContactRegistered.CONSTRUCTOR:
       case TdApi.MessageCustomServiceAction.CONSTRUCTOR:
       case TdApi.MessageSupergroupChatCreate.CONSTRUCTOR:
-      case TdApi.MessageText.CONSTRUCTOR:
       case TdApi.MessageUnsupported.CONSTRUCTOR:
-      case TdApi.MessageGameScore.CONSTRUCTOR:
-      case TdApi.MessageInvoice.CONSTRUCTOR:
       case TdApi.MessagePassportDataReceived.CONSTRUCTOR:
       case TdApi.MessagePassportDataSent.CONSTRUCTOR:
       case TdApi.MessagePaymentSuccessful.CONSTRUCTOR:
       case TdApi.MessagePaymentSuccessfulBot.CONSTRUCTOR:
+      case TdApi.MessagePaymentRefunded.CONSTRUCTOR:
+      case TdApi.MessagePaidMessagesRefunded.CONSTRUCTOR:
+      case TdApi.MessagePaidMessagePriceChanged.CONSTRUCTOR:
       case TdApi.MessagePinMessage.CONSTRUCTOR:
       case TdApi.MessageScreenshotTaken.CONSTRUCTOR:
-      case TdApi.MessageWebsiteConnected.CONSTRUCTOR:
+      case TdApi.MessageBotWriteAccessAllowed.CONSTRUCTOR:
+      case TdApi.MessageChatJoinByRequest.CONSTRUCTOR:
+      case TdApi.MessageChatSetBackground.CONSTRUCTOR:
+      case TdApi.MessageChatSetTheme.CONSTRUCTOR:
+      case TdApi.MessageChatShared.CONSTRUCTOR:
+      case TdApi.MessageForumTopicCreated.CONSTRUCTOR:
+      case TdApi.MessageForumTopicEdited.CONSTRUCTOR:
+      case TdApi.MessageForumTopicIsClosedToggled.CONSTRUCTOR:
+      case TdApi.MessageForumTopicIsHiddenToggled.CONSTRUCTOR:
+      case TdApi.MessageInviteVideoChatParticipants.CONSTRUCTOR:
+      case TdApi.MessageProximityAlertTriggered.CONSTRUCTOR:
+      case TdApi.MessageSuggestProfilePhoto.CONSTRUCTOR:
+      case TdApi.MessageUsersShared.CONSTRUCTOR:
+      case TdApi.MessageVideoChatEnded.CONSTRUCTOR:
+      case TdApi.MessageVideoChatScheduled.CONSTRUCTOR:
+      case TdApi.MessageVideoChatStarted.CONSTRUCTOR:
+      case TdApi.MessageWebAppDataReceived.CONSTRUCTOR:
+      case TdApi.MessageWebAppDataSent.CONSTRUCTOR:
         break;
+      default:
+        Td.assertMessageContent_235cea4f();
+        throw Td.unsupported(message.content);
     }
-    String format = Lang.getString(res);
+    if (format == null) {
+      format = Lang.getString(res);
+    }
     int startIndex = format.indexOf("**");
     int endIndex = startIndex != -1 ? format.indexOf("**", startIndex + 2) : -1;
     if (startIndex != -1 && endIndex != -1) {
@@ -1444,7 +1572,10 @@ public class Lang {
       while (matcher.find()) {
         int start = matcher.start();
         int end = matcher.end();
-        out.setSpan(new CustomTypefaceSpan(Fonts.getRobotoMedium(), R.id.theme_color_textNeutral).setEntityType(new TdApi.TextEntityTypeBold()).setFakeBold(Text.needFakeBold(str, start, end)), startIndex + start, startIndex + end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        CustomTypefaceSpan span = new CustomTypefaceSpan(Fonts.getRobotoMedium(), ColorId.textNeutral);
+        span.setTextEntityType(new TdApi.TextEntityTypeBold());
+        span.setFakeBold(Text.needFakeBold(str, start, end));
+        out.setSpan(span, startIndex + start, startIndex + end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
       if (num >= 0) {
         int index = StringUtils.indexOf(out, "%1$s", startIndex);
@@ -1470,7 +1601,7 @@ public class Lang {
         while (endIndex - spaceEndCount - 1 > startIndex && Strings.isWhitespace(out.charAt(endIndex - spaceEndCount - 1))) {
           spaceEndCount++;
         }
-        int color = 0xaaff0000; // U.alphaColor(.5f, Theme.getColor(R.id.theme_color_textNegativeAction));
+        int color = 0xaaff0000; // U.alphaColor(.5f, Theme.getColor(ColorId.textNegativeAction));
         if (spaceStartCount > 0) {
           out.setSpan(new BackgroundColorSpan(color), startIndex, startIndex + spaceStartCount, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
@@ -1757,6 +1888,10 @@ public class Lang {
     return getString(R.string.XofY, counter(R.string.XofY, x), counter(R.string.XofY, y));
   }
 
+  public static String getXofApproximateY (int x, int y) {
+    return getString(R.string.XofApproximateY, counter(R.string.XofApproximateY, x), counter(R.string.XofApproximateY, y));
+  }
+
   public static CharSequence pluralMembers (int members, int online, boolean isChannel) {
     if (online > 0) {
       final int membersRes, formatRes = R.string.format_membersAndOnline;
@@ -1854,7 +1989,7 @@ public class Lang {
     return systemDateWithoutYear(timeMs, STYLE_LONG, "d MMMM");
   }
 
-  private static String dateYearFull (long unixTime, TimeUnit unit) {
+  public static String dateYearFull (long unixTime, TimeUnit unit) {
     long timeMs = unit.toMillis(unixTime);
     return systemDate(timeMs, STYLE_LONG, "d MMMM yyyy");
   }
@@ -2264,12 +2399,62 @@ public class Lang {
 
   // Dates
 
+  public static CharSequence getBirthdate (@NonNull TdApi.Birthdate birthdate, boolean includeAge, boolean isSelf) {
+    Calendar c = Calendar.getInstance();
+    c.set(Calendar.DAY_OF_MONTH, birthdate.day);
+    c.set(Calendar.MONTH, birthdate.month - 1);
+    String date;
+    if (birthdate.year != 0) {
+      c.set(Calendar.YEAR, birthdate.year);
+      date = dateYearShort(c);
+    } else {
+      date = dateShort(c);
+    }
+    int ageYears = -1;
+    int daysTillBirthday = 0;
+    if (birthdate.year != 0) {
+      Calendar now = DateUtils.getNowCalendar();
+      ageYears = now.get(Calendar.YEAR) - c.get(Calendar.YEAR);
+      int today = now.get(Calendar.DAY_OF_YEAR);
+      int birthday = c.get(Calendar.DAY_OF_YEAR);
+      if (today < birthday) {
+        ageYears--;
+      }
+      daysTillBirthday = birthday - today;
+    }
+    if (includeAge && ageYears > 0) {
+      CharSequence age;
+      @StringRes int formatRes = R.string.format_birthdateAndAge;
+      if (daysTillBirthday == 1 && !isSelf) {
+        age = Lang.pluralBold(R.string.turnsTomorrow, ageYears + 1);
+        formatRes = R.string.format_birthdateAndTurns;
+      } else if (daysTillBirthday == 0) {
+        age = Lang.pluralBold(isSelf ? R.string.turnSelfToday : R.string.turnsToday, ageYears);
+        formatRes = R.string.format_birthdateAndTurns;
+      } else {
+        age = Lang.pluralBold(R.string.age, ageYears);
+      }
+      return Lang.getCharSequence(formatRes, date, age);
+    } else {
+      return date;
+    }
+  }
+
   public static String getDate (long unixDate, TimeUnit unit) {
     if (DateUtils.isThisYear(unixDate, unit)) {
       return dateFull(unixDate, unit);
     } else {
       return dateYearFull(unixDate, unit);
     }
+  }
+
+  public static String[] getMonths (Locale locale) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      try {
+        return android.icu.text.DateFormatSymbols.getInstance(locale).getMonths();
+      } catch (Throwable ignored) { }
+    }
+    return DateFormatSymbols.getInstance(locale).getMonths();
   }
 
   public static String getUntilDate (long unixTime, TimeUnit unit) {
@@ -3181,6 +3366,10 @@ public class Lang {
     return languageRtl;
   }
 
+  public static int reverseGravity () {
+    return rtl() ? Gravity.LEFT : Gravity.RIGHT;
+  }
+
   public static int gravity () {
     return rtl() ? Gravity.RIGHT : Gravity.LEFT;
   }
@@ -3191,6 +3380,10 @@ public class Lang {
 
   public static int gravity (int gravity) {
     return gravity() | gravity;
+  }
+
+  public static int reverseGravity (int gravity) {
+    return reverseGravity() | gravity;
   }
 
   private static void setLanguageAllowLowercase (boolean allowLowercase, boolean sendEvents) {
@@ -3767,5 +3960,72 @@ public class Lang {
     if (isDebug)
       return "[DEBUG] " + text;
     return text;
+  }
+
+
+  private static String[] supportedLanguagesForTranslateFiltred;
+
+  public static String[] getSupportedLanguagesForTranslate () {
+    if (supportedLanguagesForTranslateFiltred == null) {
+      final String[] supportedLanguagesForTranslate = new String[] {
+        "af", "sq", "am", "ar", "hy", "az", "eu", "be", "bn", "bs", "bg", "ca", "ceb", "zh-CN",
+        "zh", "zh-Hans", "zh-TW", "zh-Hant", "co", "hr", "cs", "da", "nl", "en", "eo", "et", "fi",
+        "fr", "fy", "gl", "ka", "de", "el", "gu", "ht", "ha", "haw", "he", "iw", "hi", "hmn", "hu",
+        "is", "ig", "id", "in", "ga", "it", "ja", "jv", "kn", "kk", "km", "rw", "ko", "ku", "ky",
+        "lo", "la", "lv", "lt", "lb", "mk", "mg", "ms", "ml", "mt", "mi", "mr", "mn", "my", "ne",
+        "no", "ny", "or", "ps", "fa", "pl", "pt", "pa", "ro", "ru", "sm", "gd", "sr", "st", "sn",
+        "sd", "si", "sk", "sl", "so", "es", "su", "sw", "sv", "tl", "tg", "ta", "tt", "te", "th",
+        "tr", "tk", "uk", "ur", "ug", "uz", "vi", "cy", "xh", "yi", "ji", "yo", "zu"
+      };
+
+      StringList list = new StringList(supportedLanguagesForTranslate.length);
+      for (String lang : supportedLanguagesForTranslate) {
+        if (Lang.getLanguageName(lang, null) != null) {
+          list.append(lang);
+        }
+      }
+      supportedLanguagesForTranslateFiltred = list.get();
+    }
+    return supportedLanguagesForTranslateFiltred;
+  }
+
+  public static @Nullable String getDefaultLanguageToTranslateV2 (@Nullable String sourceLanguage) {
+    ArrayList<String> recents = Settings.instance().getTranslateLanguageRecents();
+    for (String lang : recents) {
+      if (!StringUtils.equalsOrBothEmpty(lang, sourceLanguage)) {
+        return lang;
+      }
+    }
+    String appLanguage = Settings.instance().getLanguage().packInfo.pluralCode;
+    if (!StringUtils.equalsOrBothEmpty(appLanguage, sourceLanguage)) {
+      return appLanguage;
+    }
+
+    String systemLanguage = Locale.getDefault().getLanguage();
+    if (!StringUtils.equalsOrBothEmpty(systemLanguage, sourceLanguage)) {
+      return systemLanguage;
+    }
+
+    String[] notTranslatableLanguages = Settings.instance().getAllNotTranslatableLanguages();
+    for (String lang : notTranslatableLanguages) {
+      if (!StringUtils.equalsOrBothEmpty(lang, sourceLanguage)) {
+        return lang;
+      }
+    }
+
+    return null;
+  }
+
+  public static String getLanguageName (String code, String defaultName) {
+    if (code == null) {
+      return defaultName;
+    }
+
+    TdApi.LanguagePackInfo info = new TdApi.LanguagePackInfo();
+    if (fixLanguageCode(code, info)) {
+      return info.name;
+    }
+
+    return defaultName;
   }
 }

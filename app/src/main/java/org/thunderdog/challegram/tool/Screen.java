@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,12 +14,15 @@
  */
 package org.thunderdog.challegram.tool;
 
+import android.content.Context;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Display;
 import android.view.ViewConfiguration;
+import android.view.WindowManager;
 
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.component.chat.ReplyComponent;
@@ -44,10 +47,18 @@ public class Screen {
     RecordDurationView.resetSizes();
     TGWebPage.reset();
     SimplestCheckBox.reset();
+    _refreshRate = 0f;
     __statusBarHeight = null;
   }
 
-  private static float _lastDensity = -1f;
+  private static float _lastDensity = -1f, _refreshRate = 0f;
+
+  public static void checkRefreshRate () {
+    if (_refreshRate != 0) {
+      _refreshRate = 0;
+      refreshRate();
+    }
+  }
 
   public static boolean checkDensity () {
     return setDensity(UI.getResources().getDisplayMetrics().density);
@@ -68,6 +79,25 @@ public class Screen {
   public static float density () {
     checkDensity();
     return _lastDensity;
+  }
+
+  public static float refreshRate () {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      BaseActivity activity = UI.getUiContext();
+      if (activity != null) {
+        return activity.getDisplay().getRefreshRate();
+      }
+    }
+    if (_refreshRate != 0f) {
+      return _refreshRate;
+    }
+    WindowManager windowManager = (WindowManager) UI.getContext().getSystemService(Context.WINDOW_SERVICE);
+    if (windowManager != null) {
+      Display display = windowManager.getDefaultDisplay();
+      _refreshRate = display.getRefreshRate();
+      return _refreshRate;
+    }
+    return 60.0f;
   }
 
   public static int dp (float size) {
@@ -178,40 +208,29 @@ public class Screen {
 
   private static Point point;
 
-  /*public static int getDisplayWidth () {
-    if (UI.getUiContext() == null)
-      return 0;
-
-    Display display;
-
-    display = UI.getUiContext().getWindowManager().getDefaultDisplay();
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR2) {
-      if (point == null)
-        point = new Point();
-      display.getSize(point);
-      return point.x;
-    } else {
-      //noinspection deprecation
-      return display.getWidth();
-    }
-  }*/
-
+  @SuppressWarnings("deprecation")
   public static int getDisplayHeight () {
     final BaseActivity context = UI.getUiContext();
     if (context == null) {
       return 0;
     }
+    WindowManager windowManager = context.getWindowManager();
 
-    Display display = context.getWindowManager().getDefaultDisplay();
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      try {
+        android.view.WindowMetrics windowMetrics = windowManager.getCurrentWindowMetrics();
+        Rect bounds = windowMetrics.getBounds();
+        return bounds.height();
+      } catch (Throwable ignored) { }
+    }
 
+    Display display = windowManager.getDefaultDisplay();
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR2) {
       if (point == null)
         point = new Point();
       display.getSize(point);
       return point.y;
     } else {
-      //noinspection deprecation
       return display.getHeight();
     }
   }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,9 +31,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.collection.SparseArrayCompat;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.Log;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.chat.MessageView;
@@ -43,9 +42,10 @@ import org.thunderdog.challegram.navigation.SettingsWrapBuilder;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
+import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
@@ -72,7 +72,7 @@ import me.vkryl.core.CurrencyUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.RunnableData;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class TGInlineKeyboard {
   private static final float CURRENCY_TEXT_SIZE_DP = 10f;
@@ -432,6 +432,8 @@ public class TGInlineKeyboard {
     private boolean needFakeBold;
 
     private @DrawableRes int customIconRes;
+    private boolean customIconReverse;
+    private @ColorId int customColorId;
     private boolean isCustom;
     private String currencyChar;
     private float currencyCharWidth;
@@ -500,6 +502,14 @@ public class TGInlineKeyboard {
       }
     }
 
+    public void setCustomIconReverse (boolean customIconReverse) {
+      this.customIconReverse = customIconReverse;
+    }
+
+    public void setCustomColorId (int customColorId) {
+      this.customColorId = customColorId;
+    }
+
     private int row = -1, column = -1;
 
     private boolean useWhiteMode () {
@@ -537,7 +547,7 @@ public class TGInlineKeyboard {
 
       final boolean useBubbleMode = useWhiteMode();
       // float darkFactor = Theme.getDarkFactor();
-      int inlineOutlineColor = Theme.inlineOutlineColor(isOutBubble);
+      int inlineOutlineColor = customColorId != ColorId.NONE ? Theme.getColor(customColorId) : Theme.inlineOutlineColor(isOutBubble);
       int fillingColor = 0;
 
       if (useBubbleMode) {
@@ -581,17 +591,17 @@ public class TGInlineKeyboard {
 
       //noinspection ConstantConditions
       final float textColorFactor = ALLOW_INVERSE ? (selectionFactor * activeFactor * (1f - fadeFactor)) : ALLOW_ALWAYS_ACTIVE ? selectionFactor * (1f - fadeFactor) : 0f;
-      final int textColor = useBubbleMode ? context.context.getBubbleButtonTextColor() : ColorUtils.fromToArgb(Theme.inlineTextColor(isOutBubble), Theme.inlineTextActiveColor(), textColorFactor);
+      final int textColor = useBubbleMode ? context.context.getBubbleButtonTextColor() : ColorUtils.fromToArgb(customColorId != ColorId.NONE ? Theme.getColor(customColorId) :Theme.inlineTextColor(isOutBubble), Theme.inlineTextActiveColor(), textColorFactor);
 
       int textX = cx + getButtonPadding();
       if (customIconRes != 0) {
-        Drawable drawable = view.getSparseDrawable(customIconRes, ThemeColorId.NONE);
+        Drawable drawable = view.getSparseDrawable(customIconRes, ColorId.NONE);
         int iconWidth = drawable.getMinimumWidth();
         int contentWidth = wrapper.getTextWidth();
         int totalWidth = iconWidth + contentWidth;
         int offset = Screen.dp(4f);
         int iconX;
-        if (Lang.rtl()) {
+        if (Lang.rtl() ^ customIconReverse) {
           iconX = cx + buttonWidth / 2 + totalWidth / 2 + offset - iconWidth;
           textX -= iconWidth / 4 * 3 + offset - iconWidth;
         } else {
@@ -626,9 +636,9 @@ public class TGInlineKeyboard {
                 paddingDp = 4f;
                 break;
               default:
-                throw new UnsupportedOperationException();
+                throw new RuntimeException();
             }
-            Drawable icon = getSparseDrawable(iconRes, ThemeColorId.NONE);
+            Drawable icon = getSparseDrawable(iconRes, ColorId.NONE);
             int padding = Screen.dp(paddingDp);
             Drawables.draw(c, icon, dirtyRect.right - icon.getMinimumWidth() - padding, dirtyRect.top + padding, useBubbleMode ?
               (progressFactor == 0f ? Paints.getInlineBubbleIconPaint(textColor) : Paints.getPorterDuffPaint(ColorUtils.alphaColor(1f - progressFactor, textColor))) :
@@ -637,12 +647,12 @@ public class TGInlineKeyboard {
             break;
           }
           case TdApi.InlineKeyboardButtonTypeUrl.CONSTRUCTOR: {
-            Drawable icon = getSparseDrawable(R.drawable.deproko_baseline_link_arrow_20, ThemeColorId.NONE);
+            Drawable icon = getSparseDrawable(R.drawable.deproko_baseline_link_arrow_20, ColorId.NONE);
             Drawables.draw(c, icon, dirtyRect.right - icon.getMinimumWidth(), dirtyRect.top, useBubbleMode ? Paints.getInlineBubbleIconPaint(textColor) : textColorFactor == 0f ? Paints.getInlineIconPorterDuffPaint(isOutBubble) : Paints.getPorterDuffPaint(ColorUtils.fromToArgb(iconColor, Theme.inlineTextActiveColor(), textColorFactor)));
             break;
           }
           case TdApi.InlineKeyboardButtonTypeLoginUrl.CONSTRUCTOR: {
-            Drawable icon = getSparseDrawable(R.drawable.deproko_baseline_link_arrow_20, ThemeColorId.NONE);
+            Drawable icon = getSparseDrawable(R.drawable.deproko_baseline_link_arrow_20, ColorId.NONE);
             Drawables.draw(c, icon, dirtyRect.right - icon.getMinimumWidth(), dirtyRect.top, useBubbleMode ? Paints.getInlineBubbleIconPaint(ColorUtils.alphaColor(1f - progressFactor, textColor)) : textColorFactor == 0f && progressFactor == 1f ? Paints.getInlineIconPorterDuffPaint(isOutBubble) : Paints.getPorterDuffPaint(ColorUtils.alphaColor(1f - progressFactor, ColorUtils.fromToArgb(iconColor, Theme.inlineTextActiveColor(), textColorFactor))));
             drawProgress(c, useBubbleMode, textColorFactor);
             break;
@@ -660,15 +670,23 @@ public class TGInlineKeyboard {
             drawProgress(c, useBubbleMode, textColorFactor);
             break;
           }
+          case TdApi.InlineKeyboardButtonTypeCopyText.CONSTRUCTOR:
+          case TdApi.InlineKeyboardButtonTypeWebApp.CONSTRUCTOR:
+            break;
+          default: {
+            Td.assertInlineKeyboardButtonType_4c981aa8();
+            throw Td.unsupported(type);
+          }
         }
       } else {
+        drawProgress(c, useBubbleMode, textColorFactor);
         // TODO
       }
     }
 
     private void drawProgress (Canvas c, boolean useBubbleMode, float textColorFactor) {
       if (progress != null) {
-        final int color = useBubbleMode ?  context.context.getBubbleButtonTextColor() : ColorUtils.fromToArgb(Theme.inlineIconColor(context.context != null && context.context.isOutgoingBubble()), Theme.inlineTextActiveColor(), textColorFactor);
+        final int color = useBubbleMode ?  context.context.getBubbleButtonTextColor() : ColorUtils.fromToArgb(customColorId != ColorId.NONE ? Theme.getColor(customColorId) :Theme.inlineIconColor(context.context != null && context.context.isOutgoingBubble()), Theme.inlineTextActiveColor(), textColorFactor);
         final int progressColor = ColorUtils.color((int) ((float) Color.alpha(color) * progressFactor), color);
         progress.forceColor(progressColor);
         progress.draw(c);
@@ -804,7 +822,9 @@ public class TGInlineKeyboard {
         flags &= ~FLAG_CAUGHT;
         if (!isActive()) {
           cancelSelection();
-          if (type != null) {
+          if (parent.isSponsoredMessage()) {
+            return false;
+          } else if (type != null) {
             switch (type.getConstructor()) {
               case TdApi.InlineKeyboardButtonTypeUrl.CONSTRUCTOR: {
                 ViewController<?> c = parent.context().navigation().getCurrentStackItem();
@@ -824,6 +844,19 @@ public class TGInlineKeyboard {
                   return true;
                 }
                 break;
+              case TdApi.InlineKeyboardButtonTypeBuy.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeCallback.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeCallbackGame.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeCallbackWithPassword.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeCopyText.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeSwitchInline.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeUser.CONSTRUCTOR:
+              case TdApi.InlineKeyboardButtonTypeWebApp.CONSTRUCTOR:
+                break;
+              default: {
+                Td.assertInlineKeyboardButtonType_4c981aa8();
+                throw Td.unsupported(type);
+              }
             }
           } else if (isCustom && clickListener != null) {
             return clickListener.onLongClick(view, context, this);
@@ -1056,11 +1089,21 @@ public class TGInlineKeyboard {
 
       final int currentContextId = this.contextId;
 
+      if (parent.isSponsoredMessage()) {
+        makeActive();
+        showProgressDelayed();
+        parent.openSponsoredMessage(() ->
+          parent.executeOnUiThreadOptional(this::makeInactive)
+        );
+        return;
+      }
+
       switch (type.getConstructor()) {
-        case TdApi.InlineKeyboardButtonTypeBuy.CONSTRUCTOR: {
+        case TdApi.InlineKeyboardButtonTypeBuy.CONSTRUCTOR:
+        case TdApi.InlineKeyboardButtonTypeCopyText.CONSTRUCTOR:
+        case TdApi.InlineKeyboardButtonTypeWebApp.CONSTRUCTOR:
           // TODO
           break;
-        }
 
         case TdApi.InlineKeyboardButtonTypeCallbackWithPassword.CONSTRUCTOR: {
           final TdApi.InlineKeyboardButtonTypeCallbackWithPassword callbackWithPassword = (TdApi.InlineKeyboardButtonTypeCallbackWithPassword) type;
@@ -1086,7 +1129,7 @@ public class TGInlineKeyboard {
                   cancelDelayedProgress();
                   animateProgressFactor(1f);
                 }
-                context.context.tdlib.client().send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadDataWithPassword(password, data)), getAnswerCallback(currentContextId, view,false));
+                context.context.tdlib.send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadDataWithPassword(password, data)), getAnswerCallback(currentContextId, view,false));
               }
             });
           };
@@ -1140,20 +1183,25 @@ public class TGInlineKeyboard {
           showProgressDelayed();
 
           final byte[] data = ((TdApi.InlineKeyboardButtonTypeCallback) type).data;
-          context.context.tdlib().client().send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadData(data)), getAnswerCallback(currentContextId, view,false));
+          context.context.tdlib().send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadData(data)), getAnswerCallback(currentContextId, view,false));
 
           break;
         }
         case TdApi.InlineKeyboardButtonTypeCallbackGame.CONSTRUCTOR: {
-          if (parent.getMessage().content.getConstructor() != TdApi.MessageGame.CONSTRUCTOR) {
+          if (!Td.isGame(parent.getMessage().content)) {
+            break;
+          }
+
+          TdApi.MessageGame game = ((TdApi.MessageGame) parent.getMessage().content);
+          final String data = game.game.shortName;
+          if (!context.context.messagesController().callNonAnonymousProtection(context.context.getId() + game.game.id, context.context, (targetView, outRect) -> outRect.set(dirtyRect))) {
             break;
           }
 
           makeActive();
           showProgressDelayed();
 
-          final String data = ((TdApi.MessageGame) parent.getMessage().content).game.shortName;
-          context.context.tdlib().client().send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadGame(data)), getAnswerCallback(currentContextId, view, true));
+          context.context.tdlib().send(new TdApi.GetCallbackQueryAnswer(parent.getChatId(), context.messageId, new TdApi.CallbackQueryPayloadGame(data)), getAnswerCallback(currentContextId, view, true));
           break;
         }
         case TdApi.InlineKeyboardButtonTypeUser.CONSTRUCTOR: {
@@ -1190,14 +1238,18 @@ public class TGInlineKeyboard {
           showProgressDelayed();
 
           TdApi.InlineKeyboardButtonTypeLoginUrl button = (TdApi.InlineKeyboardButtonTypeLoginUrl) type;
-          context.context.tdlib().client().send(new TdApi.GetLoginUrlInfo(context.context.getChatId(), context.messageId, button.id), getLoginCallback(currentContextId, view, button, needVerify));
+          context.context.tdlib().send(new TdApi.GetLoginUrlInfo(context.context.getChatId(), context.messageId, button.id), getLoginCallback(currentContextId, view, button, needVerify));
           break;
+        }
+        default: {
+          Td.assertInlineKeyboardButtonType_4c981aa8();
+          throw Td.unsupported(type);
         }
       }
     }
 
-    private Client.ResultHandler getLoginCallback (final int currentContextId, final View view, final TdApi.InlineKeyboardButtonTypeLoginUrl button, final boolean needVerify) {
-      return object -> UI.post(() -> {
+    private Tdlib.ResultHandler<TdApi.LoginUrlInfo> getLoginCallback (final int currentContextId, final View view, final TdApi.InlineKeyboardButtonTypeLoginUrl button, final boolean needVerify) {
+      return (loginUrlInfo, error) -> UI.post(() -> {
         if (currentContextId == contextId) {
           makeInactive();
         }
@@ -1211,23 +1263,29 @@ public class TGInlineKeyboard {
           return;
         }
 
-        switch (object.getConstructor()) {
+        if (error != null) {
+          UI.showError(error);
+          openUrl(currentContextId, view, button.url, needVerify);
+          return;
+        }
+
+        switch (loginUrlInfo.getConstructor()) {
           case TdApi.LoginUrlInfoOpen.CONSTRUCTOR: {
-            TdApi.LoginUrlInfoOpen open = (TdApi.LoginUrlInfoOpen) object;
+            TdApi.LoginUrlInfoOpen open = (TdApi.LoginUrlInfoOpen) loginUrlInfo;
             context.context.tdlib().ui()
               .openUrl(context.context.controller(), open.url, openParameters(currentContextId, view)
               .disableInstantView()
-              .requireOpenPrompt(!open.skipConfirm));
+              .requireOpenPrompt(!open.skipConfirmation));
             break;
           }
           case TdApi.LoginUrlInfoRequestConfirmation.CONSTRUCTOR:
-            TdApi.LoginUrlInfoRequestConfirmation confirm = (TdApi.LoginUrlInfoRequestConfirmation) object;
+            TdApi.LoginUrlInfoRequestConfirmation confirm = (TdApi.LoginUrlInfoRequestConfirmation) loginUrlInfo;
             List<ListItem> items = new ArrayList<>();
             items.add(new ListItem(ListItem.TYPE_CHECKBOX_OPTION_MULTILINE,
               R.id.btn_signIn, 0,
               Lang.getString(R.string.LogInAsOn,
                 (target, argStart, argEnd, argIndex, needFakeBold) -> argIndex == 1 ?
-                  new CustomTypefaceSpan(null, R.id.theme_color_textLink) :
+                  new CustomTypefaceSpan(null, ColorId.textLink) :
                   Lang.newBoldSpan(needFakeBold),
                 context.context.tdlib().accountName(),
                 confirm.domain),
@@ -1243,7 +1301,7 @@ public class TGInlineKeyboard {
             }
             context.context.controller().showSettings(
               new SettingsWrapBuilder(R.id.btn_open)
-              .addHeaderItem(Lang.getString(R.string.OpenLinkConfirm, (target, argStart, argEnd, spanIndex, needFakeBold) -> new CustomTypefaceSpan(null, R.id.theme_color_textLink), confirm.url))
+              .addHeaderItem(Lang.getString(R.string.OpenLinkConfirm, (target, argStart, argEnd, spanIndex, needFakeBold) -> new CustomTypefaceSpan(null, ColorId.textLink), confirm.url))
               .setRawItems(items)
               .setIntDelegate((id, result) -> {
                 boolean needSignIn = items.get(0).isSelected();
@@ -1251,7 +1309,7 @@ public class TGInlineKeyboard {
                 if (needSignIn) {
                   makeActive();
                   showProgressDelayed();
-                  context.context.tdlib().client().send(new TdApi.GetLoginUrl(parent.getChatId(), context.messageId, button.id, needWriteAccess), getLoginUrlCallback(currentContextId, view, button, needVerify));
+                  context.context.tdlib().send(new TdApi.GetLoginUrl(parent.getChatId(), context.messageId, button.id, needWriteAccess), getLoginUrlCallback(currentContextId, view, button, needVerify));
                 } else {
                   openUrl(currentContextId, view, button.url, false);
                 }
@@ -1265,25 +1323,21 @@ public class TGInlineKeyboard {
                       break;
                   }
                 })
-              .setOnSettingItemClick(confirm.requestWriteAccess ? (itemView, settingsId, item, doneButton, settingsAdapter) -> {
-                switch (item.getId()) {
-                  case R.id.btn_signIn: {
-                    boolean needSignIn = settingsAdapter.getCheckIntResults().get(R.id.btn_signIn) == R.id.btn_signIn;
-                    if (!needSignIn) {
-                      // settingsAdapter.setToggledById(R.id.btn_allowWriteAccess, false);
-                      items.get(1).setSelected(false);
-                      settingsAdapter.updateValuedSettingById(R.id.btn_allowWriteAccess);
-                    }
-                    break;
+              .setOnSettingItemClick(confirm.requestWriteAccess ? (itemView, settingsId, item, doneButton, settingsAdapter, window) -> {
+                final int itemId = item.getId();
+                if (itemId == R.id.btn_signIn) {
+                  boolean needSignIn = settingsAdapter.getCheckIntResults().get(R.id.btn_signIn) == R.id.btn_signIn;
+                  if (!needSignIn) {
+                    // settingsAdapter.setToggledById(R.id.btn_allowWriteAccess, false);
+                    items.get(1).setSelected(false);
+                    settingsAdapter.updateValuedSettingById(R.id.btn_allowWriteAccess);
                   }
-                  case R.id.btn_allowWriteAccess: {
-                    boolean needWriteAccess = settingsAdapter.getCheckIntResults().get(R.id.btn_allowWriteAccess) == R.id.btn_allowWriteAccess;
-                    if (needWriteAccess) {
-                      // settingsAdapter.setToggledById(R.id.btn_signIn, true);
-                      items.get(0).setSelected(true);
-                      settingsAdapter.updateValuedSettingById(R.id.btn_signIn);
-                    }
-                    break;
+                } else if (itemId == R.id.btn_allowWriteAccess) {
+                  boolean needWriteAccess = settingsAdapter.getCheckIntResults().get(R.id.btn_allowWriteAccess) == R.id.btn_allowWriteAccess;
+                  if (needWriteAccess) {
+                    // settingsAdapter.setToggledById(R.id.btn_signIn, true);
+                    items.get(0).setSelected(true);
+                    settingsAdapter.updateValuedSettingById(R.id.btn_signIn);
                   }
                 }
               } : null)
@@ -1291,17 +1345,16 @@ public class TGInlineKeyboard {
               .setRawItems(items)
             );
             break;
-          case TdApi.Error.CONSTRUCTOR: {
-            UI.showError(object);
-            openUrl(currentContextId, view, button.url, needVerify);
-            break;
+          default: {
+            Td.assertLoginUrlInfo_7af29c11();
+            throw Td.unsupported(loginUrlInfo);
           }
         }
       });
     }
 
-    private Client.ResultHandler getLoginUrlCallback (final int currentContextId, final View view, final TdApi.InlineKeyboardButtonTypeLoginUrl button, final boolean needVerify) {
-      return object -> UI.post(() -> {
+    private Tdlib.ResultHandler<TdApi.HttpUrl> getLoginUrlCallback (final int currentContextId, final View view, final TdApi.InlineKeyboardButtonTypeLoginUrl button, final boolean needVerify) {
+      return (httpUrl, error) -> UI.post(() -> {
         // TODO unify this piece of code into the one
         if (currentContextId == contextId) {
           makeInactive();
@@ -1316,95 +1369,71 @@ public class TGInlineKeyboard {
           return;
         }
 
-        switch (object.getConstructor()) {
-          case TdApi.HttpUrl.CONSTRUCTOR: {
-            String url = ((TdApi.HttpUrl) object).url;
-            context.context.tdlib().ui().openUrl(context.context.controller(), url, openParameters(currentContextId, view).disableInstantView());
-            break;
-          }
-          case TdApi.Error.CONSTRUCTOR: {
-            UI.showError(object);
-            openUrl(currentContextId, view, button.url, needVerify);
-            break;
-          }
+        if (error != null) {
+          UI.showError(error);
+          openUrl(currentContextId, view, button.url, needVerify);
+        } else {
+          context.context.tdlib().ui().openUrl(context.context.controller(), httpUrl.url, openParameters(currentContextId, view).disableInstantView());
         }
       });
     }
 
-    private Client.ResultHandler getAnswerCallback (final int currentContextId, final View view, final boolean isGame) {
-      return object -> {
-        switch (object.getConstructor()) {
-          case TdApi.CallbackQueryAnswer.CONSTRUCTOR: {
-            final TdApi.CallbackQueryAnswer answer = (TdApi.CallbackQueryAnswer) object;
+    private Tdlib.ResultHandler<TdApi.CallbackQueryAnswer> getAnswerCallback (final int currentContextId, final View view, final boolean isGame) {
+      return (answer, error) -> {
+        if (error != null) {
+          if (error.code == 502) {
+            UI.showBotDown(context.context.tdlib().messageUsername(parent.getMessage()));
+            return;
+          }
+          UI.showError(error);
+          context.context.tdlib().ui().post(() -> {
+            if (currentContextId == contextId) {
+              makeInactive();
+            }
+          });
+        } else {
+          final CharSequence answerText;
+          if (answer.text.isEmpty()) {
+            answerText = null;
+          } else {
+            answerText = Emoji.instance().replaceEmoji(answer.text);
+          }
 
-            final CharSequence answerText;
-            if (answer.text.isEmpty()) {
-              answerText = null;
-            } else {
-              answerText = Emoji.instance().replaceEmoji(answer.text);
+          final boolean showAlert = answer.showAlert;
+          final String url = answer.url;
+
+          context.context.tdlib().ui().post(() -> {
+            if (currentContextId == contextId) {
+              makeInactive();
             }
 
-            final boolean showAlert = answer.showAlert;
-            final String url = answer.url;
-
-            context.context.tdlib().ui().post(() -> {
-              if (currentContextId == contextId) {
-                makeInactive();
-              }
-
-              if (parent.isDestroyed()) {
-                return;
-              }
-
-              ViewController<?> c = parent.context().navigation().getCurrentStackItem();
-              boolean isMessagesController = c instanceof MessagesController;
-
-              if (c == null || c.getChatId() != parent.getChatId()) {
-                return;
-              }
-
-              if (!StringUtils.isEmpty(url)) {
-                if (isGame && isMessagesController) {
-                  TdApi.Message msg = parent.getMessage();
-                  ((MessagesController) c).openGame(msg.viaBotUserId != 0 ? msg.viaBotUserId : Td.getSenderUserId(msg), ((TdApi.MessageGame) msg.content).game, url, msg);
-                } else {
-                  c.openLinkAlert(url, openParameters(currentContextId, view));
-                }
-              }
-              if (answerText != null) {
-                if (showAlert || !isMessagesController) {
-                  c.openOkAlert(context.context.tdlib().messageUsername(parent.getMessage()), answerText);
-                } else {
-                  ((MessagesController) c).showCallbackToast(answerText);
-                }
-              }
-            });
-
-            break;
-          }
-          case TdApi.Error.CONSTRUCTOR: {
-            TdApi.Error error = (TdApi.Error) object;
-            if (error.code == 502) {
-              UI.showBotDown(context.context.tdlib().messageUsername(parent.getMessage()));
+            if (parent.isDestroyed()) {
               return;
             }
-            UI.showError(object);
-            context.context.tdlib().ui().post(() -> {
-              if (currentContextId == contextId) {
-                makeInactive();
+
+            ViewController<?> c = parent.context().navigation().getCurrentStackItem();
+            boolean isMessagesController = c instanceof MessagesController;
+
+            if (c == null || c.getChatId() != parent.getChatId()) {
+              return;
+            }
+
+            if (!StringUtils.isEmpty(url)) {
+              if (isGame && isMessagesController) {
+                TdApi.Message msg = parent.getMessage();
+                ((MessagesController) c).openGame(msg.viaBotUserId != 0 ? msg.viaBotUserId : Td.getSenderUserId(msg), ((TdApi.MessageGame) msg.content).game, url, msg);
+              } else {
+                c.openLinkAlert(url, openParameters(currentContextId, view));
               }
-            });
-            break;
-          }
-          default: {
-            Log.unexpectedTdlibResponse(object, TdApi.GetCallbackQueryAnswer.class, TdApi.CallbackQueryAnswer.class);
-            context.context.tdlib().ui().post(() -> {
-              if (currentContextId == contextId) {
-                makeInactive();
+            }
+            if (answerText != null) {
+              if (showAlert || !isMessagesController) {
+                c.openOkAlert(context.context.tdlib().messageUsername(parent.getMessage()), answerText);
+              } else {
+                ((MessagesController) c).showCallbackToast(answerText);
               }
-            });
-            break;
-          }
+            }
+          });
         }
       };
     }

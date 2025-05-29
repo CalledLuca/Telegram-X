@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,10 +39,11 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.AnyThread;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
@@ -51,7 +52,10 @@ import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
 import org.thunderdog.challegram.loader.ImageReader;
 import org.thunderdog.challegram.loader.ImageStrictCache;
+import org.thunderdog.challegram.mediaview.AvatarPickerMode;
 import org.thunderdog.challegram.mediaview.MediaSelectDelegate;
+import org.thunderdog.challegram.mediaview.MediaSendDelegate;
+import org.thunderdog.challegram.mediaview.MediaSpoilerSendDelegate;
 import org.thunderdog.challegram.mediaview.MediaViewController;
 import org.thunderdog.challegram.mediaview.MediaViewDelegate;
 import org.thunderdog.challegram.mediaview.MediaViewThumbLocation;
@@ -76,13 +80,13 @@ import java.util.ArrayList;
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.widget.FrameLayoutFix;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.CancellableRunnable;
-import me.vkryl.core.BitwiseUtils;
 
 public class CameraController extends ViewController<Void> implements CameraDelegate, SensorEventListener, FactorAnimator.Target, View.OnClickListener, CameraButton.RecordListener, CameraOverlayView.FlashListener, Settings.SettingsChangeListener {
-  public static final String[] VIDEO_PERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN ? new String[] {
+  public static final String[] VIDEO_PERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ? new String[] {
     Manifest.permission.CAMERA,
     Manifest.permission.RECORD_AUDIO,
     Manifest.permission.WRITE_EXTERNAL_STORAGE,
@@ -93,7 +97,10 @@ public class CameraController extends ViewController<Void> implements CameraDele
     Manifest.permission.WRITE_EXTERNAL_STORAGE
   };
 
-  public static final String[] VIDEO_ONLY_PERMISSIONS = new String[] {
+  public static final String[] VIDEO_ONLY_PERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ? new String[] {
+    Manifest.permission.CAMERA,
+    Manifest.permission.WRITE_EXTERNAL_STORAGE
+  } : new String[] {
     Manifest.permission.CAMERA,
     Manifest.permission.WRITE_EXTERNAL_STORAGE,
     Manifest.permission.READ_EXTERNAL_STORAGE
@@ -122,6 +129,7 @@ public class CameraController extends ViewController<Void> implements CameraDele
   private boolean qrCodeConfirmed;
   private int qrSubtitleRes;
   private boolean qrModeDebug;
+  private @AvatarPickerMode int avatarPickerMode = AvatarPickerMode.NONE;
 
   public void setQrListener (@Nullable QrCodeListener qrCodeListener, @StringRes int subtitleRes, boolean qrModeDebug) {
     this.qrCodeListener = qrCodeListener;
@@ -131,6 +139,16 @@ public class CameraController extends ViewController<Void> implements CameraDele
       rootLayout.setQrModeSubtitle(subtitleRes);
       rootLayout.setQrMode(true, qrModeDebug);
     }
+  }
+
+  public void setAvatarPickerMode (@AvatarPickerMode int avatarPickerMode) {
+    this.avatarPickerMode = avatarPickerMode;
+  }
+
+  public void setMediaEditorDelegates (MediaViewDelegate delegate, MediaSelectDelegate selectDelegate, MediaSendDelegate sendDelegate) {
+    this.delegate = delegate;
+    this.selectDelegate = selectDelegate;
+    this.sendDelegate = sendDelegate;
   }
 
   public void setMode (int mode, @Nullable ReadyListener readyListener) {
@@ -260,7 +278,7 @@ public class CameraController extends ViewController<Void> implements CameraDele
 
   @Override
   public void onSettingsChanged (long newSettings, long oldSettings) {
-    cameraOverlayView.setGridVisible(cameraMode == MODE_MAIN && BitwiseUtils.getFlag(newSettings, Settings.SETTING_FLAG_CAMERA_SHOW_GRID), isFocused());
+    cameraOverlayView.setGridVisible(cameraMode == MODE_MAIN && BitwiseUtils.hasFlag(newSettings, Settings.SETTING_FLAG_CAMERA_SHOW_GRID), isFocused());
   }
 
   public boolean isLegacy () {
@@ -281,9 +299,12 @@ public class CameraController extends ViewController<Void> implements CameraDele
     }
   }
 
+  private Throwable debugDestroy;
+
   public void checkLegacyMode () {
     if (contentView != null && isLegacy() != needLegacy()) {
       if (manager != null) {
+        debugDestroy = Log.generateException();
         contentView.removeView(this.manager.getView());
         manager.destroy();
         manager = null;
@@ -298,13 +319,13 @@ public class CameraController extends ViewController<Void> implements CameraDele
   }
 
   public void takeCameraLayout (ViewGroup toGroup, int index) {
-    get();
+    getValue();
     Views.moveView(contentView, toGroup, index);
     manager.getView().requestLayout();
   }
 
   public void releaseCameraLayout () {
-    get();
+    getValue();
     Views.moveView(contentView, rootLayout, 0);
     manager.getView().requestLayout();
   }
@@ -326,11 +347,21 @@ public class CameraController extends ViewController<Void> implements CameraDele
     }
   }
 
-  public CameraManager<?> getManager () {
+  private void ensureManager () {
+    if (manager == null) {
+      if (debugDestroy != null)
+        throw new IllegalStateException(debugDestroy);
+      throw new IllegalStateException();
+    }
+  }
+
+  public @NonNull CameraManager<?> getManager () {
+    ensureManager();
     return manager;
   }
 
-  public CameraManagerLegacy getLegacyManager () {
+  public @NonNull CameraManagerLegacy getLegacyManager () {
+    ensureManager();
     return (CameraManagerLegacy) manager;
   }
 
@@ -347,15 +378,11 @@ public class CameraController extends ViewController<Void> implements CameraDele
 
   @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_camera_switch: {
-        switchCamera();
-        break;
-      }
-      case R.id.btn_camera_flash: {
-        manager.switchFlashMode();
-        break;
-      }
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_camera_switch) {
+      switchCamera();
+    } else if (viewId == R.id.btn_camera_flash) {
+      manager.switchFlashMode();
     }
   }
 
@@ -542,6 +569,16 @@ public class CameraController extends ViewController<Void> implements CameraDele
         break;
       }
     }
+  }
+
+  @Override
+  public void displayHint (String hint) {
+    if (!UI.inUiThread()) {
+      handler.sendMessage(Message.obtain(handler, ACTION_DISPLAY_HINT, hint));
+      return;
+    }
+
+    context().tooltipManager().builder(button).controller(this).show(tdlib, hint).hideDelayed();
   }
 
   private int availableCameraCount = -1;
@@ -1229,7 +1266,6 @@ public class CameraController extends ViewController<Void> implements CameraDele
       }
 
       int prevOrientation = context().getCurrentOrientation();
-      context().lockOrientation(requestedOrientation);
       checkDisplayRotation();
       return (prevOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) != (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     }
@@ -1249,7 +1285,7 @@ public class CameraController extends ViewController<Void> implements CameraDele
   public void onFactorChangeFinished (int id, float finalFactor, FactorAnimator callee) {
     switch (id) {
       case ANIMATOR_ROTATION:
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2 && finalFactor % 90.0f == 0.0f) {
           applyFakeRotation();
         }
         break;
@@ -1432,13 +1468,18 @@ public class CameraController extends ViewController<Void> implements CameraDele
     return m != null && m.isSecretChat();
   }
 
-  private void onSendMedia (ImageGalleryFile file, TdApi.MessageSendOptions options, boolean disableMarkdown, boolean asFiles) {
+  private boolean onSendMedia (ImageGalleryFile file, TdApi.MessageSendOptions options, boolean disableMarkdown, boolean asFiles, boolean showCaptionAboveMedia, boolean hasSpoiler) {
     MessagesController m = findOutputController();
     if (m != null) {
       context.forceCloseCamera();
-      m.sendCompressed(file, options, disableMarkdown, asFiles);
+      return m.sendPhotosAndVideosCompressed(new ImageGalleryFile[] {file}, false, options, disableMarkdown, asFiles, showCaptionAboveMedia, hasSpoiler);
     }
+    return false;
   }
+
+  public MediaViewDelegate delegate;
+  public MediaSelectDelegate selectDelegate;
+  public MediaSendDelegate sendDelegate;
 
   @Override
   public void onMediaTaken (final ImageGalleryFile file) {
@@ -1451,9 +1492,9 @@ public class CameraController extends ViewController<Void> implements CameraDele
       MediaItem item = new MediaItem(context, tdlib, file);
       stack.set(item);
       MessagesController m = findOutputController();
-      MediaViewController.Args args = new MediaViewController.Args(CameraController.this, MediaViewController.MODE_GALLERY, new MediaViewDelegate() {
+      MediaViewController.Args args = MediaViewController.Args.fromGallery(CameraController.this, delegate != null ? delegate : new MediaViewDelegate() {
         @Override
-        public MediaViewThumbLocation getTargetLocation (int index, MediaItem item) {
+        public MediaViewThumbLocation getTargetLocation (int indexInStack, MediaItem item) {
           MediaViewThumbLocation location = new MediaViewThumbLocation(0, 0, contentView.getMeasuredWidth(), contentView.getMeasuredHeight());
           location.setNoBounce();
           location.setNoPlaceholder();
@@ -1464,7 +1505,7 @@ public class CameraController extends ViewController<Void> implements CameraDele
         public void setMediaItemVisible (int index, MediaItem item, boolean isVisible) {
 
         }
-      }, new MediaSelectDelegate() {
+      }, selectDelegate != null ? selectDelegate : new MediaSelectDelegate() {
         @Override
         public boolean isMediaItemSelected (int index, MediaItem item) {
           return false;
@@ -1500,10 +1541,13 @@ public class CameraController extends ViewController<Void> implements CameraDele
         public ArrayList<ImageFile> getSelectedMediaItems (boolean copy) {
           return null;
         }
-      }, (images, options, disableMarkdown, asFiles) -> {
-        ImageGalleryFile galleryFile = (ImageGalleryFile) images.get(0);
-        onSendMedia(galleryFile, options, disableMarkdown, asFiles);
-      }, stack).setOnlyScheduled(m != null && m.areScheduledOnly());
+      }, sendDelegate != null ? sendDelegate : new MediaSpoilerSendDelegate() {
+        @Override
+        public boolean sendSelectedItems (View view, ArrayList<ImageFile> images, TdApi.MessageSendOptions options, boolean disableMarkdown, boolean asFiles, boolean showCaptionAboveMedia, boolean hasSpoiler) {
+          ImageGalleryFile galleryFile = (ImageGalleryFile) images.get(0);
+          return onSendMedia(galleryFile, options, disableMarkdown, asFiles, showCaptionAboveMedia, hasSpoiler);
+        }
+      }, stack, m != null && m.areScheduledOnly()).setAvatarPickerMode(avatarPickerMode);
       if (m != null) {
         args.setReceiverChatId(m.getChatId());
       }
@@ -1789,6 +1833,7 @@ public class CameraController extends ViewController<Void> implements CameraDele
   private static final int ACTION_ZOOM_CHANGED = 9;
   private static final int ACTION_PERFORM_SUCCESS_HINT = 10;
   private static final int ACTION_UPDATE_DURATION = 11;
+  private static final int ACTION_DISPLAY_HINT = 12;
 
   private static class CameraUiHandler extends Handler {
     private final CameraController context;
@@ -1803,6 +1848,10 @@ public class CameraController extends ViewController<Void> implements CameraDele
       switch (msg.what) {
         case ACTION_DISPATCH_ERROR: {
           context.displayFatalErrorMessage((String) msg.obj);
+          break;
+        }
+        case ACTION_DISPLAY_HINT: {
+          context.displayHint((String) msg.obj);
           break;
         }
         case ACTION_CHANGE_CAMERA_COUNT: {

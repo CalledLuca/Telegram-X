@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@ import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.data.AvatarPlaceholder;
 import org.thunderdog.challegram.data.TD;
@@ -33,6 +33,7 @@ import org.thunderdog.challegram.tool.Screen;
 
 import me.vkryl.core.lambda.Destroyable;
 
+// TODO complete rework, similar to avatars in TGMessagePoll
 public class TripleAvatarView extends View implements Destroyable {
   public static final int AVATAR_SIZE = 24;
   public static final int AVATAR_PADDING = 2;
@@ -61,8 +62,12 @@ public class TripleAvatarView extends View implements Destroyable {
     return receiver;
   }
 
-  public void setUsers (Tdlib tdlib, TdApi.Users users) {
-    long[] ids = users.userIds;
+  public void setUsers (Tdlib tdlib, TdApi.MessageViewers viewers) {
+    long[] ids = new long[viewers.viewers.length];
+    for (int i = 0; i < viewers.viewers.length; i++) {
+      TdApi.MessageViewer viewer = viewers.viewers[i];
+      ids[i] = viewer.userId;
+    }
 
     for (int i = 0; i < receivers.length; i++) {
       requestUserFile(ids, i, tdlib, receivers[i]);
@@ -96,7 +101,7 @@ public class TripleAvatarView extends View implements Destroyable {
       TdApi.User user = tdlib.chatUser(users[index]);
 
       if (user == null || TD.isPhotoEmpty(user.profilePhoto)) {
-        placeholders[index] = new AvatarPlaceholder(AVATAR_SIZE / 2f, new AvatarPlaceholder.Metadata(TD.getAvatarColorId(user, tdlib.myUserId()), TD.getLetters(user)), null);
+        placeholders[index] = new AvatarPlaceholder(AVATAR_SIZE / 2f, new AvatarPlaceholder.Metadata(tdlib.cache().userAccentColor(user), TD.getLetters(user)), null);
         receiver.requestFile(null);
       } else {
         placeholders[index] = null;
@@ -162,7 +167,7 @@ public class TripleAvatarView extends View implements Destroyable {
   @Override
   public void performDestroy () {
     for (ImageReceiver receiver : receivers) {
-      receiver.detach();
+      receiver.destroy();
     }
   }
 }

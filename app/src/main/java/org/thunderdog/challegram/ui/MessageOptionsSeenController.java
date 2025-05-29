@@ -3,7 +3,9 @@ package org.thunderdog.challegram.ui;
 import android.content.Context;
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import androidx.recyclerview.widget.RecyclerView;
+
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.popups.MessageSeenController;
 import org.thunderdog.challegram.component.user.UserView;
@@ -12,17 +14,18 @@ import org.thunderdog.challegram.data.TGUser;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.v.CustomRecyclerView;
 import org.thunderdog.challegram.widget.ListInfoView;
 import org.thunderdog.challegram.widget.PopupLayout;
 
 import java.util.ArrayList;
 
-public class MessageOptionsSeenController extends MessageOptionsPagerController.MessageBottomSheetBaseController<Void> implements View.OnClickListener {
+public class MessageOptionsSeenController extends BottomSheetViewController.BottomSheetBaseRecyclerViewController<Void> implements View.OnClickListener {
   private SettingsAdapter adapter;
   private PopupLayout popupLayout;
   private TGMessage message;
-  private long[] users;
+  private TdApi.MessageViewers viewers;
 
   public MessageOptionsSeenController (Context context, Tdlib tdlib, PopupLayout popupLayout, TGMessage msg) {
     super(context, tdlib);
@@ -40,24 +43,25 @@ public class MessageOptionsSeenController extends MessageOptionsPagerController.
     adapter = new SettingsAdapter(this) {
       @Override
       protected void setUser (ListItem item, int position, UserView userView, boolean isUpdate) {
-        userView.setUser(new TGUser(tdlib, tdlib.chatUser(item.getLongId())));
+        TGUser user = new TGUser(tdlib, tdlib.chatUser(item.getLongId()));
+        user.setActionDateStatus(item.getIntValue(), message.getMessage());
+        userView.setUser(user);
       }
 
       @Override
       protected void setInfo (ListItem item, int position, ListInfoView infoView) {
-        if (users != null && message != null) {
-          infoView.showInfo(MessageSeenController.getViewString(message, users.length));
+        if (viewers != null && message != null) {
+          infoView.showInfo(MessageSeenController.getViewString(message, viewers.viewers.length));
         }
       }
     };
     recyclerView.setAdapter(adapter);
-    ViewSupport.setThemedBackground(recyclerView, R.id.theme_color_background);
+    ViewSupport.setThemedBackground(recyclerView, ColorId.background);
     addThemeInvalidateListener(recyclerView);
     tdlib.client().send(new TdApi.GetMessageViewers(message.getChatId(), message.getId()), (obj) -> {
-      if (obj.getConstructor() != TdApi.Users.CONSTRUCTOR) return;
+      if (obj.getConstructor() != TdApi.MessageViewers.CONSTRUCTOR) return;
       runOnUiThreadOptional(() -> {
-        TdApi.Users users = (TdApi.Users) obj;
-        setUsers(message, users.userIds);
+        setUsers(message, (TdApi.MessageViewers) obj);
       });
     });
   }
@@ -67,19 +71,19 @@ public class MessageOptionsSeenController extends MessageOptionsPagerController.
     return true;
   }
 
-  public void setUsers (TGMessage msg, long[] users) {
+  public void setUsers (TGMessage msg, TdApi.MessageViewers viewers) {
     this.message = msg;
-    this.users = users;
+    this.viewers = viewers;
 
     boolean first = true;
     ArrayList<ListItem> items = new ArrayList<>();
-    for (long userId : users) {
+    for (TdApi.MessageViewer viewer : viewers.viewers) {
       if (first) {
         first = false;
       } else {
         items.add(new ListItem(ListItem.TYPE_SEPARATOR));
       }
-      items.add(new ListItem(ListItem.TYPE_USER_SMALL, R.id.user).setLongId(userId));
+      items.add(new ListItem(ListItem.TYPE_USER_SMALL, R.id.user).setLongId(viewer.userId).setIntValue(viewer.viewDate));
     }
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
     //items.add(new ListItem(ListItem.TYPE_DESCRIPTION, R.id.description, 0, R.string.MessageSeenPrivacy));
@@ -96,7 +100,7 @@ public class MessageOptionsSeenController extends MessageOptionsPagerController.
   }
 
   @Override
-  public int getItemsHeight () {
+  public int getItemsHeight (RecyclerView recyclerView) {
     if (adapter.getItems().size() == 0) {
       return 0;
     }

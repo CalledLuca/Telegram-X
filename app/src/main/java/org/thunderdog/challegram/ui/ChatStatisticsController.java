@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,7 @@ import android.view.View;
 import androidx.annotation.IdRes;
 import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.charts.Chart;
 import org.thunderdog.challegram.charts.MiniChart;
@@ -37,7 +36,9 @@ import org.thunderdog.challegram.navigation.SettingsWrapBuilder;
 import org.thunderdog.challegram.support.RippleSupport;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibMessageViewer;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
@@ -56,7 +57,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.collection.IntList;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class ChatStatisticsController extends RecyclerViewController<ChatStatisticsController.Args> implements View.OnClickListener, View.OnLongClickListener {
   public static class Args {
@@ -106,43 +107,40 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
       userId = 0;
     }
 
-    switch (v.getId()) {
-      case R.id.btn_viewMemberMessages:
-        if (userId != 0) {
-          HashtagChatController c = new HashtagChatController(context(), tdlib);
-          c.setArguments(new HashtagChatController.Arguments(null, getArgumentsStrict().chatId, null, new TdApi.MessageSenderUser(userId), false));
-          navigateTo(c);
-          tdlib.ui().openPrivateChat(this, userId, new TdlibUi.ChatOpenParameters().keepStack());
-        }
-        break;
-      case R.id.btn_openInviterProfile:
-        if (userId != 0) {
-          tdlib.ui().openPrivateChat(this, userId, new TdlibUi.ChatOpenParameters().keepStack());
-        }
-        break;
-      case R.id.btn_viewAdminActions:
-        MessagesController c = new MessagesController(context, tdlib);
-        c.setArguments(new MessagesController.Arguments(MessagesController.PREVIEW_MODE_EVENT_LOG, null, tdlib.chat(getArgumentsStrict().chatId)).eventLogUserId(userId));
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_viewMemberMessages) {
+      if (userId != 0) {
+        HashtagChatController c = new HashtagChatController(context(), tdlib);
+        c.setArguments(new HashtagChatController.Arguments(null, getArgumentsStrict().chatId, null, new TdApi.MessageSenderUser(userId), false));
         navigateTo(c);
-        break;
-      case R.id.btn_showAdvanced:
-        showAllUsers();
-        break;
-      case R.id.btn_messageMore:
-        MessageInteractionInfoContainer container = (MessageInteractionInfoContainer) item.getData();
-        MessageStatisticsController msc = new MessageStatisticsController(context, tdlib);
-        List<TdApi.Message> album = interactionMessageAlbums.get(container.message.mediaAlbumId);
+        tdlib.ui().openPrivateChat(this, userId, new TdlibUi.ChatOpenParameters().keepStack());
+      }
+    } else if (viewId == R.id.btn_openInviterProfile) {
+      if (userId != 0) {
+        tdlib.ui().openPrivateChat(this, userId, new TdlibUi.ChatOpenParameters().keepStack());
+      }
+    } else if (viewId == R.id.btn_viewAdminActions) {
+      MessagesController c = new MessagesController(context, tdlib);
+      c.setArguments(new MessagesController.Arguments(MessagesController.PREVIEW_MODE_EVENT_LOG, null, tdlib.chat(getArgumentsStrict().chatId)).eventLogUserId(userId));
+      navigateTo(c);
+    } else if (viewId == R.id.btn_showAdvanced) {
+      showAllUsers();
+    } else if (viewId == R.id.btn_messageMore) {
+      MessageInteractionInfoContainer container = (MessageInteractionInfoContainer) item.getData();
+      MessageStatisticsController msc = new MessageStatisticsController(context, tdlib);
+      List<TdApi.Message> album = interactionMessageAlbums.get(container.message.mediaAlbumId);
 
-        if (album != null) {
-          msc.setArguments(new MessageStatisticsController.Args(getArgumentsStrict().chatId, album));
-        } else {
-          msc.setArguments(new MessageStatisticsController.Args(getArgumentsStrict().chatId, container.message));
-        }
+      if (album != null) {
+        msc.setArguments(new MessageStatisticsController.Args(getArgumentsStrict().chatId, album));
+      } else {
+        msc.setArguments(new MessageStatisticsController.Args(getArgumentsStrict().chatId, container.message));
+      }
 
-        navigateTo(msc);
-        break;
+      navigateTo(msc);
     }
   }
+
+  private TdlibMessageViewer.Viewport messageViewport;
 
   @Override
   protected void onCreateView (Context context, CustomRecyclerView recyclerView) {
@@ -155,6 +153,7 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     headerCell.setSubtitle(R.string.Stats);
     this.headerCell = headerCell;
 
+    this.messageViewport = tdlib.messageViewer().createViewport(new TdApi.MessageSourceSearch(), this);
     adapter = new SettingsAdapter(this) {
       @Override
       protected void setSeparatorOptions (ListItem item, int position, SeparatorView separatorView) {
@@ -169,14 +168,11 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
       protected void setText (ListItem item, CustomTextView view, boolean isUpdate) {
         super.setText(item, view, isUpdate);
 
-        switch (view.getId()) {
-          case R.id.text_title: {
-            view.setTextSize(16f);
-            view.setPadding(Screen.dp(16f), Screen.dp(16f), Screen.dp(16f), Screen.dp(16f));
-            view.setTextColorId(R.id.theme_color_text);
-            ViewSupport.setThemedBackground(view, R.id.theme_color_filling, ChatStatisticsController.this);
-            break;
-          }
+        if (view.getId() == R.id.text_title) {
+          view.setTextSize(16f);
+          view.setPadding(Screen.dp(16f), Screen.dp(16f), Screen.dp(16f), Screen.dp(16f));
+          view.setTextColorId(ColorId.text);
+          ViewSupport.setThemedBackground(view, ColorId.filling, ChatStatisticsController.this);
         }
       }
 
@@ -191,61 +187,66 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
         }
 
         RippleSupport.setSimpleWhiteBackground(previewView);
-        previewView.setMessage(container.message, null, statString.toString(), false);
+        previewView.setMessage(container.message, null, statString.toString(), MessagePreviewView.Options.NONE);
         previewView.setContentInset(Screen.dp(8));
       }
 
       @Override
       protected void setValuedSetting (ListItem item, SettingView view, boolean isUpdate) {
-        switch (item.getId()) {
-          case R.id.btn_members:
-          case R.id.btn_membersReading:
-          case R.id.btn_membersWriting:
-          case R.id.btn_messages:
-          case R.id.btn_share:
-          case R.id.btn_view: {
-            TdApi.StatisticalValue value = (TdApi.StatisticalValue) item.getData();
-            view.setIgnoreEnabled(true);
-            view.setEnabled(false);
-            if (value.value == value.previousValue || value.previousValue == 0) {
-              view.setTextColorId(0);
-              view.setName(Strings.buildCounter((long) value.value));
-            } else {
-              view.setTextColorId(value.value > value.previousValue ? R.id.theme_color_textSecure : R.id.theme_color_textNegative);
-              view.setName(Lang.getString(value.value > value.previousValue ? R.string.StatsValueGrowth : R.string.StatsValueFall, Strings.buildCounter((long) value.value), Strings.buildCounter((long) Math.abs(value.value - value.previousValue)), Lang.beautifyDouble(value.growthRatePercentage)));
-            }
-            view.setData(item.getString());
-            break;
+        final int itemId = item.getId();
+        if (itemId == R.id.btn_members ||
+          itemId == R.id.btn_membersReading ||
+          itemId == R.id.btn_membersWriting ||
+          itemId == R.id.btn_messages ||
+          itemId == R.id.btn_share ||
+          itemId == R.id.btn_view) {
+          TdApi.StatisticalValue value = (TdApi.StatisticalValue) item.getData();
+          view.setIgnoreEnabled(true);
+          view.setEnabled(false);
+          if (value.value == value.previousValue || value.previousValue == 0) {
+            view.setTextColorId(ColorId.NONE);
+            view.setName(Strings.buildCounter((long) value.value));
+          } else {
+            view.setTextColorId(value.value > value.previousValue ? ColorId.textSecure : ColorId.textNegative);
+            view.setName(Lang.getString(value.value > value.previousValue ? R.string.StatsValueGrowth : R.string.StatsValueFall, Strings.buildCounter((long) value.value), Strings.buildCounter((long) Math.abs(value.value - value.previousValue)), Lang.beautifyDouble(value.growthRatePercentage)));
           }
-          case R.id.btn_notifications: {
-            view.setIgnoreEnabled(true);
-            view.setEnabled(false);
-            view.setTextColorId(0);
-            view.setName(Lang.beautifyDouble(item.getDoubleValue()) + "%");
-            view.setData(item.getString());
-            break;
-          }
+          view.setData(item.getString());
+        } else if (itemId == R.id.btn_notifications) {
+          view.setIgnoreEnabled(true);
+          view.setEnabled(false);
+          view.setTextColorId(ColorId.NONE);
+          view.setName(Lang.beautifyDouble(item.getDoubleValue()) + "%");
+          view.setData(item.getString());
         }
       }
     };
     recyclerView.setAdapter(adapter);
-    tdlib.client().send(new TdApi.GetChatStatistics(chatId, Theme.isDark()), result -> {
-      switch (result.getConstructor()) {
-        case TdApi.ChatStatisticsChannel.CONSTRUCTOR:
-          runOnUiThreadOptional(() -> {
-            setStatistics((TdApi.ChatStatisticsChannel) result);
-          });
-          break;
-        case TdApi.ChatStatisticsSupergroup.CONSTRUCTOR:
-          runOnUiThreadOptional(() -> {
-            setStatistics((TdApi.ChatStatisticsSupergroup) result);
-          });
-          break;
-        case TdApi.Error.CONSTRUCTOR:
-          UI.showError(result);
-          break;
+    tdlib.ui().attachViewportToRecyclerView(messageViewport, recyclerView);
+    tdlib.send(new TdApi.GetChatStatistics(chatId, Theme.isDark()), (chatStatistics, error) -> runOnUiThreadOptional(() -> {
+      if (error != null) {
+        UI.showError(error);
+      } else {
+        switch (chatStatistics.getConstructor()) {
+          case TdApi.ChatStatisticsChannel.CONSTRUCTOR:
+            setStatistics((TdApi.ChatStatisticsChannel) chatStatistics);
+            break;
+          case TdApi.ChatStatisticsSupergroup.CONSTRUCTOR:
+            setStatistics((TdApi.ChatStatisticsSupergroup) chatStatistics);
+            break;
+          default:
+            Td.assertChatStatistics_6744ad70();
+            throw Td.unsupported(chatStatistics);
+        }
       }
-    });
+    }));
+  }
+
+  @Override
+  public void destroy () {
+    super.destroy();
+    if (messageViewport != null) {
+      messageViewport.performDestroy();
+    }
   }
 
   @Override
@@ -318,54 +319,50 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
       DoubleTextWrapper wrapper = null;
       TdApi.Object object = users[i];
 
-      switch (id) {
-        case R.id.btn_viewMemberMessages:
-          TdApi.ChatStatisticsMessageSenderInfo sender = (TdApi.ChatStatisticsMessageSenderInfo) object;
-          SpannableStringBuilder customStatus2 = new SpannableStringBuilder();
-          wrapper = new DoubleTextWrapper(tdlib, sender.userId, true);
+      if (id == R.id.btn_viewMemberMessages) {
+        TdApi.ChatStatisticsMessageSenderInfo sender = (TdApi.ChatStatisticsMessageSenderInfo) object;
+        SpannableStringBuilder customStatus2 = new SpannableStringBuilder();
+        wrapper = new DoubleTextWrapper(tdlib, sender.userId, true);
 
-          if (sender.sentMessageCount > 0) {
-            customStatus2.append(Lang.pluralBold(R.string.xMessages, sender.sentMessageCount));
+        if (sender.sentMessageCount > 0) {
+          customStatus2.append(Lang.pluralBold(R.string.xMessages, sender.sentMessageCount));
+        }
+
+        if (sender.averageCharacterCount > 0) {
+          if (customStatus2.length() > 0) {
+            customStatus2.append(", ");
           }
 
-          if (sender.averageCharacterCount > 0) {
-            if (customStatus2.length() > 0) {
-              customStatus2.append(", ");
-            }
+          customStatus2.append(Lang.pluralBold(R.string.StatsXCharacters, sender.averageCharacterCount));
+        }
 
-            customStatus2.append(Lang.pluralBold(R.string.StatsXCharacters, sender.averageCharacterCount));
-          }
+        wrapper.setSubtitle(customStatus2);
+      } else if (id == R.id.btn_openInviterProfile) {
+        TdApi.ChatStatisticsInviterInfo inviter = (TdApi.ChatStatisticsInviterInfo) object;
+        wrapper = new DoubleTextWrapper(tdlib, inviter.userId, true);
+        wrapper.setSubtitle(Lang.pluralBold(R.string.StatsXInvitations, inviter.addedMemberCount));
+      } else if (id == R.id.btn_viewAdminActions) {
+        TdApi.ChatStatisticsAdministratorActionsInfo admin = (TdApi.ChatStatisticsAdministratorActionsInfo) object;
+        wrapper = new DoubleTextWrapper(tdlib, admin.userId, true);
 
-          wrapper.setSubtitle(customStatus2);
-          break;
-        case R.id.btn_openInviterProfile:
-          TdApi.ChatStatisticsInviterInfo inviter = (TdApi.ChatStatisticsInviterInfo) object;
-          wrapper = new DoubleTextWrapper(tdlib, inviter.userId, true);
-          wrapper.setSubtitle(Lang.pluralBold(R.string.StatsXInvitations, inviter.addedMemberCount));
-          break;
-        case R.id.btn_viewAdminActions:
-          TdApi.ChatStatisticsAdministratorActionsInfo admin = (TdApi.ChatStatisticsAdministratorActionsInfo) object;
-          wrapper = new DoubleTextWrapper(tdlib, admin.userId, true);
+        SpannableStringBuilder customStatus = new SpannableStringBuilder();
 
-          SpannableStringBuilder customStatus = new SpannableStringBuilder();
+        if (admin.deletedMessageCount > 0) {
+          customStatus.append(Lang.pluralBold(R.string.StatsXDeletions, admin.deletedMessageCount));
+          if (admin.bannedUserCount > 0 || admin.restrictedUserCount > 0)
+            customStatus.append(", ");
+        }
 
-          if (admin.deletedMessageCount > 0) {
-            customStatus.append(Lang.pluralBold(R.string.StatsXDeletions, admin.deletedMessageCount));
-            if (admin.bannedUserCount > 0 || admin.restrictedUserCount > 0)
-              customStatus.append(", ");
-          }
+        if (admin.bannedUserCount > 0) {
+          customStatus.append(Lang.pluralBold(R.string.StatsXBans, admin.bannedUserCount));
+          if (admin.restrictedUserCount > 0) customStatus.append(", ");
+        }
 
-          if (admin.bannedUserCount > 0) {
-            customStatus.append(Lang.pluralBold(R.string.StatsXBans, admin.bannedUserCount));
-            if (admin.restrictedUserCount > 0) customStatus.append(", ");
-          }
+        if (admin.restrictedUserCount > 0) {
+          customStatus.append(Lang.pluralBold(R.string.StatsXRestrictions, admin.restrictedUserCount));
+        }
 
-          if (admin.restrictedUserCount > 0) {
-            customStatus.append(Lang.pluralBold(R.string.StatsXRestrictions, admin.restrictedUserCount));
-          }
-
-          wrapper.setSubtitle(customStatus);
-          break;
+        wrapper.setSubtitle(customStatus);
       }
 
       if (wrapper != null) {
@@ -422,13 +419,13 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_members, 0, R.string.StatsMembers, false).setData(statistics.memberCount));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
     items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_notifications, 0, R.string.StatsNotifications, false).setDoubleValue(statistics.enabledNotificationsPercentage));
-    if (!Td.isEmpty(statistics.meanViewCount)) {
+    if (!Td.isEmpty(statistics.meanMessageViewCount)) {
       items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
-      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_view, 0, R.string.StatsViews, false).setData(statistics.meanViewCount));
+      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_view, 0, R.string.StatsViews, false).setData(statistics.meanMessageViewCount));
     }
-    if (!Td.isEmpty(statistics.meanShareCount)) {
+    if (!Td.isEmpty(statistics.meanMessageShareCount)) {
       items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
-      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_share, 0, R.string.StatsShares, false).setData(statistics.meanShareCount));
+      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_share, 0, R.string.StatsShares, false).setData(statistics.meanMessageShareCount));
     }
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
     items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, Lang.getStringBold(R.string.StatsRange, Lang.getDateRange(statistics.period.startDate, statistics.period.endDate, TimeUnit.SECONDS, true)), false));
@@ -450,15 +447,20 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     );
 
     setCharts(items, charts, () -> {
-      if (statistics.recentMessageInteractions.length > 0) {
-        setRecentMessageInteractions(statistics.period, statistics.recentMessageInteractions, R.string.StatsRecentPosts);
+      TdApi.ChatStatisticsInteractionInfo[] recentMessageInteractions = ArrayUtils.filter(
+        Arrays.asList(statistics.recentInteractions),
+        item -> item.objectType.getConstructor() == TdApi.ChatStatisticsObjectTypeMessage.CONSTRUCTOR
+      ).toArray(new TdApi.ChatStatisticsInteractionInfo[0]);
+      // TODO: stories
+      if (recentMessageInteractions.length > 0) {
+        setRecentMessageInteractions(statistics.period, recentMessageInteractions, R.string.StatsRecentPosts);
       } else {
         executeScheduledAnimation();
       }
     });
   }
 
-  private void setRecentMessageInteractions (TdApi.DateRange range, TdApi.ChatStatisticsMessageInteractionInfo[] interactions, @StringRes int header) {
+  private void setRecentMessageInteractions (TdApi.DateRange range, TdApi.ChatStatisticsInteractionInfo[] interactions, @StringRes int header) {
     loadInteractionMessages(interactions, () -> {
       int currentSize = adapter.getItems().size();
       adapter.getItems().add(new ListItem(ListItem.TYPE_CHART_HEADER_DETACHED).setData(new MiniChart(header, range)));
@@ -475,39 +477,57 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     });
   }
 
-  private void loadInteractionMessages (TdApi.ChatStatisticsMessageInteractionInfo[] interactions, Runnable onMessagesLoaded) {
+  private void loadInteractionMessages (TdApi.ChatStatisticsInteractionInfo[] interactions, Runnable onMessagesLoaded) {
     AtomicInteger remaining = new AtomicInteger(interactions.length);
 
-    Client.ResultHandler handler = result -> {
-      if (result.getConstructor() == TdApi.Message.CONSTRUCTOR) {
-        TdApi.Message message = (TdApi.Message) result;
-
-        if (message.mediaAlbumId != 0) {
-          if (!interactionMessageAlbums.containsKey(message.mediaAlbumId)) {
-            interactionMessageAlbums.put(message.mediaAlbumId, new ArrayList<>());
-          }
-
-          interactionMessageAlbums.get(message.mediaAlbumId).add(message);
-        }
-
-        if (message.canGetStatistics && (message.mediaAlbumId == 0 || currentMediaAlbumId != message.mediaAlbumId)) {
-          currentMediaAlbumId = message.mediaAlbumId;
-          // interactionMessageAlbums should already be loaded at this moment
-          TdApi.Message suitableMessage = message.mediaAlbumId == 0 ? message : sortInteractions(message.mediaAlbumId);
-          interactionMessages.add(new MessageInteractionInfoContainer(
-            suitableMessage,
-            interactions[interactions.length - remaining.get()]
-          ));
-        }
-      }
-
+    Runnable after = () -> {
       if (remaining.decrementAndGet() == 0) {
         runOnUiThreadOptional(onMessagesLoaded);
       }
     };
+    Tdlib.ResultHandler<TdApi.Message> messageHandler = (message, error) -> {
+      if (message != null) {
+        tdlib.getMessageProperties(message, properties -> {
+          if (message.mediaAlbumId != 0) {
+            if (!interactionMessageAlbums.containsKey(message.mediaAlbumId)) {
+              interactionMessageAlbums.put(message.mediaAlbumId, new ArrayList<>());
+            }
+            interactionMessageAlbums.get(message.mediaAlbumId).add(message);
+          }
 
-    for (TdApi.ChatStatisticsMessageInteractionInfo interaction : interactions) {
-      tdlib.client().send(new TdApi.GetMessageLocally(getArgumentsStrict().chatId, interaction.messageId), handler);
+          if (properties.canGetStatistics && (message.mediaAlbumId == 0 || currentMediaAlbumId != message.mediaAlbumId)) {
+            currentMediaAlbumId = message.mediaAlbumId;
+            // interactionMessageAlbums should already be loaded at this moment
+            TdApi.Message suitableMessage = message.mediaAlbumId == 0 ? message : sortInteractions(message.mediaAlbumId);
+            interactionMessages.add(new MessageInteractionInfoContainer(
+              suitableMessage,
+              interactions[interactions.length - remaining.get()]
+            ));
+          }
+          after.run();
+        });
+      } else {
+        after.run();
+      }
+    };
+
+    for (TdApi.ChatStatisticsInteractionInfo interaction : interactions) {
+      switch (interaction.objectType.getConstructor()) {
+        case TdApi.ChatStatisticsObjectTypeMessage.CONSTRUCTOR: {
+          TdApi.ChatStatisticsObjectTypeMessage objectType = (TdApi.ChatStatisticsObjectTypeMessage) interaction.objectType;
+          tdlib.send(new TdApi.GetMessageLocally(getArgumentsStrict().chatId, objectType.messageId), messageHandler);
+          break;
+        }
+        case TdApi.ChatStatisticsObjectTypeStory.CONSTRUCTOR: {
+          TdApi.ChatStatisticsObjectTypeStory objectType = (TdApi.ChatStatisticsObjectTypeStory) interaction.objectType;
+          // TODO: stories
+          after.run();
+          break;
+        }
+        default:
+          Td.assertChatStatisticsObjectType_5cb871fe();
+          throw Td.unsupported(interaction.objectType);
+      }
     }
   }
 
@@ -579,9 +599,9 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
 
   public static class MessageInteractionInfoContainer {
     public final TdApi.Message message;
-    public final TdApi.ChatStatisticsMessageInteractionInfo messageInteractionInfo;
+    public final TdApi.ChatStatisticsInteractionInfo messageInteractionInfo;
 
-    public MessageInteractionInfoContainer (TdApi.Message message, TdApi.ChatStatisticsMessageInteractionInfo messageInteractionInfo) {
+    public MessageInteractionInfoContainer (TdApi.Message message, TdApi.ChatStatisticsInteractionInfo messageInteractionInfo) {
       this.message = message;
       this.messageInteractionInfo = messageInteractionInfo;
     }
@@ -594,7 +614,7 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     showSettings(new SettingsWrapBuilder(R.id.btn_blockSender)
       .addHeaderItem(headerItem)
       .setIntDelegate((id, result) -> {
-        boolean blockUser = result.get(R.id.right_readMessages) != 0;
+        boolean blockUser = result.get(R.id.btn_restrictMember) != 0;
         if (content.getMember().status.getConstructor() == TdApi.ChatMemberStatusRestricted.CONSTRUCTOR && !blockUser) {
           TdApi.ChatMemberStatusRestricted now = (TdApi.ChatMemberStatusRestricted) content.getMember().status;
           tdlib.setChatMemberStatus(chatId, content.getSenderId(), new TdApi.ChatMemberStatusRestricted(false, now.restrictedUntilDate, now.permissions), content.getMember().status, null);
@@ -605,13 +625,13 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
           }
         }
       })
-      .setOnSettingItemClick((view, settingsId, item, doneButton, settingsAdapter) -> {
-        headerItem.setString(Lang.getStringBold(settingsAdapter.getCheckIntResults().get(R.id.right_readMessages) != 0 ? R.string.MemberCannotJoinGroup : R.string.MemberCanJoinGroup, tdlib.cache().userName(content.getUserId())));
+      .setOnSettingItemClick((view, settingsId, item, doneButton, settingsAdapter, window) -> {
+        headerItem.setString(Lang.getStringBold(settingsAdapter.getCheckIntResults().get(R.id.btn_restrictMember) != 0 ? R.string.MemberCannotJoinGroup : R.string.MemberCanJoinGroup, tdlib.cache().userName(content.getUserId())));
         settingsAdapter.updateValuedSettingByPosition(settingsAdapter.indexOfView(headerItem));
       })
       .setRawItems(new ListItem[]{
-        new ListItem(ListItem.TYPE_CHECKBOX_OPTION, R.id.right_readMessages, 0, R.string.BanMember, true)
-      }).setSaveStr(R.string.RemoveMember).setSaveColorId(R.id.theme_color_textNegative));
+        new ListItem(ListItem.TYPE_CHECKBOX_OPTION, R.id.btn_restrictMember, 0, R.string.BanMember, true)
+      }).setSaveStr(R.string.RemoveMember).setSaveColorId(ColorId.textNegative));
   }
 
   private void editMember (DoubleTextWrapper content, boolean restrict, TdApi.ChatMemberStatus myStatus, TdApi.ChatMember member) {
@@ -638,17 +658,16 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
     IntList icons = new IntList(4);
     StringList strings = new StringList(4);
 
-    tdlib.client().send(new TdApi.GetChatMember(getArgumentsStrict().chatId, content.getSenderId()), result -> {
-      if (result.getConstructor() != TdApi.ChatMember.CONSTRUCTOR) return;
+    tdlib.send(new TdApi.GetChatMember(getArgumentsStrict().chatId, content.getSenderId()), (member, error) -> {
+      if (error != null) return;
 
-      TdApi.ChatMember member = (TdApi.ChatMember) result;
       TdApi.ChatMemberStatus myStatus = tdlib.chatStatus(getArgumentsStrict().chatId);
 
       if (myStatus != null) {
         if (TD.isCreator(member.status)) {
           if (TD.isCreator(myStatus)) {
             ids.append(R.id.btn_editRights);
-            colors.append(OPTION_COLOR_NORMAL);
+            colors.append(OptionColor.NORMAL);
             icons.append(R.drawable.baseline_edit_24);
             strings.append(R.string.EditAdminTitle);
           }
@@ -656,7 +675,7 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
           int promoteMode = TD.canPromoteAdmin(myStatus, member.status);
           if (promoteMode != TD.PROMOTE_MODE_NONE) {
             ids.append(R.id.btn_editRights);
-            colors.append(OPTION_COLOR_NORMAL);
+            colors.append(OptionColor.NORMAL);
             icons.append(R.drawable.baseline_stars_24);
             switch (promoteMode) {
               case TD.PROMOTE_MODE_EDIT:
@@ -677,7 +696,7 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
         int restrictMode = TD.canRestrictMember(myStatus, member.status);
         if (restrictMode != TD.RESTRICT_MODE_NONE) {
           ids.append(R.id.btn_restrictMember);
-          colors.append(OPTION_COLOR_NORMAL);
+          colors.append(OptionColor.NORMAL);
           icons.append(R.drawable.baseline_block_24);
 
           switch (restrictMode) {
@@ -696,7 +715,7 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
 
           if (restrictMode != TD.RESTRICT_MODE_VIEW && TD.isMember(member.status)) {
             ids.append(R.id.btn_blockSender);
-            colors.append(OPTION_COLOR_NORMAL);
+            colors.append(OptionColor.NORMAL);
             icons.append(R.drawable.baseline_remove_circle_24);
             strings.append(R.string.RemoveFromGroup);
           }
@@ -710,24 +729,19 @@ public class ChatStatisticsController extends RecyclerViewController<ChatStatist
         strings.append(Lang.getString(R.string.ViewMessagesFromUser, tdlib.cache().userFirstName(content.getUserId())));
       }
       icons.append(R.drawable.baseline_person_24);
-      colors.append(OPTION_COLOR_NORMAL);
+      colors.append(OptionColor.NORMAL);
 
       runOnUiThreadOptional(() -> showOptions("", ids.get(), strings.get(), colors.get(), icons.get(), (itemView, id) -> {
-        switch (id) {
-          case R.id.btn_messageViewList:
-            HashtagChatController c = new HashtagChatController(context, tdlib);
-            c.setArguments(new HashtagChatController.Arguments(null, getArgumentsStrict().chatId, null, new TdApi.MessageSenderUser(content.getUserId()), false));
-            navigateTo(c);
-            break;
-          case R.id.btn_editRights:
-            editMember(content, false, myStatus, member);
-            break;
-          case R.id.btn_restrictMember:
-            editMember(content, true, myStatus, member);
-            break;
-          case R.id.btn_blockSender:
-            kickMember(content);
-            break;
+        if (id == R.id.btn_messageViewList) {
+          HashtagChatController c = new HashtagChatController(context, tdlib);
+          c.setArguments(new HashtagChatController.Arguments(null, getArgumentsStrict().chatId, null, new TdApi.MessageSenderUser(content.getUserId()), false));
+          navigateTo(c);
+        } else if (id == R.id.btn_editRights) {
+          editMember(content, false, myStatus, member);
+        } else if (id == R.id.btn_restrictMember) {
+          editMember(content, true, myStatus, member);
+        } else if (id == R.id.btn_blockSender) {
+          kickMember(content);
         }
 
         return true;

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,19 +18,25 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.drawable.Drawable;
 import android.view.MotionEvent;
 import android.view.View;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.DrawableRes;
 
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.loader.AvatarReceiver;
+import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.widget.SendButton;
 
 import me.vkryl.android.AnimatorUtils;
+import me.vkryl.android.animator.BoolAnimator;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
@@ -49,6 +55,7 @@ public class EditButton extends View implements FactorAnimator.Target {
 
   public EditButton (Context context) {
     super(context);
+    avatarReceiver = new AvatarReceiver(this);
     setBackgroundResource(R.drawable.bg_btn_header_light);
   }
 
@@ -80,6 +87,7 @@ public class EditButton extends View implements FactorAnimator.Target {
   private static final int ACTIVE_ANIMATOR = 0;
   private static final int CHANGE_ANIMATOR = 1;
   private static final int EDITED_ANIMATOR = 2;
+  private static final int SLOW_MODE_VISIBILITY_ANIMATOR = 3;
 
   private float editedFactor;
   private FactorAnimator editedAnimator;
@@ -119,6 +127,16 @@ public class EditButton extends View implements FactorAnimator.Target {
     }
   }
 
+  private BoolAnimator slowModeVisibilityAnimator;
+
+  public void setSlowModeVisibility (boolean visibility, boolean animated) {
+    if (slowModeVisibilityAnimator == null) {
+      slowModeVisibilityAnimator = new BoolAnimator(SLOW_MODE_VISIBILITY_ANIMATOR, this, AnimatorUtils.DECELERATE_INTERPOLATOR, useFastAnimations ? 180L : 380L, visibility);
+    }
+
+    slowModeVisibilityAnimator.setValue(visibility, animated);
+  }
+
   private FactorAnimator iconAnimator;
   private int pendingIcon;
 
@@ -141,26 +159,21 @@ public class EditButton extends View implements FactorAnimator.Target {
     invalidate();
   }
 
-  private float iconFactor;
-
   private void setIconInternal (int iconRes) {
     this.icon = Drawables.get(getResources(), iconRes);
     this.iconRes = iconRes;
     this.isActive = willBeActive;
     this.activeFactor = isActive ? 1f : 0f;
     if (icon != null) {
-      switch (iconRes) {
-        case R.drawable.baseline_volume_up_24: {
-          if (specialIcon != null && (specialIcon.getWidth() != icon.getMinimumWidth() || specialIcon.getHeight() != icon.getMinimumHeight())) {
-            specialIcon = null;
-          }
-          if (specialIcon == null || specialIcon.isRecycled()) {
-            specialIcon = Bitmap.createBitmap(icon.getMinimumWidth(), icon.getMinimumHeight(), Bitmap.Config.ARGB_8888);
-            specialIconCanvas = new Canvas(specialIcon);
-          }
-          drawSoundOn();
-          break;
+      if (iconRes == R.drawable.baseline_volume_up_24) {
+        if (specialIcon != null && (specialIcon.getWidth() != icon.getMinimumWidth() || specialIcon.getHeight() != icon.getMinimumHeight())) {
+          specialIcon = null;
         }
+        if (specialIcon == null || specialIcon.isRecycled()) {
+          specialIcon = Bitmap.createBitmap(icon.getMinimumWidth(), icon.getMinimumHeight(), Bitmap.Config.ARGB_8888);
+          specialIconCanvas = new Canvas(specialIcon);
+        }
+        drawSoundOn();
       }
     }
   }
@@ -168,7 +181,7 @@ public class EditButton extends View implements FactorAnimator.Target {
   private void drawSoundOn () {
     Canvas c = specialIconCanvas;
     specialIcon.eraseColor(0);
-    Drawables.draw(c, icon, 0, 0, Paints.getPorterDuffPaint(0xffffffff));
+    Drawables.draw(c, icon, 0, 0, Paints.whitePorterDuffPaint());
     if (activeFactor != 0f) {
       int width = Screen.dp(2f);
       int height = Screen.dp(24f);
@@ -183,14 +196,11 @@ public class EditButton extends View implements FactorAnimator.Target {
   }
 
   private void setIconFactor (float factor) {
-    if (this.iconFactor != factor) {
-      this.iconFactor = factor;
-      if (factor >= .5f && pendingIcon != 0) {
-        setIconInternal(pendingIcon);
-        pendingIcon = 0;
-      }
-      invalidate();
+    if (factor >= .5f && pendingIcon != 0) {
+      setIconInternal(pendingIcon);
+      pendingIcon = 0;
     }
+    invalidate();
   }
 
   private Drawable secondIcon;
@@ -216,11 +226,8 @@ public class EditButton extends View implements FactorAnimator.Target {
     if (this.activeFactor != factor) {
       this.activeFactor = factor;
 
-      switch (iconRes) {
-        case R.drawable.baseline_volume_up_24: {
-          drawSoundOn();
-          break;
-        }
+      if (iconRes == R.drawable.baseline_volume_up_24) {
+        drawSoundOn();
       }
 
       invalidate();
@@ -276,6 +283,10 @@ public class EditButton extends View implements FactorAnimator.Target {
         setEditedFactor(factor);
         break;
       }
+      case SLOW_MODE_VISIBILITY_ANIMATOR: {
+        invalidate();
+        break;
+      }
     }
   }
 
@@ -286,16 +297,25 @@ public class EditButton extends View implements FactorAnimator.Target {
   private static final float MIN_SCALE = USE_SCALE ? .78f : 1f;
   private static final float STEP_FACTOR = USE_SCALE ? .45f : .5f;
 
+
+  private final Path clipPath = new Path();
+
+  @ColorInt
+  private int getCurrentIconColor () {
+    float activeFactor = iconRes != R.drawable.baseline_volume_up_24 ? this.activeFactor : 0f;
+    return changer.getColor(activeFactor);
+  }
+
   @Override
   protected void onDraw (Canvas c) {
-    float activeFactor = iconRes != R.drawable.baseline_volume_up_24 ? this.activeFactor : 0f;
-    Paint paint = Paints.getPorterDuffPaint(changer.getColor(activeFactor));
+    Paint paint = Paints.getPorterDuffPaint(getCurrentIconColor());
 
     int centerX = getMeasuredWidth() / 2;
     int centerY = getMeasuredHeight() / 2;
 
     float alpha;
 
+    float iconFactor = iconAnimator != null ? iconAnimator.getFactor() : 0f;
     if (iconFactor <= STEP_FACTOR) {
       alpha = 1f - AnimatorUtils.DECELERATE_INTERPOLATOR.getInterpolation(iconFactor / STEP_FACTOR);
     } else if (iconFactor < .5f) {
@@ -308,6 +328,16 @@ public class EditButton extends View implements FactorAnimator.Target {
 
     if (alpha == 0f) {
       return;
+    }
+
+    final float slowModeCounterFactor = slowModeVisibilityAnimator != null ? slowModeVisibilityAnimator.getFloatValue() : 1f;
+    final boolean needDrawSlowModeCounter = slowModeCounterController != null && slowModeCounterController.isVisible() && slowModeCounterFactor > 0f;
+    int clipSaveTo = -1;
+    if (needDrawSlowModeCounter) {
+      slowModeCounterController.draw(c, avatarReceiver, centerX, centerY, slowModeCounterFactor);
+      slowModeCounterController.buildClipPath(this, clipPath);
+      clipSaveTo = Views.save(c);
+      c.clipPath(clipPath);
     }
 
     if (alpha != 1f) {
@@ -355,5 +385,46 @@ public class EditButton extends View implements FactorAnimator.Target {
 
       c.drawCircle(centerX, getMeasuredHeight() - Screen.dp(9.5f), Screen.dp(2f), Paints.fillingPaint(color));
     }
+
+    if (needDrawSlowModeCounter) {
+      Views.restore(c, clipSaveTo);
+    }
+  }
+
+  private SendButton.SlowModeCounterController slowModeCounterController;
+  private final AvatarReceiver avatarReceiver;
+
+  public void destroySlowModeCounterController () {
+    if (slowModeCounterController != null) {
+      slowModeCounterController.performDestroy();
+      slowModeCounterController = null;
+    }
+    avatarReceiver.destroy();
+  }
+
+  @Override
+  protected void onAttachedToWindow () {
+    avatarReceiver.attach();
+    super.onAttachedToWindow();
+  }
+
+  @Override
+  protected void onDetachedFromWindow () {
+    avatarReceiver.detach();
+    super.onDetachedFromWindow();
+  }
+
+  public SendButton.SlowModeCounterController getSlowModeCounterController (Tdlib tdlib) {
+    if (slowModeCounterController != null && slowModeCounterController.tdlib() != tdlib) {
+      destroySlowModeCounterController();
+    }
+
+    if (slowModeCounterController == null) {
+      slowModeCounterController = new SendButton.SlowModeCounterController(tdlib, this, this::getCurrentIconColor, true, false, (a, b, c) -> {
+        avatarReceiver.requestMessageSender(a, b, c);
+        invalidate();
+      });
+    }
+    return slowModeCounterController;
   }
 }

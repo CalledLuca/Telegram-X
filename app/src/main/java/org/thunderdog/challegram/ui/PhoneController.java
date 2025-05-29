@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,13 +14,14 @@
  */
 package org.thunderdog.challegram.ui;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.net.Uri;
+import android.os.Build;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Spannable;
 import android.text.Spanned;
-import android.text.TextPaint;
-import android.text.style.ClickableSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -37,8 +38,11 @@ import androidx.collection.SparseArrayCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
+import org.thunderdog.challegram.BuildConfig;
+import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.base.SettingView;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Background;
@@ -50,6 +54,8 @@ import org.thunderdog.challegram.navigation.Menu;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.telegram.TdlibManager;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Keyboard;
@@ -60,6 +66,8 @@ import org.thunderdog.challegram.tool.TGPhoneFormat;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
+import org.thunderdog.challegram.util.NoUnderlineClickableSpan;
+import org.thunderdog.challegram.util.StringList;
 import org.thunderdog.challegram.widget.MaterialEditTextGroup;
 import org.thunderdog.challegram.widget.NoScrollTextView;
 
@@ -70,6 +78,9 @@ import java.util.Comparator;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
+import me.vkryl.core.collection.IntList;
+import me.vkryl.core.lambda.RunnableBool;
+import tgx.td.Td;
 
 public class PhoneController extends EditBaseController<Void> implements SettingsAdapter.TextChangeListener, MaterialEditTextGroup.FocusListener, MaterialEditTextGroup.TextChangeListener, View.OnClickListener, Menu {
 
@@ -114,26 +125,18 @@ public class PhoneController extends EditBaseController<Void> implements Setting
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_login: {
-        header.addButton(menu, R.id.btn_proxy, R.drawable.baseline_security_24, R.id.theme_color_headerIcon, this, Screen.dp(48f));
-        header.addButton(menu, R.id.btn_languageSettings, R.drawable.baseline_language_24, R.id.theme_color_headerIcon, this, Screen.dp(48f));
-        break;
-      }
+    if (id == R.id.menu_login) {
+      header.addButton(menu, R.id.btn_proxy, R.drawable.baseline_security_24, ColorId.headerIcon, this, Screen.dp(48f));
+      header.addButton(menu, R.id.btn_languageSettings, R.drawable.baseline_language_24, ColorId.headerIcon, this, Screen.dp(48f));
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.btn_proxy: {
-        tdlib.ui().openProxySettings(this, true);
-        break;
-      }
-      case R.id.btn_languageSettings: {
-        navigateTo(new SettingsLanguageController(context, tdlib));
-        break;
-      }
+    if (id == R.id.btn_proxy) {
+      tdlib.ui().openProxySettings(this, true);
+    } else if (id == R.id.btn_languageSettings) {
+      navigateTo(new SettingsLanguageController(context, tdlib));
     }
   }
 
@@ -300,7 +303,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
     countryWrap.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, headerHeight, Gravity.TOP));
 
     String countryText = storedValues.get(R.id.login_country, "");
-    countryView = new MaterialEditTextGroup(context);
+    countryView = new MaterialEditTextGroup(context, tdlib);
     countryView.addThemeListeners(this);
     countryView.setUseTextChangeAnimations();
     countryView.getEditText().setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_FLAG_CAP_WORDS | InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS);
@@ -335,7 +338,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
       this.baseItems.add(firstNameItem = new ListItem(ListItem.TYPE_EDITTEXT_NO_PADDING_REUSABLE, R.id.edit_first_name, 0, R.string.login_FirstName).setStringValue(initialFirstName));
       this.baseItems.add(lastNameItem = new ListItem(ListItem.TYPE_EDITTEXT_NO_PADDING_REUSABLE, R.id.edit_last_name, 0, R.string.login_LastName).setStringValue(initialLastName));
     }
-    hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, mode == MODE_ADD_CONTACT ? 0 : mode == MODE_CHANGE_NUMBER ? R.string.ChangePhoneHelp : R.string.login_SmsHint).setTextColorId(R.id.theme_color_textLight);
+    hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, mode == MODE_ADD_CONTACT ? 0 : mode == MODE_CHANGE_NUMBER ? R.string.ChangePhoneHelp : R.string.login_SmsHint).setTextColorId(ColorId.textLight);
     if (mode != MODE_ADD_CONTACT) {
       this.baseItems.add(hintItem);
     }
@@ -366,13 +369,8 @@ public class PhoneController extends EditBaseController<Void> implements Setting
 
       @Override
       protected void setValuedSetting (ListItem item, SettingView view, boolean isUpdate) {
-        switch (item.getId()) {
-          case R.id.btn_syncContacts: {
-            break;
-          }
-          default: {
-            break;
-          }
+        if (item.getId() == R.id.btn_syncContacts) {
+          // Do smth?
         }
       }
 
@@ -400,7 +398,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
 
         String codeText = storedValues.get(R.id.login_code, "");
 
-        codeView = new MaterialEditTextGroup(context);
+        codeView = new MaterialEditTextGroup(context, tdlib);
         codeView.addThemeListeners(PhoneController.this);
         codeView.setLayoutParams(params);
         codeView.getEditText().setId(R.id.login_code);
@@ -418,7 +416,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
         params.leftMargin = Screen.dp(89f);
 
         String numberText = storedValues.get(R.id.login_country, "");
-        numberView = new MaterialEditTextGroup(context);
+        numberView = new MaterialEditTextGroup(context, tdlib);
         numberView.addThemeListeners(PhoneController.this);
         numberView.getEditText().setBackspaceListener((v, editable, selectionStart, selectionEnd) -> {
           if (editable.length() == 0) {
@@ -485,7 +483,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
             if (bestIndex != -1) {
               int selectionIndex = bestIndex;
               tdlib.ui().post(() -> {
-                Views.setSelection(v, selectionIndex);
+                v.setSelection(selectionIndex);
               });
             }
           }
@@ -546,17 +544,13 @@ public class PhoneController extends EditBaseController<Void> implements Setting
 
   @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_syncContacts: {
-        adapter.toggleView(v);
-        break;
-      }
-      case R.id.result: {
-        ListItem item = (ListItem) v.getTag();
-        if (item != null && item.getData() != null) {
-          setCountry(item);
-        }
-        break;
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_syncContacts) {
+      adapter.toggleView(v);
+    } else if (viewId == R.id.result) {
+      ListItem item = (ListItem) v.getTag();
+      if (item != null && item.getData() != null) {
+        setCountry(item);
       }
     }
   }
@@ -596,55 +590,46 @@ public class PhoneController extends EditBaseController<Void> implements Setting
   private boolean ignorePhoneChanges;
 
   @Override
-  public void onTextChanged (int id, ListItem item, MaterialEditTextGroup v, String text) {
-    switch (id) {
-      case R.id.edit_first_name: {
-        updateDoneState();
-        break;
-      }
+  public void onTextChanged (int id, ListItem item, MaterialEditTextGroup v) {
+    if (id == R.id.edit_first_name) {
+      updateDoneState();
     }
   }
 
   @Override
   public void onTextChanged (MaterialEditTextGroup v, CharSequence charSequence) {
     String text = charSequence.toString();
-    switch (v.getEditText().getId()) {
-      case R.id.login_country: {
-        if (inCountryMode) {
-          setIsCountryDefault(false);
-        }
-        searchCountry(text.trim().toLowerCase());
-        break;
+    final int inputId = v.getEditText().getId();
+    if (inputId == R.id.login_country) {
+      if (inCountryMode) {
+        setIsCountryDefault(false);
       }
-      case R.id.login_code: {
-        String prevValue = storedValues.get(R.id.login_code);
-        if (prevValue != null && StringUtils.equalsOrBothEmpty(prevValue, text)) {
-          return;
-        }
-        storedValues.put(v.getEditText().getId(), text);
-        String numeric = Strings.getNumber(text);
-        if (!text.equals(numeric)) {
-          codeView.setText(numeric);
-        } else {
-          updateCountry(numeric, true);
-          checkNumber(numberView.getEditText().getText().toString());
-          updateDoneState();
-        }
-        showError(null);
-        if (text.length() == 4 && codeView.getEditText().getSelectionEnd() == text.length()) {
-          Keyboard.show(numberView.getEditText());
-        }
-        break;
+      searchCountry(text.trim().toLowerCase());
+    } else if (inputId == R.id.login_code) {
+      String prevValue = storedValues.get(R.id.login_code);
+      if (prevValue != null && StringUtils.equalsOrBothEmpty(prevValue, text)) {
+        return;
       }
-      case R.id.login_phone: {
-        storedValues.put(v.getEditText().getId(), text);
-        if (!ignorePhoneChanges) {
-          checkNumber(text);
-          updateDoneState();
-        }
-        showError(null);
-        break;
+      storedValues.put(v.getEditText().getId(), text);
+      String numeric = Strings.getNumber(text);
+      if (!text.equals(numeric)) {
+        codeView.setText(numeric);
+      } else {
+        updateCountry(numeric, true);
+        checkNumber(numberView.getEditText().getText().toString());
+        updateDoneState();
       }
+      showError(null);
+      if (text.length() == 4 && codeView.getEditText().getSelectionEnd() == text.length()) {
+        Keyboard.show(numberView.getEditText());
+      }
+    } else if (inputId == R.id.login_phone) {
+      storedValues.put(v.getEditText().getId(), text);
+      if (!ignorePhoneChanges) {
+        checkNumber(text);
+        updateDoneState();
+      }
+      showError(null);
     }
   }
 
@@ -783,8 +768,8 @@ public class PhoneController extends EditBaseController<Void> implements Setting
         }*/
       }
 
-      tdlib.ui().post(() -> {
-        if (!isDestroyed() && prefix.equals(lastSearchPrefix) && inCountryMode) {
+      runOnUiThreadOptional(() -> {
+        if (prefix.equals(lastSearchPrefix) && inCountryMode) {
           setItems(results, true);
         }
       });
@@ -816,8 +801,8 @@ public class PhoneController extends EditBaseController<Void> implements Setting
 
   private void updateHint (boolean useOffsetLeft, CharSequence text, boolean isError) {
     int offsetLeft = useOffsetLeft ? Screen.dp(89f) : 0;
-    int textColorId = isError ? R.id.theme_color_textNegative : R.id.theme_color_textLight;
-    if (offsetLeft != hintItem.getTextPaddingLeft() || hintItem.getTextColorId(R.id.theme_color_background_textLight) != textColorId || !StringUtils.equalsOrBothEmpty(hintItem.getString(), text)) {
+    @PorterDuffColorId int textColorId = isError ? ColorId.textNegative : ColorId.textLight;
+    if (offsetLeft != hintItem.getTextPaddingLeft() || hintItem.getTextColorId(ColorId.background_textLight) != textColorId || !StringUtils.equalsOrBothEmpty(hintItem.getString(), text)) {
       hintItem.setTextPaddingLeft(offsetLeft);
       hintItem.setTextColorId(textColorId);
       hintItem.setString(text);
@@ -909,17 +894,17 @@ public class PhoneController extends EditBaseController<Void> implements Setting
         function = new TdApi.ImportContacts(new TdApi.Contact[] {new TdApi.Contact(phone, getFirstName(), getLastName(), null, 0)});
         break;
       case MODE_CHANGE_NUMBER:
-        function = new TdApi.ChangePhoneNumber(phone, TD.defaultPhoneNumberAuthenticationSettings());
+        function = new TdApi.SendPhoneNumberCode(phone, tdlib.phoneNumberAuthenticationSettings(context), new TdApi.PhoneNumberCodeTypeChange());
         break;
       case MODE_LOGIN:
-        function = new TdApi.SetAuthenticationPhoneNumber(phone, TD.defaultPhoneNumberAuthenticationSettings());
+        function = new TdApi.SetAuthenticationPhoneNumber(phone, tdlib.phoneNumberAuthenticationSettings(context));
         tdlib.setAuthPhoneNumber(phoneCode, phoneNumber);
         break;
       default:
         throw new IllegalArgumentException("mode == " + mode);
     }
-    tdlib.client().send(function, object -> tdlib.ui().post(() -> {
-      if (!isDestroyed()) {
+    RunnableBool act = (tokenVerified) -> tdlib.awaitReadyOrWaitingForData(() -> {
+      tdlib.client().send(function, object -> runOnUiThreadOptional(() -> {
         setInProgress(false);
         switch (object.getConstructor()) {
           case TdApi.Ok.CONSTRUCTOR: {
@@ -935,19 +920,17 @@ public class PhoneController extends EditBaseController<Void> implements Setting
             if (mode == MODE_ADD_CONTACT) {
               final TdApi.ImportedContacts contacts = (TdApi.ImportedContacts) object;
               final long[] userIds = contacts.userIds;
-              tdlib.ui().post(() -> {
-                if (!isDestroyed()) {
-                  setInProgress(false);
-                  if (userIds.length == 1) {
-                    if (userIds[0] == 0) {
-                      suggestInvitingUser(userIds[0], contacts.importerCount[0]);
+              runOnUiThreadOptional(() -> {
+                setInProgress(false);
+                if (userIds.length == 1) {
+                  if (userIds[0] == 0) {
+                    suggestInvitingUser(userIds[0], contacts.importerCount[0]);
+                  } else {
+                    UI.showToast(R.string.ContactAdded, Toast.LENGTH_SHORT);
+                    if (StringUtils.isEmpty(initialPhoneNumber)) {
+                      tdlib.ui().openPrivateChat(PhoneController.this, userIds[0], null);
                     } else {
-                      UI.showToast(R.string.ContactAdded, Toast.LENGTH_SHORT);
-                      if (StringUtils.isEmpty(initialPhoneNumber)) {
-                        tdlib.ui().openPrivateChat(PhoneController.this, userIds[0], null);
-                      } else {
-                        navigateBack();
-                      }
+                      navigateBack();
                     }
                   }
                 }
@@ -962,22 +945,16 @@ public class PhoneController extends EditBaseController<Void> implements Setting
               if (message instanceof Spannable) {
                 CustomTypefaceSpan[] spans = ((Spannable) message).getSpans(0, message.length(), CustomTypefaceSpan.class);
                 for (CustomTypefaceSpan span : spans) {
-                  if (span.getEntityType() != null && span.getEntityType().getConstructor() == TdApi.TextEntityTypeItalic.CONSTRUCTOR) {
+                  if (span.getTextEntityType() != null && Td.isItalic(span.getTextEntityType())) {
                     span.setTypeface(null);
-                    span.setColorId(R.id.theme_color_textLink);
-                    span.setEntityType(new TdApi.TextEntityTypeEmailAddress());
+                    span.setColorId(ColorId.textLink);
+                    span.setTextEntityType(new TdApi.TextEntityTypeEmailAddress());
                     int start = ((Spannable) message).getSpanStart(span);
                     int end = ((Spannable) message).getSpanEnd(span);
-                    ((Spannable) message).setSpan(new ClickableSpan() {
+                    ((Spannable) message).setSpan(new NoUnderlineClickableSpan() {
                       @Override
                       public void onClick (@NonNull View widget) {
                         Intents.sendEmail(help.email, help.subject, help.text);
-                      }
-
-                      @Override
-                      public void updateDrawState (@NonNull TextPaint ds) {
-                        super.updateDrawState(ds);
-                        ds.setUnderlineText(false);
                       }
                     }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                     break;
@@ -991,8 +968,16 @@ public class PhoneController extends EditBaseController<Void> implements Setting
             break;
           }
         }
-      }
-    }));
+      }));
+    });
+    if (mode == MODE_LOGIN) {
+      tdlib.context().checkDeviceToken(0, tokenVerified -> {
+        tdlib.checkConnectionParams();
+        act.runWithBool(tokenVerified);
+      });
+    } else {
+      act.runWithBool(false);
+    }
 
     return true;
   }
@@ -1054,7 +1039,7 @@ public class PhoneController extends EditBaseController<Void> implements Setting
     } else {
       msg = Lang.getStringBold(R.string.SuggestInvitingUser, getFirstName());
     }
-    showOptions(msg, new int[] {R.id.btn_invite, R.id.btn_cancel}, new String[] {Lang.getString(R.string.Invite), Lang.getString(R.string.Cancel)}, new int[] {OPTION_COLOR_BLUE, OPTION_COLOR_NORMAL}, new int[] {R.drawable.baseline_person_add_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+    showOptions(msg, new int[] {R.id.btn_invite, R.id.btn_cancel}, new String[] {Lang.getString(R.string.Invite), Lang.getString(R.string.Cancel)}, new int[] {OptionColor.BLUE, OptionColor.NORMAL}, new int[] {R.drawable.baseline_person_add_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
       if (id == R.id.btn_invite) {
         tdlib.cache().getInviteText(text -> {
           Intents.sendSms(getPhoneNumber(), text.text);
@@ -1092,9 +1077,96 @@ public class PhoneController extends EditBaseController<Void> implements Setting
     }
   }
 
+  private AlertDialog emulatorPrompt;
+
+  private void showEmulatorPrompt () {
+    if (mode != MODE_LOGIN) {
+      return;
+    }
+    context.forceRunEmulatorChecks(detectionResult -> executeOnUiThreadOptional(() -> {
+      if (detectionResult == null || !detectionResult.isEmulatorDetected()) {
+        return;
+      }
+      if (emulatorPrompt != null && emulatorPrompt.isShowing()) {
+        return;
+      }
+      boolean mayBeFalsePositive = detectionResult.mayBeFalsePositive();
+      AlertDialog.Builder b = new AlertDialog.Builder(context, Theme.dialogTheme());
+      b.setTitle(Lang.getString(R.string.EmulatorWarningTitle));
+      b.setMessage(Lang.getMarkdownStringSecure(this, mayBeFalsePositive ? R.string.EmulatorWarning : R.string.EmulatorWarningStrict));
+      b.setPositiveButton(Lang.getString(R.string.EmulatorWarningBtnOk), (dialog, which) -> dialog.dismiss());
+      if (mayBeFalsePositive) {
+        b.setNeutralButton(Lang.getString(R.string.EmulatorWarningBtnReport), (dialog, which) -> {
+          try {
+            Uri uri = Uri.parse(BuildConfig.REMOTE_URL);
+            String title = Lang.getString(R.string.EmulatorDetectorReport_title, Build.BRAND, Build.MODEL);
+            String metadata = U.getUsefulMetadata(tdlib);
+            String body = Lang.getString(R.string.EmulatorDetectorReport_text,
+              Build.BRAND,
+              Build.MODEL,
+              Build.PRODUCT,
+              Build.DEVICE,
+              Build.HARDWARE,
+              metadata,
+              detectionResult.toHumanReadableFormat()
+            );
+            Uri reportUri = uri
+              .buildUpon()
+              .appendEncodedPath("issues/new")
+              .appendQueryParameter("title", title)
+              .appendQueryParameter("body", body)
+              .build();
+
+            IntList ids = new IntList(3);
+            StringList strings = new StringList(3);
+            IntList icons = new IntList(3);
+            ids.append(R.id.btn_openIn);
+            strings.append(R.string.EmulatorWarningReportBtn);
+            icons.append(R.drawable.baseline_github_24);
+
+            ids.append(R.id.btn_copyLink);
+            strings.append(R.string.CopyLink);
+            icons.append(R.drawable.baseline_link_24);
+
+            if (tdlib.context().hasActiveAccounts()) {
+              ids.append(R.id.btn_share);
+              strings.append(R.string.Share);
+              icons.append(R.drawable.baseline_forward_24);
+            }
+            showOptions(Lang.getMarkdownStringSecure(this, R.string.EmulatorWarningReport), ids.get(), strings.get(), null, icons.get(), (optionItemView, id) -> {
+              if (id == R.id.btn_openIn) {
+                Intents.openUriInBrowser(reportUri);
+              } else if (id == R.id.btn_copyLink) {
+                UI.copyText(reportUri.toString(), R.string.CopiedLink);
+              } else if (id == R.id.btn_share) {
+                String text = reportUri.toString();
+                ShareController c = new ShareController(context, context.currentTdlib());
+                c.setArguments(new ShareController.Args(text).setExport(text));
+                c.show();
+              }
+              return true;
+            });
+          } catch (Throwable t) {
+            Log.e(t);
+            UI.showToast("Unable to create report: " + Log.toString(t), Toast.LENGTH_SHORT);
+          }
+        });
+      }
+      b.setCancelable(false);
+      emulatorPrompt = showAlert(b);
+    }));
+  }
+
+  @Override
+  public void onActivityResume () {
+    super.onActivityResume();
+    showEmulatorPrompt();
+  }
+
   @Override
   public void onFocus () {
     super.onFocus();
+    showEmulatorPrompt();
     if (oneShot) {
       return;
     }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -72,7 +72,7 @@ public class Fonts {
       firstFont = true;
     }
     if (needSystemFonts) {
-      Typeface typeface = fallback.get();
+      Typeface typeface = fallback.getValue();
       if (typeface != null) {
         return typeface;
       }
@@ -83,7 +83,7 @@ public class Fonts {
       if (firstFont)
         needSystemFonts = true;
       Log.e("Unable to load built-in font", t);
-      return fallback.get();
+      return fallback.getValue();
     }
   }
 
@@ -174,24 +174,39 @@ public class Fonts {
     private TextPaint regularPaint, boldPaint, fakeBoldPaint, italicPaint, boldItalicPaint;
 
     private final @NonNull Typeface regularTypeface;
-    private final @Nullable Typeface boldTypeface, italicTypeface, boldItalicTypeface, monospaceTypeface;
+    private final @Nullable Typeface boldTypeface, italicTypeface, boldItalicTypeface, monospaceTypeface, extraBoldTypeface;
 
     private TextPaintStorage monospaceStorage;
     private TextPaintStorage underlineStorage;
     private TextPaintStorage strikeThroughStorage;
+    private TextPaintStorage extraBoldStorage;
+    private @Nullable TextPaintStorage alternativeSizeStorage;
 
     private final int paintFlags;
 
-    public TextPaintStorage (@NonNull Typeface regularTypeface, int paintFlags) {
-      this(regularTypeface, null, null, null, null, paintFlags);
+    TextPaintStorage (@NonNull TextPaintStorage other) {
+      this(
+        other.regularTypeface,
+        other.boldTypeface,
+        other.italicTypeface,
+        other.boldItalicTypeface,
+        other.monospaceTypeface,
+        other.extraBoldTypeface,
+        other.paintFlags
+      );
     }
 
-    public TextPaintStorage (@NonNull Typeface regularTypeface, @Nullable Typeface boldTypeface, @Nullable Typeface italicTypeface, @Nullable Typeface boldItalicTypeface, @Nullable Typeface monospaceTypeface, int paintFlags) {
+    public TextPaintStorage (@NonNull Typeface regularTypeface, int paintFlags) {
+      this(regularTypeface, null, null, null, null, null, paintFlags);
+    }
+
+    public TextPaintStorage (@NonNull Typeface regularTypeface, @Nullable Typeface boldTypeface, @Nullable Typeface italicTypeface, @Nullable Typeface boldItalicTypeface, @Nullable Typeface monospaceTypeface, @Nullable Typeface extraBoldTypeface, int paintFlags) {
       this.regularTypeface = regularTypeface;
       this.boldTypeface = boldTypeface;
       this.italicTypeface = italicTypeface;
       this.boldItalicTypeface = boldItalicTypeface;
       this.monospaceTypeface = monospaceTypeface;
+      this.extraBoldTypeface = extraBoldTypeface;
       this.paintFlags = paintFlags;
     }
 
@@ -275,6 +290,23 @@ public class Fonts {
       return this;
     }
 
+    public TextPaintStorage getExtraBoldStorage () {
+      if (extraBoldTypeface != null) {
+        if (extraBoldStorage == null) {
+          extraBoldStorage = new TextPaintStorage(extraBoldTypeface, paintFlags);
+        }
+        return extraBoldStorage;
+      }
+      return this;
+    }
+
+    public TextPaintStorage getAlternativeSizeStorage () {
+      if (alternativeSizeStorage == null) {
+        alternativeSizeStorage = new TextPaintStorage(this);
+      }
+      return alternativeSizeStorage;
+    }
+
     public TextPaintStorage getUnderlineStorage () {
       return underlineStorage != null ? underlineStorage : (underlineStorage = newStorage(Paint.UNDERLINE_TEXT_FLAG));
     }
@@ -284,11 +316,11 @@ public class Fonts {
     }
 
     private TextPaintStorage newStorage (int addFlags) {
-      return new TextPaintStorage(regularTypeface, boldTypeface, italicTypeface, boldItalicTypeface, monospaceTypeface, paintFlags | addFlags);
+      return new TextPaintStorage(regularTypeface, boldTypeface, italicTypeface, boldItalicTypeface, monospaceTypeface, extraBoldTypeface, paintFlags | addFlags);
     }
   }
 
   public static TextPaintStorage newRobotoStorage () {
-    return new TextPaintStorage(getRobotoRegular(), getRobotoMedium(), getRobotoItalic(), null, getRobotoMono(), 0);
+    return new TextPaintStorage(getRobotoRegular(), getRobotoMedium(), getRobotoItalic(), null, getRobotoMono(), getRobotoBold(), 0);
   }
 }

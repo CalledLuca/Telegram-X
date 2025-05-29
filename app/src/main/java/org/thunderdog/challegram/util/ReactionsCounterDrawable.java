@@ -8,10 +8,7 @@ import android.graphics.drawable.Drawable;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.thunderdog.challegram.data.TGReactions;
 import org.thunderdog.challegram.tool.Screen;
-
-import me.vkryl.android.animator.ListAnimator;
 
 public class ReactionsCounterDrawable extends Drawable {
   private final ReactionsListAnimator topReactions;
@@ -47,12 +44,33 @@ public class ReactionsCounterDrawable extends Drawable {
     return visibility;
   }
 
+  private float getTargetVisibility (ReactionsListAnimator.Entry item) {
+    float position = item.getPosition();
+    float visibility = item.isAffectingList() ? 1f: 0f;
+    if (position > 3f) {
+      return 0f;
+    } else if (position > 2f) {
+      return Math.min(visibility, 3f - position);
+    }
+
+    return visibility;
+  }
+
   @Override
   public int getMinimumWidth () {
     float width = 0f;
     for (int a = 0; a < topReactions.size(); a++) {
       ReactionsListAnimator.Entry item = topReactions.getEntry(a);
       width += Screen.dp(15) * getVisibility(item);
+    }
+    return Math.max((int) width - Screen.dp(3), 0);
+  }
+
+  public int getTargetWidth () {
+    float width = 0f;
+    for (int a = 0; a < topReactions.size(); a++) {
+      ReactionsListAnimator.Entry item = topReactions.getEntry(a);
+      width += Screen.dp(15) * getTargetVisibility(item);
     }
     return Math.max((int) width - Screen.dp(3), 0);
   }

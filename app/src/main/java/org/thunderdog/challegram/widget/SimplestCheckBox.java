@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,9 +22,9 @@ import android.text.TextPaint;
 
 import androidx.annotation.FloatRange;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Fonts;
@@ -63,7 +63,7 @@ public class SimplestCheckBox {
   }
 
   public static SimplestCheckBox newInstance (float initialFactor, String counter) {
-    return newInstance(initialFactor, counter, R.id.theme_color_checkActive, R.id.theme_color_checkContent, false, 0f);
+    return newInstance(initialFactor, counter, ColorId.checkActive, ColorId.checkContent, false, 0f);
   }
 
   public static SimplestCheckBox newInstance (float initialFactor, String counter, int fillingColor, int contentColor, boolean isNegative, float squareFactor) {

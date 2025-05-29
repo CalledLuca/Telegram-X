@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,12 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 
 public interface TdlibNotificationStyleDelegate {
   void displayNotificationGroup (@NonNull Context context, @NonNull TdlibNotificationHelper helper, int badgeCount, boolean allowPreview, @NonNull TdlibNotificationGroup group, @Nullable TdlibNotificationSettings settings);
   void rebuildNotificationsSilently (@NonNull Context context, @NonNull TdlibNotificationHelper helper, int badgeCount, boolean allowPreview, TdApi.NotificationSettingsScope scope, long specificChatId, int specificGroupId);
   void hideNotificationGroup (@NonNull Context context, @NonNull TdlibNotificationHelper helper, int badgeCount, boolean allowPreview, @NonNull TdlibNotificationGroup group);
   void hideAllNotifications (@NonNull Context context, @NonNull TdlibNotificationHelper helper, int badgeCount);
+  void cancelPendingMediaPreviewDownloads (@NonNull Context context, @NonNull TdlibNotificationHelper helper);
 }

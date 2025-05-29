@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,10 +16,7 @@ package org.thunderdog.challegram.unsorted;
 
 import org.thunderdog.challegram.tool.Screen;
 
-import me.vkryl.core.MathUtils;
-
 @SuppressWarnings(value = "SpellCheckingInspection")
-@Deprecated
 public class Size {
   //Raw sizes
 
@@ -40,7 +37,7 @@ public class Size {
   public static final float NAVIGATION_PREVIEW_TRANSLATE_FACTOR = 3.5f;
 
   public static float convertExpandedFactor (float scaleFactor) {
-    return MathUtils.clamp(getHeaderSizeDifference(true) * scaleFactor / (float) getHeaderSizeDifference(false));
+    return getHeaderSizeDifference(true) * scaleFactor / (float) getHeaderSizeDifference(false);
   }
 
   public static int getHeaderPortraitSize () {

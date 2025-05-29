@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,8 @@ import android.view.View;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.user.UserView;
 import org.thunderdog.challegram.core.Lang;
@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import me.vkryl.core.ArrayUtils;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMembersController.Args> implements View.OnClickListener, Client.ResultHandler, TdlibCache.UserDataChangeListener {
   private ArrayList<TGUser> senders;
@@ -128,13 +128,10 @@ public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMe
 
               @Override
               public void onAfterForceTouchAction (ForceTouchView.ForceTouchContext context, int actionId, Object arg) {
-                switch (actionId) {
-                  case R.id.btn_openChat:
-                    tdlib.ui().openChat(ChatLinkMembersController.this, user.getChatId(), new TdlibUi.ChatOpenParameters().keepStack());
-                    break;
-                  case R.id.btn_restrictMember:
-                    openRightsScreen(user.getUserId());
-                    break;
+                if (actionId == R.id.btn_openChat) {
+                  tdlib.ui().openChat(ChatLinkMembersController.this, user.getChatId(), new TdlibUi.ChatOpenParameters().keepStack());
+                } else if (actionId == R.id.btn_restrictMember) {
+                  openRightsScreen(user.getUserId());
                 }
               }
             };
@@ -159,7 +156,7 @@ public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMe
 
     recyclerView.setAdapter(adapter);
 
-    tdlib.client().send(new TdApi.GetChatInviteLinkMembers(getArgumentsStrict().chatId, getArgumentsStrict().inviteLink, null, 20), result -> {
+    tdlib.client().send(new TdApi.GetChatInviteLinkMembers(getArgumentsStrict().chatId, getArgumentsStrict().inviteLink, false, null, 20), result -> {
       if (result.getConstructor() == TdApi.ChatInviteLinkMembers.CONSTRUCTOR) {
         TdApi.ChatInviteLinkMembers senders = (TdApi.ChatInviteLinkMembers) result;
         ArrayList<TGUser> list = new ArrayList<>(senders.members.length);
@@ -181,7 +178,7 @@ public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMe
       }
     });
 
-    tdlib.listeners().subscribeForAnyUpdates(this);
+    tdlib.listeners().subscribeForGlobalUpdates(this);
   }
 
   private void openRightsScreen (long userId) {
@@ -204,7 +201,7 @@ public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMe
   @Override
   public void destroy () {
     super.destroy();
-    tdlib.listeners().unsubscribeFromAnyUpdates(this);
+    tdlib.listeners().unsubscribeFromGlobalUpdates(this);
   }
 
   @Override
@@ -309,6 +306,6 @@ public class ChatLinkMembersController extends RecyclerViewController<ChatLinkMe
     }
 
     isLoadingMore = true;
-    tdlib.client().send(new TdApi.GetChatInviteLinkMembers(getArgumentsStrict().chatId, getArgumentsStrict().inviteLink, sendersTdlib.get(sendersTdlib.size() - 1), 50), this);
+    tdlib.client().send(new TdApi.GetChatInviteLinkMembers(getArgumentsStrict().chatId, getArgumentsStrict().inviteLink, false, sendersTdlib.get(sendersTdlib.size() - 1), 50), this);
   }
 }

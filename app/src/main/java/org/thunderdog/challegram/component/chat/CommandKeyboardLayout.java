@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,20 +22,19 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.ViewTreeObserver;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
-import org.thunderdog.challegram.emoji.Emoji;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Keyboard;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
-import org.thunderdog.challegram.v.EditTextBase;
-import org.thunderdog.challegram.widget.NoScrollTextView;
+import org.thunderdog.challegram.v.EditText;
+import org.thunderdog.challegram.widget.EmojiTextView;
+import org.thunderdog.challegram.widget.TextView;
 
 import me.vkryl.android.ViewUtils;
 
@@ -104,7 +103,7 @@ public class CommandKeyboardLayout extends ViewGroup implements ViewTreeObserver
           text.setVisibility(View.VISIBLE);
         }
         text.setTag(c);
-        text.setText(c.text != null ? Emoji.instance().replaceEmoji(c.text) : "");
+        text.setText(c.text != null ? c.text : "");
 
         j++;
       }
@@ -136,8 +135,9 @@ public class CommandKeyboardLayout extends ViewGroup implements ViewTreeObserver
   private @Nullable ViewController<?> themeProvider;
 
   private TextView genButton () {
-    TextView text = new NoScrollTextView(getContext());
-    ViewUtils.setBackground(text, Theme.rectSelector(4f, 0f, R.id.theme_color_chatKeyboardButton));
+    TextView text = new EmojiTextView(getContext());
+    text.setScrollDisabled(true);
+    ViewUtils.setBackground(text, Theme.rectSelector(4f, 0f, ColorId.chatKeyboardButton));
     if (themeProvider != null) {
       themeProvider.addThemeInvalidateListener(text);
     }
@@ -319,12 +319,12 @@ public class CommandKeyboardLayout extends ViewGroup implements ViewTreeObserver
 
   int keyboardState;
 
-  public void showKeyboard (EditTextBase input) {
+  public void showKeyboard (EditText input) {
     keyboardState = 1;
     Keyboard.show(input);
   }
 
-  public void hideKeyboard (EditTextBase input) {
+  public void hideKeyboard (EditText input) {
     keyboardState = 2;
     Keyboard.hide(input);
   }

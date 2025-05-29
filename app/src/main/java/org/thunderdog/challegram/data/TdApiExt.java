@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,9 @@
  */
 package org.thunderdog.challegram.data;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import androidx.annotation.NonNull;
+
+import org.drinkless.tdlib.TdApi;
 
 public class TdApiExt {
   public static class MessageChatEvent extends TdApi.MessageContent {
@@ -32,15 +34,17 @@ public class TdApiExt {
 
     @Override
     public int getConstructor () {
+      //noinspection WrongConstant
       return CONSTRUCTOR;
     }
 
     @Override
+    @NonNull
     public String toString () {
       return "MessageChatEvent{" +
         "event=" + event +
         ", isFull=" + isFull +
-        ", noDate=" + hideDate +
+        ", hideDate=" + hideDate +
         '}';
     }
   }

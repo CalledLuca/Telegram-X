@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,8 +25,8 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.widget.NoScrollTextView;
 
@@ -108,7 +108,7 @@ public class MediaFilterNameView extends FrameLayoutFix implements FactorAnimato
     addView(value);
   }
 
-  private @ThemeColorId int nameColorId, valueColorId;
+  private @ColorId int nameColorId, valueColorId;
 
   public void addThemeListeners (@Nullable ViewController<?> themeProvider) {
     if (themeProvider != null) {
@@ -121,7 +121,7 @@ public class MediaFilterNameView extends FrameLayoutFix implements FactorAnimato
     }
   }
 
-  public void setColors (@ThemeColorId int nameColorId, @ThemeColorId int valueColorId) {
+  public void setColors (@ColorId int nameColorId, @ColorId int valueColorId) {
     name.setTextColor(Theme.getColor(this.nameColorId = nameColorId));
     value.setTextColor(Theme.getColor(this.valueColorId = valueColorId));
   }

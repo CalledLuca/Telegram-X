@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
@@ -41,8 +41,8 @@ import me.vkryl.android.animator.BoolAnimator;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.reference.ReferenceMap;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class TdlibStatusManager implements CleanupStartupDelegate {
   public static final int CHANGE_FLAG_TEXT = 1; // update text
@@ -627,11 +627,11 @@ public class TdlibStatusManager implements CleanupStartupDelegate {
     throw new IllegalArgumentException(chat.type.toString());
   }
 
-  public String getPrivateChatSubtitle (long userId) {
+  public CharSequence getPrivateChatSubtitle (long userId) {
     return getPrivateChatSubtitle(userId, tdlib.cache().user(userId), true, true);
   }
 
-  public String getPrivateChatSubtitle (long userId, @Nullable TdApi.User user, boolean allowMyself) {
+  public CharSequence getPrivateChatSubtitle (long userId, @Nullable TdApi.User user, boolean allowMyself) {
     return getPrivateChatSubtitle(userId, user, allowMyself, true);
   }
 
@@ -642,7 +642,11 @@ public class TdlibStatusManager implements CleanupStartupDelegate {
     return user != null && user.type.getConstructor() == TdApi.UserTypeRegular.CONSTRUCTOR && user.status.getConstructor() == TdApi.UserStatusOnline.CONSTRUCTOR;
   }
 
-  public String getPrivateChatSubtitle (long userId, @Nullable TdApi.User user, boolean allowMyself, boolean allowDuration) {
+  public CharSequence getPrivateChatSubtitle (long userId, @Nullable TdApi.User user, boolean allowMyself, boolean allowDuration) {
+    return getPrivateChatSubtitle(userId, user, allowMyself, allowDuration, false);
+  }
+
+  public CharSequence getPrivateChatSubtitle (long userId, @Nullable TdApi.User user, boolean allowMyself, boolean allowDuration, boolean fallbackToContactStatus) {
     if (allowMyself && tdlib.isSelfUserId(userId)) {
       return Lang.lowercase(Lang.getString(R.string.ChatWithYourself));
     }
@@ -661,6 +665,10 @@ public class TdlibStatusManager implements CleanupStartupDelegate {
     }
     switch (user.type.getConstructor()) {
       case TdApi.UserTypeBot.CONSTRUCTOR: {
+        TdApi.UserTypeBot bot = (TdApi.UserTypeBot) user.type;
+        if (bot.activeUserCount > 0) {
+          return Lang.pluralBold(R.string.xBotUsers, bot.activeUserCount);
+        }
         return Lang.getString(R.string.Bot);
       }
       case TdApi.UserTypeDeleted.CONSTRUCTOR: {
@@ -668,6 +676,20 @@ public class TdlibStatusManager implements CleanupStartupDelegate {
       }
       case TdApi.UserTypeUnknown.CONSTRUCTOR: {
         return Lang.getString(R.string.unknownUser);
+      }
+      case TdApi.UserTypeRegular.CONSTRUCTOR: {
+        if (fallbackToContactStatus) {
+          return Lang.getString(
+            user.isMutualContact ? R.string.ChatTypeMutualContact :
+            user.isContact ? R.string.ChatTypeContact :
+            R.string.ChatTypeNonContact
+          );
+        }
+        break;
+      }
+      default: {
+        Td.assertUserType_233bc6f4();
+        throw Td.unsupported(user.type);
       }
     }
     return Lang.getUserStatus(tdlib, user.status, allowDuration);
@@ -704,7 +726,7 @@ public class TdlibStatusManager implements CleanupStartupDelegate {
     if (supergroup == null) {
       return "channel unavailable";
     }
-    int resource = supergroup.isChannel ? (StringUtils.isEmpty(supergroup.username) ? R.string.ChannelPrivate : R.string.Channel) : (!StringUtils.isEmpty(supergroup.username) ? R.string.PublicGroup : R.string.Group);
+    int resource = supergroup.isChannel ? (!Td.hasUsername(supergroup) ? R.string.ChannelPrivate : R.string.Channel) : (!Td.isEmpty(supergroup.usernames) ? R.string.PublicGroup : R.string.Group);
     return Lang.lowercase(Lang.getString(resource));
   }
 }

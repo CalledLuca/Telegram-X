@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
   xmlns:tools="http://schemas.android.com/tools"
-  package="org.thunderdog.challegram"
   android:installLocation="auto">
 
-  <uses-sdk tools:overrideLibrary="androidx.camera.camera2, androidx.camera.core, androidx.camera.view, androidx.camera.lifecycle, androidx.camera.extensions, com.otaliastudios.transcoder, com.otaliastudios.opengl, com.linkedin.android.litr, com.linkedin.android.litr.filter" />
+  <uses-sdk tools:overrideLibrary="androidx.media3.exoplayer, androidx.media3.exoplayer.hls, androidx.media3.common, androidx.media3.transformer, androidx.media3.extractor, androidx.media3.muxer, androidx.media3.decoder, androidx.media3.container, androidx.media3.datasource, androidx.media3.database, androidx.media3.effect, androidx.camera.camera2, androidx.camera.core, androidx.camera.video, androidx.camera.view, androidx.camera.lifecycle, androidx.camera.extensions, com.google.android.play.core.integrity.client, com.otaliastudios.transcoder, com.otaliastudios.opengl, com.google.android.recaptcha, com.google.android.gms.recaptchabase, androidx.annotation.experimental" />
 
   <uses-feature
     android:glEsVersion="0x00020000"
@@ -64,6 +63,11 @@
   <uses-permission android:name="android.permission.READ_CONTACTS" />
   <uses-permission android:name="android.permission.USE_FINGERPRINT" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
   <uses-permission android:name="android.permission.CHANGE_CONFIGURATION" />
   <uses-permission android:name="android.permission.READ_PHONE_STATE" />
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -73,6 +77,10 @@
   <!--<uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />-->
   <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
   <!--<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />-->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+  <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+  <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
   <uses-permission android:name="com.google.android.providers.gsf.permission.READ_GSERVICES" />
   <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
@@ -100,6 +108,11 @@
   <uses-permission android:name="android.permission.AUTHENTICATE_ACCOUNTS" />
 
   <queries>
+    <package android:name="com.google.android.apps.maps" />
+    <package android:name="com.google.android.launcher.layouts.genymotion" />
+    <package android:name="com.bluestacks" />
+    <package android:name="com.bignox.app" />
+    <package android:name="com.vphone.launcher" />
     <intent>
       <action android:name="com.google.android.youtube.api.service.START" />
     </intent>
@@ -137,7 +150,8 @@
         android:name="com.google.mlkit.vision.DEPENDENCIES"
         android:value="barcode,model2,model3" />
 
-    <service android:name=".service.FirebaseListenerService">
+    <service android:name=".service.FirebaseListenerService"
+      android:exported="false">
       <intent-filter>
         <action android:name="com.google.firebase.MESSAGING_EVENT" />
       </intent-filter>
@@ -152,7 +166,7 @@
       android:name=".service.ForegroundService"
       android:enabled="true"
       android:exported="false"
-      android:foregroundServiceType="dataSync"
+      android:foregroundServiceType="shortService"
       android:stopWithTask="false" />
 
     <service
@@ -228,23 +242,26 @@
 
     <activity
       android:name=".voip.gui.VoIPPermissionActivity"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout"
       android:excludeFromRecents="true"
       android:taskAffinity="${applicationId}.voip"
-      android:theme="@style/TransparentTheme" />
+      android:theme="@style/TransparentTheme"
+      android:exported="false" />
     <activity
       android:name=".voip.gui.VoIPFeedbackActivity"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout"
       android:excludeFromRecents="true"
       android:taskAffinity="${applicationId}.voip"
-      android:theme="@style/TransparentTheme" />
+      android:theme="@style/TransparentTheme"
+      android:exported="false" />
 
     <!-- VoIP -->
     <service
       android:name=".service.TGCallService"
       android:exported="false"
-      android:foregroundServiceType="phoneCall" />
-    <receiver android:name=".receiver.VoIPMediaButtonReceiver">
+      android:foregroundServiceType="phoneCall|microphone|mediaPlayback" />
+    <receiver android:name=".receiver.VoIPMediaButtonReceiver"
+      android:exported="false">
       <intent-filter>
         <action android:name="android.intent.action.MEDIA_BUTTON" />
       </intent-filter>
@@ -292,6 +309,7 @@
     <!-- Music -->
     <receiver
       android:name=".receiver.AudioMediaReceiver"
+      android:exported="false"
       android:enabled="true">
       <intent-filter>
         <action android:name="org.thunderdog.challegram.ACTION_PLAY_SKIP_PREVIOUS" />
@@ -323,15 +341,17 @@
 
     <activity
       android:name=".ManageSpaceActivity"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|locale|layoutDirection|uiMode"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|locale|layoutDirection|uiMode"
       android:launchMode="singleTask"
-      android:windowSoftInputMode="adjustPan" />
+      android:windowSoftInputMode="adjustPan"
+      android:exported="true" />
 
     <activity
       android:name=".MainActivity"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|locale|layoutDirection|uiMode"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|locale|layoutDirection|uiMode"
       android:launchMode="singleTask"
-      android:windowSoftInputMode="stateHidden|adjustPan">
+      android:windowSoftInputMode="stateHidden|adjustPan"
+      android:exported="true">
       <intent-filter android:label="@string/AppName">
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
@@ -370,36 +390,19 @@
       </intent-filter>
 
       <!-- Telegram URLs -->
-      <intent-filter>
+      <intent-filter android:autoVerify="true">
         <action android:name="android.intent.action.VIEW" />
 
         <category android:name="android.intent.category.DEFAULT" />
         <category android:name="android.intent.category.BROWSABLE" />
 
-        <data
-          android:host="t.me"
-          android:scheme="http" />
-        <data
-          android:host="t.me"
-          android:scheme="https" />
-        <data
-          android:host="tx.me"
-          android:scheme="http" />
-        <data
-          android:host="tx.me"
-          android:scheme="https" />
-        <data
-          android:host="telegram.me"
-          android:scheme="http" />
-        <data
-          android:host="telegram.me"
-          android:scheme="https" />
-        <data
-          android:host="telegram.dog"
-          android:scheme="http" />
-        <data
-          android:host="telegram.dog"
-          android:scheme="https" />
+        <data android:scheme="http"/>
+        <data android:scheme="https"/>
+
+        <data android:host="t.me"/>
+        <data android:host="tx.me"/>
+        <data android:host="telegram.me"/>
+        <data android:host="telegram.dog"/>
       </intent-filter>
       <intent-filter
         android:icon="@mipmap/app_launcher_round"
@@ -446,6 +449,10 @@
 
     <meta-data
       android:name="com.samsung.android.icon_container.has_icon_container"
-      android:value="true" />
+      android:value="@bool/com_samsung_android_icon_container_has_icon_container" />
+
+    <meta-data
+      android:name="com.google.android.gms.car.application"
+      android:resource="@xml/automotive_app_desc"/>
   </application>
 </manifest>

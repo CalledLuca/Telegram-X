@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@ package org.thunderdog.challegram.v;
 
 import android.content.Context;
 import android.os.Build;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.util.AttributeSet;
 import android.view.ActionMode;
@@ -32,13 +33,16 @@ import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.RtlCheckListener;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.util.CharacterStyleFilter;
+import org.thunderdog.challegram.widget.EmojiEditText;
 
 import me.vkryl.core.ColorUtils;
 
-public class HeaderEditText extends EditTextBase implements ActionMode.Callback, RtlCheckListener {
+public class HeaderEditText extends EmojiEditText implements ActionMode.Callback, RtlCheckListener {
   public HeaderEditText (Context context) {
     super(context);
     init();
@@ -86,16 +90,19 @@ public class HeaderEditText extends EditTextBase implements ActionMode.Callback,
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
       setCustomSelectionActionModeCallback(this);
     }
+    setFilters(new InputFilter[] {
+      new CharacterStyleFilter()
+    });
   }
 
   public static HeaderEditText create (@NonNull ViewGroup parent, boolean light, @Nullable ViewController<?> themeProvider) {
     HeaderEditText editText = (HeaderEditText) Views.inflate(parent.getContext(), light ? R.layout.input_header_light : R.layout.input_header, parent);
-    editText.setTextColor(Theme.getColor(R.id.theme_color_headerText));
-    editText.setHintTextColor(ColorUtils.alphaColor(Theme.HEADER_TEXT_DECENT_ALPHA, Theme.getColor(R.id.theme_color_headerText)));
+    editText.setTextColor(Theme.getColor(ColorId.headerText));
+    editText.setHintTextColor(ColorUtils.alphaColor(Theme.HEADER_TEXT_DECENT_ALPHA, Theme.getColor(ColorId.headerText)));
     editText.checkRtl();
     if (themeProvider != null) {
-      themeProvider.addThemeTextColorListener(editText, R.id.theme_color_headerText);
-      themeProvider.addThemeHintTextColorListener(editText, R.id.theme_color_headerText).setAlpha(Theme.HEADER_TEXT_DECENT_ALPHA);
+      themeProvider.addThemeTextColorListener(editText, ColorId.headerText);
+      themeProvider.addThemeHintTextColorListener(editText, ColorId.headerText).setAlpha(Theme.HEADER_TEXT_DECENT_ALPHA);
     }
     return editText;
   }

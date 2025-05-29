@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,9 +36,10 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.component.chat.CircleCounterBadgeView;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.core.Media;
 import org.thunderdog.challegram.data.TD;
@@ -55,10 +56,14 @@ import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.Menu;
 import org.thunderdog.challegram.navigation.MenuMoreWrap;
 import org.thunderdog.challegram.navigation.ToggleHeaderView;
+import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.ui.MessagesController;
 import org.thunderdog.challegram.util.HapticMenuHelper;
 import org.thunderdog.challegram.v.RtlGridLayoutManager;
 
@@ -68,7 +73,8 @@ import java.util.List;
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.lambda.CancellableRunnable;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class MediaBottomGalleryController extends MediaBottomBaseController<MediaBottomGalleryController.Arguments> implements Media.GalleryCallback, MediaGalleryAdapter.Callback, Menu, View.OnClickListener, MediaBottomGalleryBucketAdapter.Callback, MediaViewDelegate, MediaSelectDelegate, MediaSendDelegate {
   public static class Arguments {
@@ -90,51 +96,44 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
 
   @Override
   protected int getMenuId () {
+    if (mediaLayout.isDisallowGallerySystemPicker()) {
+      return 0;
+    }
     return R.id.menu_more;
   }
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_more: {
+    if (id == R.id.menu_more) {
+      if (mediaLayout.getMode() != MediaLayout.MODE_AVATAR_PICKER) {
         header.addSearchButton(menu, this);
-        header.addMoreButton(menu, this);
-        break;
       }
-      case R.id.menu_clear: {
-        header.addClearButton(menu, this);
-        break;
-      }
+      header.addMoreButton(menu, this);
+    } else if (id == R.id.menu_clear) {
+      header.addClearButton(menu, this);
     }
   }
 
   @Override
   protected int getRecyclerBackgroundColorId () {
-    return R.id.theme_color_chatBackground;
+    return ColorId.chatBackground;
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_clear: {
-        clearSearchInput();
-        break;
-      }
-      case R.id.menu_btn_search: {
-        if (true) {
-          mediaLayout.chooseInlineBot(tdlib.getPhotoSearchBotUsername());
-        } else {
-          if (galleryShown || !hasGalleryAccess) {
-            mediaLayout.getHeaderView().openSearchMode();
-            headerView = mediaLayout.getHeaderView();
-          }
+    if (id == R.id.menu_btn_clear) {
+      clearSearchInput();
+    } else if (id == R.id.menu_btn_search) {
+      if (true) {
+        mediaLayout.chooseInlineBot(tdlib.getPhotoSearchBotUsername());
+      } else {
+        if (galleryShown || !hasGalleryAccess) {
+          mediaLayout.getHeaderView().openSearchMode();
+          headerView = mediaLayout.getHeaderView();
         }
-        break;
       }
-      case R.id.menu_btn_more: {
-        mediaLayout.openGallery(false);
-        break;
-      }
+    } else if (id == R.id.menu_btn_more) {
+      mediaLayout.openGallery(false);
     }
   }
 
@@ -189,6 +188,7 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
   private boolean hasGalleryAccess;
   private Media.Gallery gallery;
   private GridSpacingItemDecoration decoration;
+  private @Nullable CircleCounterBadgeView cameraBadgeView;
   private int spanCount;
 
   private @Nullable ToggleHeaderView headerCell;
@@ -213,7 +213,8 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
     decoration = new GridSpacingItemDecoration(spanCount, Screen.dp(4f), true, true, true);
     GridLayoutManager manager = new RtlGridLayoutManager(context(), spanCount);
 
-    int options = MediaGalleryAdapter.OPTION_SELECTABLE | MediaGalleryAdapter.OPTION_ALWAYS_SELECTABLE;
+    int options = inSingleMediaMode() ? MediaGalleryAdapter.OPTION_NEVER_SELECTABLE :
+      MediaGalleryAdapter.OPTION_SELECTABLE | MediaGalleryAdapter.OPTION_ALWAYS_SELECTABLE;
     /*if (U.deviceHasAnyCamera(context)) {
       options |= MediaGalleryAdapter.OPTION_CAMERA_AVAILABLE;
     }*/
@@ -224,7 +225,7 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
 
     if (galleryLoaded) {
       if (gallery == null/* && !U.deviceHasAnyCamera(context)*/) {
-        showError(getErrorString(hasGalleryAccess), false);
+        showError(getErrorString(hasGalleryAccess), getResolveErrorString(hasGalleryAccess), getResolveClickListener(hasGalleryAccess), false);
       } else {
         showGallery(false);
       }
@@ -232,7 +233,48 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
       loadGalleryPhotos(null);
     }
 
+    if (mediaLayout.needCameraButton()) {
+      cameraBadgeView = new CircleCounterBadgeView(this, R.id.btn_camera, this::onCameraButtonClick, null);
+      cameraBadgeView.init(R.drawable.deproko_baseline_camera_26, 48f, 4f, ColorId.circleButtonChat, ColorId.circleButtonChatIcon);
+      cameraBadgeView.setLayoutParams(FrameLayoutFix.newParams(Screen.dp(CircleCounterBadgeView.BUTTON_WRAPPER_WIDTH), Screen.dp(74f), Gravity.BOTTOM | Gravity.RIGHT, 0, 0, Screen.dp(12), Screen.dp(12) + mediaLayout.getCameraButtonOffset()));
+      contentView.addView(cameraBadgeView);
+    }
+
     return contentView;
+  }
+
+  @Override
+  public boolean allowSpoiler () {
+    return !ChatId.isSecret(getOutputChatId());
+  }
+
+  @Override
+  public boolean allowShowCaptionAboveMedia () {
+    return !ChatId.isSecret(getOutputChatId());
+  }
+
+  @Override
+  protected void onUpdateBottomBarFactor (float bottomBarFactor, float counterFactor, float y) {
+    float factor = Math.min(bottomBarFactor, 1f - counterFactor);
+    if (cameraBadgeView != null) {
+      cameraBadgeView.setAlpha(factor);
+      cameraBadgeView.setTranslationY(y);
+    }
+  }
+
+  private void onCameraButtonClick (View v) {
+    if (mediaLayout.getMode() == MediaLayout.MODE_AVATAR_PICKER) {
+      mediaLayout.hidePopupAndOpenCamera(new ViewController.CameraOpenOptions().anchor(v)
+        .setAvatarPickerMode(mediaLayout.getAvatarPickerMode()).setMediaEditorDelegates(this, this, this));
+      return;
+    }
+
+    MessagesController c = mediaLayout.parentMessageController();
+    if (c == null) return;
+
+    if (!c.showPhotoVideoRestriction(v)) {
+      mediaLayout.hidePopupAndOpenCamera(new CameraOpenOptions().anchor(v).noTrace(c.isSecretChat()));
+    }
   }
 
   @Override
@@ -340,9 +382,22 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
     return hasAccess ? Lang.getString(R.string.NoMediaYet) : Lang.getString(R.string.NoGalleryAccess);
   }
 
+  private static String getResolveErrorString (boolean hasAccess) {
+    return hasAccess ? null : Lang.getString(R.string.ResolveNoGalleryAccess);
+  }
+
+  private View.OnClickListener getResolveClickListener (boolean hasAccess) {
+    if (hasAccess) {
+      return null;
+    }
+    return (view) -> {
+      Intents.openPermissionSettings();
+    };
+  }
+
   private void setError (boolean hasAccess) {
     hasGalleryAccess = hasAccess;
-    showError(getErrorString(hasAccess), true);
+    showError(getErrorString(hasAccess), getResolveErrorString(hasAccess), getResolveClickListener(hasAccess), true);
   }
 
   private boolean galleryShown;
@@ -430,13 +485,13 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
   }
 
   @Override
-  protected void onMultiSendPress (@NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
+  protected void onMultiSendPress (View view, @NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
     // TODO delete other
-    mediaLayout.sendPhotosOrVideos(adapter.getSelectedPhotosAndVideosAsList(true), showingFoundImages, options, disableMarkdown, false);
+    mediaLayout.sendPhotosOrVideos(view, adapter.getSelectedPhotosAndVideosAsList(true), showingFoundImages, options, disableMarkdown, false, false);
   }
 
   @Override
-  protected void addCustomItems (@NonNull List<HapticMenuHelper.MenuItem> hapticItems) {
+  protected void addCustomItems (View view, @NonNull List<HapticMenuHelper.MenuItem> hapticItems) {
     if (canSendAsFile()) {
       List<ImageFile> files = adapter.getSelectedPhotosAndVideosAsList(false);
       boolean allVideo = files != null;
@@ -449,12 +504,13 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
         }
       }
       int count = files != null ? files.size() : 0;
-      hapticItems.add(new HapticMenuHelper.MenuItem(R.id.btn_sendAsFile, count <= 1 ? Lang.getString(allVideo ? R.string.SendOriginal : R.string.SendAsFile) : Lang.plural(allVideo ? R.string.SendXOriginals : R.string.SendAsXFiles, count), R.drawable.baseline_insert_drive_file_24).setOnClickListener(v -> {
-        if (v.getId() == R.id.btn_sendAsFile) {
-          mediaLayout.pickDateOrProceed((forceDisableNotification, schedulingState, disableMarkdown) ->
-            mediaLayout.sendPhotosOrVideos(adapter.getSelectedPhotosAndVideosAsList(true), showingFoundImages, new TdApi.MessageSendOptions(forceDisableNotification, false, false, schedulingState), disableMarkdown, true)
+      hapticItems.add(new HapticMenuHelper.MenuItem(R.id.btn_sendAsFile, count <= 1 ? Lang.getString(allVideo ? R.string.SendOriginal : R.string.SendAsFile) : Lang.plural(allVideo ? R.string.SendXOriginals : R.string.SendAsXFiles, count), R.drawable.baseline_insert_drive_file_24).setOnClickListener((view1, parentView, item) -> {
+        if (view1.getId() == R.id.btn_sendAsFile) {
+          mediaLayout.pickDateOrProceed((sendOptions, disableMarkdown) ->
+            mediaLayout.sendPhotosOrVideos(view1, adapter.getSelectedPhotosAndVideosAsList(true), showingFoundImages, sendOptions, disableMarkdown, true, false)
           );
         }
+        return true;
       }));
     }
   }
@@ -490,10 +546,34 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
   }
 
   @Override
-  public void sendSelectedItems (ArrayList<ImageFile> images, TdApi.MessageSendOptions options, boolean disableMarkdown, boolean asFiles) {
+  public boolean sendSelectedItems (View view, ArrayList<ImageFile> images, TdApi.MessageSendOptions options, boolean disableMarkdown, boolean asFiles, boolean showCaptionAboveMedia, boolean hasSpoiler) {
     // TODO delete other
-    mediaLayout.forceHide();
-    mediaLayout.sendPhotosOrVideos(images, false, options, disableMarkdown, asFiles);
+    return mediaLayout.sendPhotosOrVideos(view, images, false, options, disableMarkdown, asFiles, true);
+  }
+
+  @Override
+  public boolean allowHideMedia () {
+    return mediaLayout.allowSpoiler();
+  }
+
+  @Override
+  public boolean isHideMediaEnabled () {
+    return mediaLayout.needSpoiler();
+  }
+
+  @Override
+  public void onHideMediaStateChanged (boolean hideMedia) {
+    mediaLayout.setNeedSpoiler(hideMedia);
+  }
+
+  @Override
+  public boolean showCaptionAboveMedia () {
+    return mediaLayout.showCaptionAboveMedia();
+  }
+
+  @Override
+  public void onShowCaptionAboveMediaStateChanged (boolean showCaptionAboveMedia) {
+    mediaLayout.setShowCaptionAboveMedia(showCaptionAboveMedia);
   }
 
   @Override
@@ -511,13 +591,21 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
       Log.i("stack.set complete for %d files in %dms", stack.getCurrentSize(), SystemClock.elapsedRealtime() - time);
 
       MediaViewController controller = new MediaViewController(context, tdlib);
-      controller.setArguments(MediaViewController.Args.fromGallery(this, this, this, this, stack, mediaLayout.areScheduledOnly()).setReceiverChatId(mediaLayout.getTargetChatId()));
+      controller.setArguments(mediaLayout.prepareMediaViewArguments(
+        MediaViewController.Args.fromGallery(this, this, this, this, stack, mediaLayout.areScheduledOnly())
+          .setReceiverChatId(mediaLayout.getTargetChatId()).setAvatarPickerMode(mediaLayout.getAvatarPickerMode())
+          .setFlag(MediaViewController.Args.FLAG_DISALLOW_MULTI_SELECTION_MEDIA, mediaLayout.inSingleMediaMode())
+      ));
       controller.open();
 
       return true;
     }
 
     return false;
+  }
+
+  private boolean inSingleMediaMode () {
+    return mediaLayout.inSingleMediaMode();
   }
 
   @Override
@@ -527,6 +615,9 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
 
   @Override
   public void setMediaItemSelected (int index, MediaItem item, boolean isSelected) {
+    if (mediaLayout.getMode() == MediaLayout.MODE_AVATAR_PICKER) {
+      return;
+    }
     adapter.setSelected(item.getSourceGalleryFile(), isSelected);
   }
 
@@ -540,7 +631,7 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
   private final MediaViewThumbLocation location = new MediaViewThumbLocation();
 
   @Override
-  public MediaViewThumbLocation getTargetLocation (int index, MediaItem item) {
+  public MediaViewThumbLocation getTargetLocation (int indexInStack, MediaItem item) {
     if (MediaItem.isGalleryType(item.getType()) && !mediaLayout.isHidden()) {
       View view = adapter.findViewForImage(item.getSourceGalleryFile(), (LinearLayoutManager) getLayoutManager());
       if (view != null) {
@@ -599,13 +690,17 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
     if (gallery == null || gallery.isEmpty()) {
       return;
     }
+    MediaBottomGalleryBucketAdapter sectionsAdapter = sectionsView != null ?
+      (MediaBottomGalleryBucketAdapter) sectionsView.getAdapter() :
+      new MediaBottomGalleryBucketAdapter(context(), this, gallery);
+    // int sectionsHeight = Math.round((Screen.dp(9f) + Screen.dp(9f) + Screen.dp(30f)) * 5.5f);
+    // TODO: update automatically on orientation change without reopening
+    int sectionsHeight = sectionsAdapter.measureHeight(recyclerView.getMeasuredHeight() + HeaderView.getSize(false) - Screen.dp(8f) * 2) + Screen.dp(8f) * 2;
+    FrameLayoutFix.LayoutParams params = FrameLayoutFix.newParams(Screen.dp(210f) + Screen.dp(8f), sectionsHeight, Gravity.TOP | Gravity.LEFT);
+    params.leftMargin = Screen.dp(50f);
+    params.topMargin = HeaderView.getTopOffset();
+
     if (sectionsView == null) {
-      MediaBottomGalleryBucketAdapter sectionsAdapter = new MediaBottomGalleryBucketAdapter(context(), this, gallery);
-
-      FrameLayoutFix.LayoutParams params = FrameLayoutFix.newParams(Screen.dp(210f) + Screen.dp(8f), sectionsAdapter.measureHeight((Screen.dp(9f) + Screen.dp(9f) + Screen.dp(30f)) * 4) + Screen.dp(8f) * 2, Gravity.TOP | Gravity.LEFT);
-      params.leftMargin = Screen.dp(50f);
-      params.topMargin = HeaderView.getTopOffset();
-
       sectionHelperView = new View(context()) {
         @Override
         public boolean onTouchEvent (MotionEvent event) {
@@ -627,6 +722,8 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
       sectionsView.setAlpha(0f);
       sectionsView.setScaleX(MenuMoreWrap.START_SCALE);
       sectionsView.setScaleY(MenuMoreWrap.START_SCALE);
+    } else {
+      sectionsView.setLayoutParams(params);
     }
 
     if (currentBucket != null) {
@@ -810,27 +907,18 @@ public class MediaBottomGalleryController extends MediaBottomBaseController<Medi
       awaitingQuery = q;
       if (!bingUserLoading) {
         bingUserLoading = true;
-        tdlib.client().send(new TdApi.SearchPublicChat(tdlib.getPhotoSearchBotUsername()), object -> {
-          switch (object.getConstructor()) {
-            case TdApi.Chat.CONSTRUCTOR: {
-              TdApi.User user = tdlib.chatUser((TdApi.Chat) object);
-              if (user != null) {
-                bingUserId = user.id;
-                UI.post(() -> {
-                  if (lastQuery.equals(awaitingQuery)) {
-                    searchInternal(awaitingQuery);
-                  }
-                });
-              }
-              break;
-            }
-            case TdApi.Error.CONSTRUCTOR: {
-              UI.showError(object);
-              break;
-            }
-            default: {
-              Log.unexpectedTdlibResponse(object, TdApi.SearchPublicChat.class, TdApi.Chat.class);
-              break;
+        tdlib.send(new TdApi.SearchPublicChat(tdlib.getPhotoSearchBotUsername()), (publicChat, error) -> {
+          if (error != null) {
+            UI.showError(error);
+          } else {
+            TdApi.User user = tdlib.chatUser(publicChat);
+            if (user != null) {
+              bingUserId = user.id;
+              UI.post(() -> {
+                if (lastQuery.equals(awaitingQuery)) {
+                  searchInternal(awaitingQuery);
+                }
+              });
             }
           }
         });

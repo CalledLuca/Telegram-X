@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,22 +33,30 @@ import android.view.View;
 import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
+import androidx.annotation.Dimension;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.Px;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.data.TGStickerSetInfo;
+import org.thunderdog.challegram.loader.AvatarReceiver;
+import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.mediaview.paint.PaintState;
 import org.thunderdog.challegram.telegram.TdlibStatusManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.util.DrawableProvider;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextColorSet;
+import org.thunderdog.challegram.util.text.counter.CounterTextPart;
 import org.thunderdog.challegram.widget.SimplestCheckBox;
 
 import java.util.Arrays;
@@ -85,18 +93,87 @@ public class DrawAlgorithms {
     }
   }
 
-  public static void drawReceiver (Canvas c, Receiver preview, Receiver receiver, boolean clearPreview, boolean needPlaceholder, int left, int top, int right, int bottom) {
-    if (receiver.needPlaceholder()) {
-      preview.setBounds(left, top, right, bottom);
-      if (needPlaceholder && preview.needPlaceholder()) {
-        preview.drawPlaceholder(c);
+  public static void drawRoundRect (Canvas c, float radius, float left, float top, float right, float bottom, Paint paint) {
+    drawRoundRect(c, radius, radius, radius, radius, left, top, right, bottom, paint);
+  }
+  public static void drawRoundRect (Canvas c, float topLeftRadius, float topRightRadius, float bottomRightRadius, float bottomLeftRadius, float left, float top, float right, float bottom, Paint paint) {
+    float radius = Math.max(topLeftRadius, Math.max(topRightRadius, Math.max(bottomRightRadius, bottomLeftRadius)));
+    if (radius > 0) {
+      RectF rectF = Paints.getRectF();
+      rectF.set(left, top, right, bottom);
+      if (topLeftRadius != radius || topRightRadius != radius || bottomRightRadius != radius || bottomLeftRadius != radius) {
+        Path path = Paints.getPath();
+        path.reset();
+        buildPath(path, rectF, topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius);
+        c.drawPath(path, paint);
+        path.reset();
+      } else {
+        c.drawRoundRect(rectF, radius, radius, paint);
       }
-      preview.draw(c);
-    } else if (clearPreview) {
-      preview.clear();
+    } else {
+      c.drawRect(left, top, right, bottom, paint);
     }
-    receiver.setBounds(left, top, right, bottom);
-    receiver.draw(c);
+  }
+
+  public static void drawParticles (Canvas c, float radius, float left, float top, float right, float bottom, float alpha) {
+    drawParticles(c, radius, radius, radius, radius, left, top, right, bottom, alpha);
+  }
+
+  public static void drawParticles (Canvas c, float topLeftRadius, float topRightRadius, float bottomRightRadius, float bottomLeftRadius, float left, float top, float right, float bottom, float alpha) {
+    // TODO
+
+    float centerX = left + (right - left) / 2f;
+    float centerY = top + (bottom - top) / 2f;
+
+    Drawable drawable = Drawables.get(R.drawable.deproko_baseline_whatshot_16);
+
+    c.drawCircle(centerX, centerY,
+      Math.max(drawable.getMinimumWidth(), drawable.getMinimumHeight()) / 2f * 1.65f,
+      Paints.fillingPaint(ColorUtils.alphaColor(alpha, 0x44000000))
+    );
+
+    Drawables.drawCentered(c, drawable, centerX, centerY, PorterDuffPaint.get(ColorId.white, alpha));
+  }
+  public static void drawReceiver (Canvas c, Receiver preview, Receiver receiver, boolean clearPreview, boolean needPlaceholder, int left, int top, int right, int bottom) {
+    drawReceiver(c, preview, receiver, clearPreview, needPlaceholder, left, top, right, bottom, 1f, 1f);
+  }
+
+  public static void drawReceiver (Canvas c, Receiver preview, Receiver receiver, boolean clearPreview, boolean needPlaceholder, int left, int top, int right, int bottom, float previewScale, float scale) {
+    if (preview != null) {
+      if (receiver == null || receiver.needPlaceholder()) {
+        boolean needScale = previewScale != 1f;
+        int saveCount = needScale ? Views.save(c) : -1;
+        if (needScale) {
+          c.scale(previewScale, previewScale, left + (right - left) / 2f, top + (bottom - top) / 2f);
+        }
+
+        preview.setBounds(left, top, right, bottom);
+        if (needPlaceholder && preview.needPlaceholder()) {
+          preview.drawPlaceholder(c);
+        }
+        preview.draw(c);
+        if (needScale) {
+          Views.restore(c, saveCount);
+        }
+      } else {
+        preview.setBounds(left, top, right, bottom);
+        if (clearPreview) {
+          preview.clear();
+        }
+      }
+    }
+    if (receiver != null) {
+      boolean needScale = scale != 1f;
+      int saveCount = needScale ? Views.save(c) : -1;
+      if (needScale) {
+        c.scale(scale, scale, left + (right - left) / 2f, top + (bottom - top) / 2f);
+      }
+      receiver.setBounds(left, top, right, bottom);
+      receiver.draw(c);
+      if (needScale) {
+        Views.restore(c, saveCount);
+      }
+    }
   }
 
   public static void drawCross (Canvas c, float cx, float cy, float factor, @ColorInt int iconColor, @ColorInt int backgroundColor) {
@@ -217,14 +294,27 @@ public class DrawAlgorithms {
   }
 
   public static void drawOnline (Canvas c, Receiver receiver, float onlineFactor) {
+    drawOnline(c, receiver, onlineFactor, Theme.fillingColor(), Theme.getColor(ColorId.online));
+  }
+
+  public static void drawOnline (Canvas c, Receiver receiver, float onlineFactor, int contentCutOutColor, int onlineColor) {
     if (onlineFactor > 0f) {
       float innerRadius = Screen.dp(4.5f);
       float outerRadius = innerRadius + Screen.dp(2f);
       double radians = Math.toRadians(45f);
-      float x = receiver.centerX() + (float) ((double) (receiver.getWidth() / 2) * Math.sin(radians));
-      float y = receiver.centerY() + (float) ((double) (receiver.getHeight() / 2) * Math.cos(radians));
-      c.drawCircle(x, y, outerRadius * onlineFactor, Paints.fillingPaint(Theme.fillingColor()));
-      c.drawCircle(x, y, innerRadius * onlineFactor, Paints.fillingPaint(Theme.getColor(R.id.theme_color_online)));
+      float x, y;
+      if (receiver instanceof AvatarReceiver) {
+        float displayRadius = ((AvatarReceiver) receiver).getDisplayRadius();
+        float centerX = receiver.getRight() - displayRadius;
+        float centerY = receiver.getBottom() - displayRadius;
+        x = centerX + (float) ((double) displayRadius * Math.sin(radians));
+        y = centerY + (float) ((double) displayRadius * Math.cos(radians));
+      } else {
+        x = receiver.centerX() + (float) ((double) (receiver.getWidth() / 2) * Math.sin(radians));
+        y = receiver.centerY() + (float) ((double) (receiver.getHeight() / 2) * Math.cos(radians));
+      }
+      c.drawCircle(x, y, outerRadius * onlineFactor, Paints.fillingPaint(contentCutOutColor));
+      c.drawCircle(x, y, innerRadius * onlineFactor, Paints.fillingPaint(onlineColor));
     }
   }
 
@@ -236,7 +326,7 @@ public class DrawAlgorithms {
       float x = cx + (float) ((double) (radius) * Math.sin(radians));
       float y = cy + (float) ((double) (radius) * Math.cos(radians));
       c.drawCircle(x, y, outerRadius * onlineFactor, Paints.fillingPaint(Theme.fillingColor()));
-      c.drawCircle(x, y, innerRadius * onlineFactor, Paints.fillingPaint(Theme.getColor(R.id.theme_color_online)));
+      c.drawCircle(x, y, innerRadius * onlineFactor, Paints.fillingPaint(Theme.getColor(ColorId.online)));
     }
   }
 
@@ -311,9 +401,18 @@ public class DrawAlgorithms {
     if (checkFactor > 0f) {
       boolean rtl = Lang.rtl();
       final double radians = Math.toRadians(rtl ? 315f : 45f);
-      final int x = receiver.centerX() + (int) ((float) receiver.getWidth() / 2 * Math.sin(radians));
-      final int y = receiver.centerY() + (int) ((float) receiver.getHeight() / 2 * Math.cos(radians));
-      SimplestCheckBox.draw(c, x, y, checkFactor, null);
+      float x, y;
+      if (receiver instanceof AvatarReceiver) {
+        float displayRadius = ((AvatarReceiver) receiver).getDisplayRadius();
+        float centerX = receiver.getRight() - displayRadius;
+        float centerY = receiver.getBottom() - displayRadius;
+        x = centerX + (float) ((double) displayRadius * Math.sin(radians));
+        y = centerY + (float) ((double) displayRadius * Math.cos(radians));
+      } else {
+        x = receiver.centerX() + (int) ((float) receiver.getWidth() / 2 * Math.sin(radians));
+        y = receiver.centerY() + (int) ((float) receiver.getHeight() / 2 * Math.cos(radians));
+      }
+      SimplestCheckBox.draw(c, (int) x, (int) y, checkFactor, null);
       RectF rectF = Paints.getRectF();
       int radius = Screen.dp(11f);
       rectF.set(x - radius, y - radius, x + radius, y + radius);
@@ -321,35 +420,37 @@ public class DrawAlgorithms {
     }
   }
 
-  public static float getCounterWidth (float textSize, boolean needBackground, CounterAnimator<?> counter, int drawableWidth) {
-    return getCounterWidth(textSize, needBackground, counter.getWidth(), drawableWidth);
+  public static float getCounterWidth (@Dimension(unit = Dimension.DP) float textSize, boolean needBackground, CounterAnimator<?> counter, @Px int drawableWidth, @Px int backgroundPadding) {
+    return getCounterWidth(textSize, needBackground, counter.getWidth(), drawableWidth, backgroundPadding);
   }
 
-  public static float getCounterWidth (float textSize, boolean needBackground, float counterWidth, int drawableWidth) {
+  public static float getCounterWidth (@Dimension(unit = Dimension.DP) float textSize, boolean needBackground, @Px float counterWidth, @Px int drawableWidth, @Px int backgroundPadding) {
     float contentWidth = counterWidth + drawableWidth;
     if (needBackground) {
-      return Math.max(Screen.dp(textSize - 2f) * 2, contentWidth + Screen.dp(3f) * 2);
+      return Math.max(Screen.dp(textSize - 2f) * 2, contentWidth + backgroundPadding * 2);
     } else {
       return contentWidth;
     }
   }
 
-  public static void drawCounter (Canvas c, float cx, float cy, int gravity, CounterAnimator<Text> counter, float textSize, boolean needBackground, TextColorSet colorSet, Drawable drawable, int drawableGravity, int drawableColorId, int drawableMargin, float alpha, float drawableAlpha, float scale) {
+  public static void drawCounter (Canvas c, float cx, float cy, int gravity, CounterAnimator<Text> counter, float textSize, float textAlpha, TextColorSet colorSet, float scale) {
+    drawCounter(c, cx, cy, gravity, counter, textSize, textAlpha, false, false, 0, colorSet, null, Gravity.LEFT, 0, 0, 0f, 0f, scale, null);
+  }
+
+  public static <T extends CounterTextPart> void drawCounter (Canvas c, float cx, float cy, int gravity, CounterAnimator<T> counter, float textSize, float textAlpha, boolean needBackground, boolean outlineAffectsBackgroundSize, @Px int backgroundPadding, TextColorSet colorSet, @Nullable Drawable drawable, int drawableGravity, int drawableColorId, @Px int drawableMargin, float backgroundAlpha, float drawableAlpha, float scale, @Nullable RectF outputDrawRect) {
     scale = .6f + .4f * scale;
     final boolean needScale = scale != 1f;
 
-    final float radius, addRadius;
+    final float drawRectHeight = Screen.dp(textSize - 2f);
+    final float radius, outlineWidth;
     if (needBackground) {
-      radius = Screen.dp(textSize - 2f);
-      addRadius = Screen.dp(1.5f);
+      radius = drawRectHeight;
+      outlineWidth = Screen.dp(1.5f);
     } else {
-      radius = addRadius = 0f;
+      radius = outlineWidth = 0f;
     }
     final float contentWidth = counter.getWidth() + (drawable != null ? drawable.getMinimumWidth() + drawableMargin : 0);
-    final float width = getCounterWidth(textSize, needBackground, counter, drawable != null ? drawable.getMinimumWidth() + drawableMargin : 0);
-
-    final int backgroundColor = colorSet.backgroundColor(false);
-    final int outlineColor = colorSet.outlineColor(false);
+    final float width = getCounterWidth(textSize, needBackground, counter, drawable != null ? drawable.getMinimumWidth() + drawableMargin : 0, backgroundPadding);
 
     RectF rectF = Paints.getRectF();
     switch (gravity) {
@@ -371,26 +472,61 @@ public class DrawAlgorithms {
       c.scale(scale, scale, rectF.centerX(), rectF.centerY());
     }
 
-    if (needBackground) {
-      boolean needOutline = Color.alpha(outlineColor) > 0 && addRadius > 0;
+    if (outputDrawRect != null) {
+      outputDrawRect.set(rectF.left, cy - drawRectHeight, rectF.right, cy + drawRectHeight);
+      // c.drawRect(outputDrawRect, Paints.strokeSmallPaint(0xFF00FF00));
+    }
+
+    if (needBackground && backgroundAlpha > 0f) {
+      final int outlineColor = colorSet.outlineColor(false);
+      final int fillingColor = colorSet.backgroundColor(false);
+      boolean haveFilling = Color.alpha(fillingColor) > 0;
+      boolean haveOutline = Color.alpha(outlineColor) > 0 && outlineWidth > 0;
+      float fillingRadius = outlineAffectsBackgroundSize || !haveOutline ? radius : radius - outlineWidth;
+      float outlineRadius = fillingRadius + outlineWidth * 0.5f;
       if (rectF.width() == rectF.height()) {
-        if (needOutline) {
-          c.drawCircle(cx, cy, radius + addRadius, Paints.fillingPaint(ColorUtils.alphaColor(alpha, outlineColor)));
+        if (haveOutline) {
+          if (outlineColor == fillingColor) {
+            c.drawCircle(cx, cy, fillingRadius + outlineWidth, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
+          } else if (Color.alpha(outlineColor) == 0xFF && Color.alpha(fillingColor) == 0xFF && backgroundAlpha == 1f) {
+            c.drawCircle(cx, cy, fillingRadius + outlineWidth, Paints.fillingPaint(outlineColor));
+            c.drawCircle(cx, cy, fillingRadius, Paints.fillingPaint(fillingColor));
+          } else {
+            if (haveFilling) {
+              c.drawCircle(cx, cy, fillingRadius, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
+            }
+            c.drawCircle(cx, cy, outlineRadius, Paints.getCounterOutlinePaint(outlineWidth, ColorUtils.alphaColor(backgroundAlpha, outlineColor)));
+          }
+        } else if (haveFilling) {
+          c.drawCircle(cx, cy, fillingRadius, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
         }
-        c.drawCircle(cx, cy, radius, Paints.fillingPaint(ColorUtils.alphaColor(alpha, backgroundColor)));
       } else {
-        if (needOutline) {
-          rectF.left -= addRadius;
-          rectF.top -= addRadius;
-          rectF.right += addRadius;
-          rectF.bottom += addRadius;
-          c.drawRoundRect(rectF, radius + addRadius, radius + addRadius, Paints.fillingPaint(ColorUtils.alphaColor(alpha, outlineColor)));
-          rectF.left += addRadius;
-          rectF.top += addRadius;
-          rectF.right -= addRadius;
-          rectF.bottom -= addRadius;
+        if (haveOutline) {
+          if (outlineColor == fillingColor) {
+            if (outlineAffectsBackgroundSize) {
+              rectF.inset(-outlineWidth, -outlineWidth);
+            }
+            c.drawRoundRect(rectF, fillingRadius + outlineWidth, fillingRadius + outlineWidth, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
+          } else if (Color.alpha(outlineColor) == 0xFF && Color.alpha(fillingColor) == 0xFF && backgroundAlpha == 1f) {
+            if (outlineAffectsBackgroundSize) {
+              rectF.inset(-outlineWidth, -outlineWidth);
+            }
+            c.drawRoundRect(rectF, fillingRadius + outlineWidth, fillingRadius + outlineWidth, Paints.fillingPaint(outlineColor));
+            rectF.inset(outlineWidth, outlineWidth);
+            c.drawRoundRect(rectF, fillingRadius, fillingRadius, Paints.fillingPaint(fillingColor));
+          } else {
+            if (!outlineAffectsBackgroundSize) {
+              rectF.inset(outlineWidth, outlineWidth);
+            }
+            if (haveFilling) {
+              c.drawRoundRect(rectF, fillingRadius, fillingRadius, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
+            }
+            rectF.inset(-outlineWidth * 0.5f, -outlineWidth * 0.5f);
+            c.drawRoundRect(rectF, outlineRadius, outlineRadius, Paints.getCounterOutlinePaint(outlineWidth, ColorUtils.alphaColor(backgroundAlpha, outlineColor)));
+          }
+        } else if (haveFilling) {
+          c.drawRoundRect(rectF, fillingRadius, fillingRadius, Paints.fillingPaint(ColorUtils.alphaColor(backgroundAlpha, fillingColor)));
         }
-        c.drawRoundRect(rectF, radius, radius, Paints.fillingPaint(ColorUtils.alphaColor(alpha, backgroundColor)));
       }
     }
 
@@ -414,11 +550,11 @@ public class DrawAlgorithms {
       }
     }
 
-    for (ListAnimator.Entry<CounterAnimator.Part<Text>> entry : counter) {
+    for (ListAnimator.Entry<CounterAnimator.Part<T>> entry : counter) {
       int textStartX = Math.round(startX + entry.getRectF().left);
       int textEndX = textStartX + entry.item.getWidth();
       int startY = Math.round(cy - entry.item.getHeight() / 2f + entry.item.getHeight() * .8f * entry.item.getVerticalPosition());
-      entry.item.text.draw(c, textStartX, textEndX, 0, startY, colorSet, alpha * entry.getVisibility() * (1f - Math.abs(entry.item.getVerticalPosition())));
+      entry.item.text.draw(c, textStartX, textEndX, 0, startY, colorSet, textAlpha * entry.getVisibility() * (1f - Math.abs(entry.item.getVerticalPosition())));
     }
 
     if (needScale) {
@@ -464,10 +600,10 @@ public class DrawAlgorithms {
     final int viewWidth = view.getMeasuredWidth();
     final int viewHeight = view.getMeasuredHeight();
 
-    drawScaledBitmap(viewWidth, viewHeight, c, bitmap, rotation, null);
+    drawScaledBitmap(viewWidth, viewHeight, c, bitmap, rotation, 0f, 0f, null);
   }
 
-  public static void drawScaledBitmap (final int viewWidth, final int viewHeight, Canvas c, Bitmap bitmap, int rotation, @Nullable PaintState paintState) {
+  public static void drawScaledBitmap (final int viewWidth, final int viewHeight, Canvas c, Bitmap bitmap, int rotation, float mirrorHorizontallyFactor, float mirrorVerticallyFactor, @Nullable PaintState paintState) {
     if (bitmap != null && !bitmap.isRecycled()) {
       int bitmapWidth, bitmapHeight;
 
@@ -478,11 +614,14 @@ public class DrawAlgorithms {
         float scaleX = (float) viewHeight / (float) bitmapWidth;
         float scaleY = (float) viewWidth / (float) bitmapHeight;
         c.save();
-        c.scale(scaleX, scaleY, viewWidth / 2, viewHeight / 2);
-        c.rotate(rotation, viewWidth / 2, viewHeight / 2);
+        c.scale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f);
+        c.rotate(rotation, viewWidth / 2f, viewHeight / 2f);
         int x = viewWidth / 2 - bitmapWidth / 2;
         int y = viewHeight / 2 - bitmapHeight / 2;
+        c.save();
+        c.scale(MathUtils.fromTo(1f, -1f, mirrorHorizontallyFactor), MathUtils.fromTo(1f, -1f, mirrorVerticallyFactor), viewWidth / 2f, viewHeight / 2f);
         c.drawBitmap(bitmap, x, y, Paints.getBitmapPaint());
+        c.restore();
         if (paintState != null) {
           c.clipRect(x, y, x + bitmapWidth, y + bitmapHeight);
           paintState.draw(c, x, y, bitmapWidth, bitmapHeight);
@@ -493,12 +632,15 @@ public class DrawAlgorithms {
         if (saved) {
           c.save();
           if (rotation != 0) {
-            c.rotate(rotation, viewWidth / 2, viewHeight / 2);
+            c.rotate(rotation, viewWidth / 2f, viewHeight / 2f);
           }
         }
         Rect dst = Paints.getRect();
         dst.set(0, 0, viewWidth, viewHeight);
+        c.save();
+        c.scale(MathUtils.fromTo(1f, -1f, mirrorHorizontallyFactor), MathUtils.fromTo(1f, -1f, mirrorVerticallyFactor), viewWidth / 2f, viewHeight / 2f);
         c.drawBitmap(bitmap, null, dst, Paints.getBitmapPaint());
+        c.restore();
         if (paintState != null && !paintState.isEmpty()) {
           c.clipRect(0, 0, viewWidth, viewHeight);
           paintState.draw(c,  0, 0, viewWidth, viewHeight);
@@ -893,7 +1035,7 @@ public class DrawAlgorithms {
     return 0;
   }
 
-  public static int drawStatus (Canvas c, TdlibStatusManager.ChatState state, float cx, float cy, int color, DrawableProvider provider, @ThemeColorId int knownThemeId) {
+  public static int drawStatus (Canvas c, TdlibStatusManager.ChatState state, float cx, float cy, int color, DrawableProvider provider, @ColorId int knownThemeId) {
     TdApi.ChatAction action = state.action();
     if (action == null) {
       return 0;
@@ -1086,11 +1228,11 @@ public class DrawAlgorithms {
         if (drawable != null) {
           Paint paint;
           switch (knownThemeId) {
-            case R.id.theme_color_textLight:
+            case ColorId.textLight:
               paint = Paints.getDecentPorterDuffPaint();
               break;
-            case R.id.theme_color_chatListAction:
-            case R.id.theme_color_headerText:
+            case ColorId.chatListAction:
+            case ColorId.headerText:
             default:
               paint = Paints.getPorterDuffPaint(color);
               break;
@@ -1289,6 +1431,26 @@ public class DrawAlgorithms {
        int d = (int) ((float) lineHeight * f2);
        c.drawLine(cx - lineRadius, cy - lineRadius, cx - lineRadius + d, cy - lineRadius + d, paint);
      }
+   }
+ }
+
+ public static void drawSticker (Canvas c, TGStickerSetInfo info, GifReceiver gifReceiver, ImageReceiver receiver, Path contour) {
+   if (info != null && info.isPreviewAnimated()) {
+     if (gifReceiver.needPlaceholder()) {
+       if (receiver.needPlaceholder()) {
+         receiver.drawPlaceholderContour(c, contour);
+       }
+       receiver.draw(c);
+     }
+     gifReceiver.draw(c);
+   } else {
+     if (receiver.needPlaceholder()) {
+       receiver.drawPlaceholderContour(c, contour);
+     }
+     receiver.draw(c);
+   }
+   if (Config.DEBUG_STICKER_OUTLINES) {
+     receiver.drawPlaceholderContour(c, contour);
    }
  }
 }

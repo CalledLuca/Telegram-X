@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,14 +14,20 @@ package org.thunderdog.challegram;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.unsorted.Settings;
 
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IllegalFormatException;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+import tgx.td.Td;
 
 public final class TDLib {
   private static String format (String format, Object... formatArgs) {
@@ -37,7 +43,9 @@ public final class TDLib {
   }
 
   private static void log (int verbosityLevel, String format, Object... formatArgs) {
-    Client.execute(new TdApi.AddLogMessage(verbosityLevel, format(format, formatArgs)));
+    try {
+      Client.execute(new TdApi.AddLogMessage(verbosityLevel, format(format, formatArgs)));
+    } catch (Client.ExecutionException ignored) { }
   }
 
   public static void e (String format, Object... formatArgs) {
@@ -64,8 +72,53 @@ public final class TDLib {
     log(Settings.instance().getTdlibLogSettings().getVerbosity(module), format, formatArgs);
   }
 
+  private static final Set<Long> trackingStates = new HashSet<>();
+  private static final Map<Long, String> lastMessage = new HashMap<>();
+
+  public static String trackPushState (long pushId, boolean needTrack) {
+    if (needTrack) {
+      trackingStates.add(pushId);
+      return null;
+    } else {
+      trackingStates.remove(pushId);
+      return lastMessage.remove(pushId);
+    }
+  }
+
+  public static String lastPushState (long pushId) {
+    return lastMessage.get(pushId);
+  }
 
   public static final class Tag {
+    private static void internal (String tag, String format, Object[] formatArgs) {
+      i("[%s]: %s", tag, format(format, formatArgs));
+    }
+    public static void safetyNet (String format, Object... formatArgs) {
+      internal("safetynet", format, formatArgs);
+    }
+
+    public static void playIntegrity (String format, Object... formatArgs) {
+      internal("play-integrity", format, formatArgs);
+    }
+
+    public static void recaptcha (String format, Object... formatArgs) {
+      internal("recaptcha", format, formatArgs);
+    }
+
+    public static void integrity (TdApi.FirebaseDeviceVerificationParameters parameters, String format, Object... formatArgs) {
+      switch (parameters.getConstructor()) {
+        case TdApi.FirebaseDeviceVerificationParametersSafetyNet.CONSTRUCTOR:
+          safetyNet(format, formatArgs);
+          break;
+        case TdApi.FirebaseDeviceVerificationParametersPlayIntegrity.CONSTRUCTOR:
+          playIntegrity(format, formatArgs);
+          break;
+        default:
+          Td.assertFirebaseDeviceVerificationParameters_21a9fc9c();
+          throw Td.unsupported(parameters);
+      }
+    }
+
     public static void td_init (String format, Object... formatArgs) {
       logModule("td_init", format, formatArgs);
     }
@@ -75,15 +128,19 @@ public final class TDLib {
     }
 
     public static void notifications (long pushId, int accountId, String format, Object... formatArgs) {
+      String message = format(format, formatArgs);
       StringBuilder prefix = new StringBuilder("[fcm");
       if (pushId != 0) {
         prefix.append(":").append(pushId);
+        if (trackingStates.contains(pushId)) {
+          lastMessage.put(pushId, message);
+        }
       }
       if (accountId != TdlibAccount.NO_ID) {
         prefix.append(",account:").append(accountId);
       }
       prefix.append("]: ");
-      logModule("notifications", prefix.toString() + format, formatArgs);
+      logModule("notifications", prefix + message);
     }
   }
 }

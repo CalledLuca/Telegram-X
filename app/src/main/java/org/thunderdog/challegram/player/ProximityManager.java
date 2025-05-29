@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,18 +30,20 @@ import android.os.Build;
 import android.os.PowerManager;
 
 import androidx.annotation.Nullable;
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
+import androidx.media3.exoplayer.ExoPlayer;
 
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.audio.AudioAttributes;
-
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Settings;
 
+import tgx.td.Td;
+
+@SuppressWarnings("deprecation")
 public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEventListener, UI.StateListener {
   public interface Delegate {
     void onUpdateAttributes ();
@@ -57,7 +59,7 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
   }
 
   private boolean isPlayingVideo () {
-    return playbackObject != null && playbackObject.content.getConstructor() == TdApi.MessageVideoNote.CONSTRUCTOR;
+    return playbackObject != null && Td.isVideoNote(playbackObject.content);
   }
 
   public void setPlaybackObject (@Nullable TdApi.Message playbackObject) {
@@ -67,7 +69,7 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
     if (hadObject != hasObject) {
       if (hasObject) {
         Settings.instance().addRaiseToSpeakListener(this);
-        uiPaused = UI.getUiState() != UI.STATE_RESUMED;
+        uiPaused = UI.getUiState() != UI.State.RESUMED;
         UI.addStateListener(this);
         this.isVideo = isPlayingVideo();
         setEarpieceMode(Settings.instance().getEarpieceMode(isVideo));
@@ -124,7 +126,7 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
 
   @Override
   public void onUiStateChanged (int newState) {
-    boolean isPaused = newState != UI.STATE_RESUMED;
+    boolean isPaused = newState != UI.State.RESUMED;
     if (this.uiPaused != isPaused) {
       this.uiPaused = isPaused;
       checkProximitySensorEnabled();
@@ -192,20 +194,9 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
     if (am != null) {
       isWiredHeadsetOn = U.isWiredHeadsetOn(am);
       BluetoothAdapter btAdapter = am.isBluetoothScoAvailableOffCall() ? BluetoothAdapter.getDefaultAdapter() : null;
-
-      IntentFilter filter = new IntentFilter();
-      filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        filter.addAction(AudioManager.ACTION_HEADSET_PLUG);
-      } else {
-        filter.addAction(Intent.ACTION_HEADSET_PLUG);
-      }
-      if (btAdapter != null) {
-        filter.addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);
-        filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED);
-      }
+      IntentFilter intentFilter = newIntentFilter(btAdapter);
       try {
-        UI.getAppContext().registerReceiver(receiver, filter);
+        UI.getAppContext().registerReceiver(receiver, intentFilter);
       } catch (Throwable t) {
         Log.e("Unable to register headset broadcast receiver", t);
       }
@@ -213,6 +204,21 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
       isWiredHeadsetOn = false;
     }
     return true;
+  }
+
+  private static IntentFilter newIntentFilter (BluetoothAdapter btAdapter) {
+    IntentFilter filter = new IntentFilter();
+    filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      filter.addAction(AudioManager.ACTION_HEADSET_PLUG);
+    } else {
+      filter.addAction(Intent.ACTION_HEADSET_PLUG);
+    }
+    if (btAdapter != null) {
+      filter.addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);
+      filter.addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED);
+    }
+    return filter;
   }
 
   private boolean unregisterProximitySensor () {
@@ -246,6 +252,7 @@ public class ProximityManager implements Settings.RaiseToSpeakListener, SensorEv
       AudioManager am = (AudioManager) UI.getAppContext().getSystemService(Context.AUDIO_SERVICE);
       if (am != null) {
         if (playingThroughEarpiece) {
+          // TODO: rework to setCommunicationDevice(AudioDeviceInfo) or clearCommunicationDevice()
           am.setSpeakerphoneOn(false);
           am.setMode(AudioManager.MODE_IN_COMMUNICATION);
         } else {

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ package org.thunderdog.challegram.ui;
 import android.content.Context;
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.ImageFile;
@@ -32,6 +32,7 @@ public class SimpleMediaViewController extends ViewController<SimpleMediaViewCon
   private static final int MODE_GIF = 1;
   private static final int MODE_PROFILE_PHOTO = 2;
   private static final int MODE_CHAT_PHOTO = 3;
+  private static final int MODE_CHAT_PHOTO_FULL = 4;
 
   public static class Args {
     protected final int mode;
@@ -42,7 +43,9 @@ public class SimpleMediaViewController extends ViewController<SimpleMediaViewCon
     public ImageFile targetFile;
 
     public TdApi.ProfilePhoto profilePhoto;
-    public TdApi.ChatPhotoInfo chatPhoto;
+    public TdApi.ChatPhotoInfo chatPhotoInfo;
+    public TdApi.ChatPhoto chatPhoto;
+    public long dataId;
 
     public Args (TdApi.Photo photo, ImageFile previewFile, ImageFile targetFile) {
       this.mode = MODE_PHOTO;
@@ -57,13 +60,20 @@ public class SimpleMediaViewController extends ViewController<SimpleMediaViewCon
       this.previewFile = previewFile;
     }
 
-    public Args (TdApi.ProfilePhoto profilePhoto) {
+    public Args (TdApi.ProfilePhoto profilePhoto, long userId) {
       this.mode = MODE_PROFILE_PHOTO;
       this.profilePhoto = profilePhoto;
+      this.dataId = userId;
     }
 
-    public Args (TdApi.ChatPhotoInfo chatPhoto) {
+    public Args (TdApi.ChatPhotoInfo chatPhotoInfo, long chatId) {
       this.mode = MODE_CHAT_PHOTO;
+      this.chatPhotoInfo = chatPhotoInfo;
+      this.dataId = chatId;
+    }
+
+    public Args (TdApi.ChatPhoto chatPhoto) {
+      this.mode = MODE_CHAT_PHOTO_FULL;
       this.chatPhoto = chatPhoto;
     }
   }
@@ -105,11 +115,15 @@ public class SimpleMediaViewController extends ViewController<SimpleMediaViewCon
         break;
       }
       case MODE_PROFILE_PHOTO: {
-        mediaItem = new MediaItem(context(), tdlib, 0, args.profilePhoto);
+        mediaItem = new MediaItem(context(), tdlib, args.dataId, args.profilePhoto);
         break;
       }
       case MODE_CHAT_PHOTO: {
-        mediaItem = new MediaItem(context(), tdlib, 0, args.chatPhoto);
+        mediaItem = new MediaItem(context(), tdlib, args.dataId, args.chatPhotoInfo);
+        break;
+      }
+      case MODE_CHAT_PHOTO_FULL: {
+        mediaItem = new MediaItem(context(), tdlib, args.dataId, 0, args.chatPhoto);
         break;
       }
     }

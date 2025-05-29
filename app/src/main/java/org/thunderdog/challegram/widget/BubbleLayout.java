@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@ import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 
@@ -44,7 +45,7 @@ public class BubbleLayout extends AnimatedLinearLayout implements FactorAnimator
   private float maxAllowedVisibility = 1f;
 
   private final @Nullable ViewController<?> themeProvider;
-  private final boolean top;
+  private boolean top;
 
   public BubbleLayout (@NonNull Context context, @Nullable ViewController<?> themeProvider, boolean top) {
     super(context);
@@ -54,19 +55,13 @@ public class BubbleLayout extends AnimatedLinearLayout implements FactorAnimator
     this.themeProvider = themeProvider;
     this.top = top;
 
-    this.backgroundDrawable = Theme.filteredDrawable(R.drawable.stickers_back_all, R.id.theme_color_overlayFilling, themeProvider);
-    this.cornerDrawable = Theme.filteredDrawable(R.drawable.stickers_back_arrow, R.id.theme_color_overlayFilling, themeProvider);
+    this.backgroundDrawable = Theme.filteredDrawable(R.drawable.stickers_back_all, ColorId.overlayFilling, themeProvider);
+    this.cornerDrawable = Theme.filteredDrawable(R.drawable.stickers_back_arrow, ColorId.overlayFilling, themeProvider);
 
     if (themeProvider != null) {
       themeProvider.addThemeInvalidateListener(this);
     }
-    int paddingTop = Screen.dp(2);
-    int paddingBottom = Screen.dp(4f) + Screen.dp(8f) + Screen.dp(1f);
-    if (top) {
-      setPadding(Screen.dp(1f), paddingBottom - Screen.dp(4f) - Screen.dp(2f), Screen.dp(1), paddingTop + Screen.dp(2f));
-    } else {
-      setPadding(Screen.dp(1f), paddingTop, Screen.dp(1), paddingBottom);
-    }
+    setDefaultPadding();
     ViewUtils.setBackground(this, new Drawable() {
       @Override
       public void draw (@NonNull Canvas c) {
@@ -74,14 +69,15 @@ public class BubbleLayout extends AnimatedLinearLayout implements FactorAnimator
         int viewHeight = getMeasuredHeight();
         int cornerWidth = Screen.dp(18f);
         int cornerHeight = Screen.dp(8f);
-        if (top) {
+        if (BubbleLayout.this.top) {
           backgroundDrawable.setBounds(0, cornerHeight - Screen.dp(2f), viewWidth, viewHeight);
           backgroundDrawable.draw(c);
 
-          int cornerX = viewWidth / 2 - cornerWidth / 2;
+          int pivotX = (cornerCenterChanged ? cornerCenterX : viewWidth / 2);
+          int cornerX = pivotX - cornerWidth / 2;
           cornerDrawable.setBounds(cornerX, 0, cornerX + cornerWidth, cornerHeight);
           c.save();
-          c.rotate(180f, viewWidth / 2f, cornerHeight / 2f);
+          c.rotate(180f, pivotX, cornerHeight / 2f);
           cornerDrawable.draw(c);
           c.restore();
         } else {
@@ -217,4 +213,22 @@ public class BubbleLayout extends AnimatedLinearLayout implements FactorAnimator
     setAlpha(MathUtils.clamp(factor));
   }
 
+  public boolean setTop (boolean top) {
+    if (this.top != top) {
+      this.top = top;
+      requestLayout();
+      return true;
+    }
+    return false;
+  }
+
+  public void setDefaultPadding () {
+    int paddingTop = Screen.dp(2);
+    int paddingBottom = Screen.dp(4f) + Screen.dp(8f) + Screen.dp(1f);
+    if (top) {
+      setPadding(Screen.dp(1f), paddingBottom - Screen.dp(4f) - Screen.dp(2f), Screen.dp(1), paddingTop + Screen.dp(2f));
+    } else {
+      setPadding(Screen.dp(1f), paddingTop, Screen.dp(1), paddingBottom);
+    }
+  }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,19 +17,17 @@ package org.thunderdog.challegram.loader;
 import android.graphics.Bitmap;
 import android.os.CancellationSignal;
 
+import androidx.media3.extractor.metadata.id3.ApicFrame;
 import androidx.palette.graphics.Palette;
 
-import com.google.android.exoplayer2.metadata.id3.ApicFrame;
-
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.config.Config;
-import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.player.AudioController;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibManager;
 
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class ImageActor implements ImageReader.Listener, AudioController.ApicListener {
   private ImageFile file;
@@ -90,7 +88,7 @@ public class ImageActor implements ImageReader.Listener, AudioController.ApicLis
 
     final TdApi.File rawFile = file.getFile();
 
-    if (isCustomFile(file) || TD.isFileLoadedAndExists(rawFile)) {
+    if (isCustomFile(file) || ImageLoader.isFileLoaded(file.tdlib(), rawFile)) {
       act(file.getFilePath());
       return false;
     }

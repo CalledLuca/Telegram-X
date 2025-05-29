@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Keyboard;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
@@ -63,8 +63,8 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
   private DoneButton doneButton;
   protected RecyclerView.ItemAnimator itemAnimator;
 
-  protected @ThemeColorId int getRecyclerBackgroundColorId () {
-    return R.id.theme_color_filling;
+  protected @ColorId int getRecyclerBackgroundColorId () {
+    return ColorId.filling;
   }
 
   protected final DoneButton getDoneButton () {
@@ -77,11 +77,7 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
     ViewSupport.setThemedBackground(contentView, getRecyclerBackgroundColorId(), this);
     contentView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-    recyclerView = (RecyclerView) Views.inflate(context(), R.layout.recycler, contentView);
-    recyclerView.setItemAnimator(itemAnimator = new CustomItemAnimator(AnimatorUtils.DECELERATE_INTERPOLATOR, 180l));
-    recyclerView.setHasFixedSize(true);
-    recyclerView.setLayoutManager(new LinearLayoutManager(context, RecyclerView.VERTICAL, false));
-    recyclerView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    recyclerView = onCreateRecyclerView();
     contentView.addView(recyclerView);
 
     int padding = Screen.dp(4f);
@@ -109,13 +105,26 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
     return wrapper;
   }
 
+  public RecyclerView getRecyclerView () {
+    return recyclerView;
+  }
+
+  protected RecyclerView onCreateRecyclerView () {
+    RecyclerView recyclerView = (RecyclerView) Views.inflate(context(), R.layout.recycler, contentView);
+    recyclerView.setItemAnimator(itemAnimator = new CustomItemAnimator(AnimatorUtils.DECELERATE_INTERPOLATOR, 180l));
+    recyclerView.setHasFixedSize(true);
+    recyclerView.setLayoutManager(new LinearLayoutManager(context, RecyclerView.VERTICAL, false));
+    recyclerView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    return recyclerView;
+  }
+
   @Override
   public int getRootColorId () {
     return getRecyclerBackgroundColorId();
   }
 
   @Override
-  public boolean onDoneClick (View v) {
+  public final boolean onDoneClick (View v) {
     return onDoneClick();
   }
 
@@ -169,13 +178,21 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
     return doneVisible;
   }
 
+  protected void onDoneVisibleChanged (boolean isVisible) {
+    // override
+  }
+
   protected void setDoneVisible (boolean isVisible) {
+    setDoneVisible(isVisible, true);
+  }
+
+  protected void setDoneVisible (boolean isVisible, boolean allowAnimation) {
     if (this.doneVisible != isVisible) {
       this.doneVisible = isVisible;
       if (contentView.getParent() != null && doneButton.getMeasuredWidth() != 0 && isFocused()) {
         this.doneVisibilityFactor = 1f;
         doneButton.setMaximumAlpha(1f);
-        doneButton.setIsVisible(isVisible, true);
+        doneButton.setIsVisible(isVisible, allowAnimation);
       } else {
         if (isVisible) {
           if (needShowAnimationDelay()) {
@@ -189,6 +206,7 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
         }
         doneButton.setIsVisible(isVisible, false);
       }
+      onDoneVisibleChanged(isVisible);
     }
   }
 
@@ -198,6 +216,7 @@ public abstract class EditBaseController<T> extends ViewController<T> implements
       this.doneVisibilityFactor = 1f;
       doneButton.setMaximumAlpha(1f);
       doneButton.setIsVisible(isVisible, false);
+      onDoneVisibleChanged(isVisible);
     }
   }
 

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -12,19 +12,16 @@
  */
 package org.thunderdog.challegram.widget;
 
-import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
-import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
-
 import android.content.Context;
 import android.graphics.Canvas;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.charts.BarChartView;
 import org.thunderdog.challegram.charts.BaseChartView;
 import org.thunderdog.challegram.charts.Chart;
@@ -35,12 +32,13 @@ import org.thunderdog.challegram.charts.data.ChartData;
 import org.thunderdog.challegram.charts.data.ChartDataUtil;
 import org.thunderdog.challegram.charts.data.DoubleLinearChartData;
 import org.thunderdog.challegram.charts.data.StackBarChartData;
-import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.data.ContentPreview;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Screen;
 
 import me.vkryl.android.AnimatorUtils;
@@ -61,7 +59,7 @@ public class ChartLayout extends FrameLayout implements FactorAnimator.Target, A
     this.progressReceiver.detach();
 
     setWillNotDraw(false);
-    setLayoutParams(new RecyclerView.LayoutParams(MATCH_PARENT, MATCH_PARENT));
+    setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
   }
 
   private Tdlib tdlib;
@@ -198,9 +196,9 @@ public class ChartLayout extends FrameLayout implements FactorAnimator.Target, A
     this.tdlib = tdlib;
     this.delegate = delegate;
     this.chartType = type;
-    ViewSupport.setThemedBackground(this, R.id.theme_color_filling, themeProvider);
+    ViewSupport.setThemedBackground(this, ColorId.filling, themeProvider);
 
-    tdlib.client().send(new TdApi.GetAnimatedEmoji(TD.EMOJI_ABACUS.textRepresentation), result -> {
+    tdlib.client().send(new TdApi.GetAnimatedEmoji(ContentPreview.EMOJI_ABACUS.textRepresentation), result -> {
       if (result.getConstructor() == TdApi.AnimatedEmoji.CONSTRUCTOR) {
         TdApi.AnimatedEmoji emoji = (TdApi.AnimatedEmoji) result;
         tdlib.runOnUiThread(() -> {
@@ -247,7 +245,7 @@ public class ChartLayout extends FrameLayout implements FactorAnimator.Target, A
     // zoomedChartView.sharedUiComponents = sharedUiComponents;
 
     addView(chartView);
-    addView(chartView.legendSignatureView, WRAP_CONTENT, WRAP_CONTENT);
+    addView(chartView.legendSignatureView, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     /*addView(zoomedChartView);
     addView(zoomedChartView.legendSignatureView, WRAP_CONTENT, WRAP_CONTENT);*/
 

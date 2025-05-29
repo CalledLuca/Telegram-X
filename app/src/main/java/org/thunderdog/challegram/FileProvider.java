@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,9 +13,6 @@
  * File created on 20/04/2019
  */
 package org.thunderdog.challegram;
-
-import static org.xmlpull.v1.XmlPullParser.END_DOCUMENT;
-import static org.xmlpull.v1.XmlPullParser.START_TAG;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -42,6 +39,7 @@ import androidx.core.content.ContextCompat;
 import org.drinkmore.Tracer;
 import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.telegram.TdlibManager;
+import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
@@ -326,8 +324,8 @@ public class FileProvider extends ContentProvider {
     }
 
     int type;
-    while ((type = in.next()) != END_DOCUMENT) {
-      if (type == START_TAG) {
+    while ((type = in.next()) != XmlPullParser.END_DOCUMENT) {
+      if (type == XmlPullParser.START_TAG) {
         final String tag = in.getName();
 
         final String name = in.getAttributeValue(null, ATTR_NAME);

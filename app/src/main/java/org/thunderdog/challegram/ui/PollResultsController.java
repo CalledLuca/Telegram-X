@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.attach.CustomItemAnimator;
 import org.thunderdog.challegram.core.Lang;
@@ -31,10 +31,11 @@ import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.ListManager;
 import org.thunderdog.challegram.telegram.PollListener;
+import org.thunderdog.challegram.telegram.SenderListManager;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.telegram.UserListManager;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.v.CustomRecyclerView;
@@ -48,7 +49,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import me.vkryl.android.AnimatorUtils;
-import me.vkryl.td.ChatId;
+import tgx.td.Td;
 
 public class PollResultsController extends RecyclerViewController<PollResultsController.Args> implements PollListener, UserListManager.ChangeListener, View.OnClickListener {
   public static class Args {
@@ -107,9 +108,9 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
 
   private static final boolean NEED_CENTER_DECORATION = false;
 
-  private static class ListCache implements UserListManager.ChangeListener {
+  private static class ListCache implements SenderListManager.ChangeListener {
     private final Tdlib tdlib;
-    private final UserListManager voters;
+    private final SenderListManager voters;
     private final SettingsAdapter adapter;
 
     public ListCache (ViewController<?> context, long chatId, long messageId, int optionId) {
@@ -122,20 +123,27 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
         }
       };
       this.adapter.setNoEmptyProgress();
-      this.voters = new UserListManager(tdlib, 50, 50, this) {
+      this.voters = new SenderListManager(tdlib, 50, 50, this) {
         @Override
-        protected TdApi.Function<?> nextLoadFunction (boolean reverse, int itemCount, int loadCount) {
+        protected TdApi.Function<TdApi.MessageSenders> nextLoadFunction (boolean reverse, int itemCount, int loadCount) {
           return new TdApi.GetPollVoters(chatId, messageId, optionId, itemCount, loadCount);
         }
       };
       this.voters.loadInitialChunk(null);
     }
 
+    private ListItem newItem (TdApi.MessageSender sender) {
+      TGFoundChat foundChat = new TGFoundChat(tdlib, sender, false)
+        .setNoUnread()
+        .setNoAnonymousBadge();
+      return new ListItem(ListItem.TYPE_CHAT_VERTICAL, R.id.sender).setData(foundChat).setLongId(Td.getSenderId(sender));
+    }
+
     @Override
-    public void onItemsAdded (ListManager<Long> list, List<Long> items, int startIndex, boolean isInitialChunk) {
+    public void onItemsAdded (ListManager<TdApi.MessageSender> list, List<TdApi.MessageSender> items, int startIndex, boolean isInitialChunk) {
       List<ListItem> itemsToAdd = new ArrayList<>(items.size());
-      for (long userId : items) {
-        itemsToAdd.add(new ListItem(ListItem.TYPE_CHAT_VERTICAL, R.id.user).setData(new TGFoundChat(tdlib, userId).setNoUnread()).setLongId(ChatId.fromUserId(userId)));
+      for (TdApi.MessageSender sender : items) {
+        itemsToAdd.add(newItem(sender));
       }
       adapter.getItems().addAll(startIndex, itemsToAdd);
       adapter.notifyItemRangeInserted(startIndex, itemsToAdd.size());
@@ -145,33 +153,27 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
     }
 
     @Override
-    public void onItemAdded (ListManager<Long> list, Long userId, int toIndex) {
-      adapter.addItem(toIndex, new ListItem(ListItem.TYPE_CHAT_VERTICAL).setData(new TGFoundChat(tdlib, userId).setNoUnread()).setLongId(ChatId.fromUserId(userId)));
+    public void onItemAdded (ListManager<TdApi.MessageSender> list, TdApi.MessageSender item, int toIndex) {
+      adapter.addItem(toIndex, newItem(item));
       if (NEED_CENTER_DECORATION) {
         adapter.invalidateItemDecorations();
       }
-    }
-
-    @Override
-    public void onItemChanged (ListManager<Long> list, Long item, int index, int cause) {
-      // Do nothing
     }
   }
 
   @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.user: {
-        tdlib.ui().openPrivateProfile(this, ((VerticalChatView) v).getUserId(), new TdlibUi.UrlOpenParameters().tooltip(context().tooltipManager().builder(v)));
-        break;
-      }
+    if (v.getId() == R.id.sender) {
+      ListItem item = (ListItem) v.getTag();
+      TdApi.MessageSender sender = tdlib.sender(item.getLongId());
+      tdlib.ui().openSenderProfile(this, sender, new TdlibUi.UrlOpenParameters().tooltip(context().tooltipManager().builder(v)));
     }
   }
 
   @Override
   public boolean canSlideBackFrom(NavigationController navigationController, float originalX, float originalY) {
-    float x = originalX - (Views.getLocationInWindow(getRecyclerView())[0] - Views.getLocationInWindow(navigationController.get())[0]);
-    float y = originalY - (Views.getLocationInWindow(getRecyclerView())[1] - Views.getLocationInWindow(navigationController.get())[1]);
+    float x = originalX - (Views.getLocationInWindow(getRecyclerView())[0] - Views.getLocationInWindow(navigationController.getValue())[0]);
+    float y = originalY - (Views.getLocationInWindow(getRecyclerView())[1] - Views.getLocationInWindow(navigationController.getValue())[1]);
     if (x >= 0 && y >= 0 && x < getRecyclerView().getMeasuredWidth() && y < getRecyclerView().getMeasuredHeight()) {
       View view = getRecyclerView().findChildViewUnder(x, y);
       if (view instanceof RecyclerView) {
@@ -194,7 +196,7 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
     // FillingDecoration decoration = new FillingDecoration(recyclerView, this);
     List<ListItem> items = new ArrayList<>();
 
-    items.add(new ListItem(ListItem.TYPE_TEXT_VIEW, R.id.text_title, 0, getPoll().question, false));
+    items.add(new ListItem(ListItem.TYPE_TEXT_VIEW, R.id.text_title, 0, TD.toCharSequence(getPoll().question), false));
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
 
     int optionId = 0;
@@ -203,7 +205,7 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
         optionId++;
         continue;
       }
-      items.add(new ListItem(ListItem.TYPE_TEXT_VIEW, R.id.text_subtitle, 0, option.text, false).setIntValue(optionId));
+      items.add(new ListItem(ListItem.TYPE_TEXT_VIEW, R.id.text_subtitle, 0, TD.toCharSequence(option.text), false).setIntValue(optionId));
       items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
       items.add(newRecyclerItem(optionId));
       items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
@@ -223,21 +225,17 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
       protected void setText(ListItem item, CustomTextView view, boolean isUpdate) {
         super.setText(item, view, isUpdate);
 
-        switch (view.getId()) {
-          case R.id.text_title: {
-            view.setTextSize(17f);
-            view.setPadding(Screen.dp(16f), Screen.dp(13f), Screen.dp(16f), Screen.dp(13f));
-            view.setTextColorId(R.id.theme_color_text);
-            ViewSupport.setThemedBackground(view, R.id.theme_color_filling, PollResultsController.this);
-            break;
-          }
-          case R.id.text_subtitle: {
-            view.setTextSize(15f);
-            view.setPadding(Screen.dp(16f), Screen.dp(6f), Screen.dp(16f), Screen.dp(6f));
-            view.setTextColorId(R.id.theme_color_background_text);
-            ViewSupport.setThemedBackground(view, ThemeColorId.NONE, PollResultsController.this);
-            break;
-          }
+        final int viewId = view.getId();
+        if (viewId == R.id.text_title) {
+          view.setTextSize(17f);
+          view.setPadding(Screen.dp(16f), Screen.dp(13f), Screen.dp(16f), Screen.dp(13f));
+          view.setTextColorId(ColorId.text);
+          ViewSupport.setThemedBackground(view, ColorId.filling, PollResultsController.this);
+        } else if (viewId == R.id.text_subtitle) {
+          view.setTextSize(15f);
+          view.setPadding(Screen.dp(16f), Screen.dp(6f), Screen.dp(16f), Screen.dp(6f));
+          view.setTextColorId(ColorId.background_text);
+          ViewSupport.setThemedBackground(view, ColorId.NONE, PollResultsController.this);
         }
       }
 
@@ -262,7 +260,7 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
           recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
-              UserListManager listManager = ((ListCache) ((ListItem) recyclerView.getTag()).getData()).voters;
+              SenderListManager listManager = ((ListCache) ((ListItem) recyclerView.getTag()).getData()).voters;
               int lastVisiblePosition = ((LinearLayoutManager) recyclerView.getLayoutManager()).findLastVisibleItemPosition();
               if (lastVisiblePosition + 5 >= listManager.getCount()) {
                 listManager.loadItems(false, null);
@@ -343,7 +341,7 @@ public class PollResultsController extends RecyclerViewController<PollResultsCon
             if (optionIndex == -1) {
               int atIndex = findInsertionIndex(optionId);
               items.addAll(atIndex, Arrays.asList(
-                new ListItem(ListItem.TYPE_HEADER, R.id.text_subtitle, 0, option.text, false).setIntValue(optionId),
+                new ListItem(ListItem.TYPE_HEADER, R.id.text_subtitle, 0, TD.toCharSequence(option.text), false).setIntValue(optionId),
                 new ListItem(ListItem.TYPE_SHADOW_TOP),
                 newRecyclerItem(optionId),
                 new ListItem(ListItem.TYPE_SHADOW_BOTTOM),

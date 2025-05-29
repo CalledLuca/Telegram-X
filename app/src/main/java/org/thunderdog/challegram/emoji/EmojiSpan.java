@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,10 +14,35 @@
  */
 package org.thunderdog.challegram.emoji;
 
-import android.graphics.Paint;
+import android.graphics.Canvas;
+import android.text.Layout;
+import android.view.View;
 
-public interface EmojiSpan {
-  CharSequence getEmojiCode ();
-  int getRawSize (Paint paint);
-  boolean needRefresh ();
+import org.thunderdog.challegram.loader.ComplexReceiver;
+import org.thunderdog.challegram.util.text.TextReplacementSpan;
+
+public interface EmojiSpan extends TextReplacementSpan {
+  boolean isCustomEmoji ();
+  default long getCustomEmojiId () {
+    return 0;
+  }
+  default EmojiInfo getBuiltInEmojiInfo () {
+    return null;
+  }
+  default boolean belongsToSurface (CustomEmojiSurfaceProvider customEmojiSurfaceProvider) {
+    return false;
+  }
+  default boolean forceDisableAnimations () {
+    return false;
+  }
+  default void requestCustomEmoji (ComplexReceiver receiver, int mediaKey) {
+    receiver.clearReceivers(mediaKey);
+  }
+  EmojiSpan toBuiltInEmojiSpan ();
+
+  default boolean needRefresh () {
+    return false;
+  }
+
+  default void onOverlayDraw (Canvas c, View view, Layout layout) { }
 }

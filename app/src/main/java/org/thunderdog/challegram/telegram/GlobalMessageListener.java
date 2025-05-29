@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
  */
 package org.thunderdog.challegram.telegram;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 
 public interface GlobalMessageListener {
   void onNewMessage (Tdlib tdlib, TdApi.Message message);
@@ -23,7 +23,7 @@ public interface GlobalMessageListener {
 
   void onMessageSendSucceeded (Tdlib tdlib, TdApi.Message message, long oldMessageId);
 
-  void onMessageSendFailed (Tdlib tdlib, TdApi.Message message, long oldMessageId, int errorCode, String errorMessage);
+  void onMessageSendFailed (Tdlib tdlib, TdApi.Message message, long oldMessageId, TdApi.Error error);
 
   void onMessagesDeleted (Tdlib tdlib, long chatId, long[] messageIds);
 }

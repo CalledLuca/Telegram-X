@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.view.View;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 
@@ -148,7 +148,7 @@ public class PatternLine {
 
   public void draw (Canvas c) {
     int alpha = paint.getAlpha();
-    int color = ColorUtils.alphaColor((float) alpha / 255f, Theme.getColor(R.id.theme_color_passcodeIcon));
+    int color = ColorUtils.alphaColor((float) alpha / 255f, Theme.getColor(ColorId.passcodeIcon));
     paint.setColor(color);
     c.drawLine(fromX, fromY, toX, toY, paint);
     paint.setAlpha(alpha);

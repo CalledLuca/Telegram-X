@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.component.dialogs.ChatsAdapter;
 import org.thunderdog.challegram.helper.LiveLocationHelper;
@@ -191,6 +191,10 @@ public class ChatsRecyclerView extends CustomRecyclerView implements ClickHelper
     }
   }
 
+  public void updateRelativeDate () {
+    adapter.updateRelativeDate();
+    invalidateAll();
+  }
   public void updateMessageSendSucceeded (TdApi.Message message, long oldMessageId) {
     int updated = adapter.updateMessageSendSucceeded(message, oldMessageId);
     if (updated != -1) {
@@ -223,13 +227,13 @@ public class ChatsRecyclerView extends CustomRecyclerView implements ClickHelper
       if (updated == -1)
         break;
       View view = manager.findViewByPosition(updated);
-      if (view instanceof ChatView && ((ChatView) view).getChatId() == adapter.getChatAt(updated).getChatId()) {
-        ((ChatView) view).updateOnline();
+      if (view instanceof ChatView && ((ChatView) view).getChatId() == adapter.getChatByItemPosition(updated).getChatId()) {
+        // ((ChatView) view).updateOnline();
         view.invalidate();
       } else {
         adapter.notifyItemChanged(updated);
       }
-      startIndex = updated + 1;
+      startIndex = adapter.getChatIndexByItemPosition(updated) + 1;
     }
   }
 
@@ -276,7 +280,7 @@ public class ChatsRecyclerView extends CustomRecyclerView implements ClickHelper
   }
 
   public void updateChatSelectionState (long chatId, boolean isSelected) {
-    int index = adapter.indexOfChat(chatId);
+    int index = adapter.findChatItemPosition(chatId);
     if (index != -1) {
       View view = getLayoutManager().findViewByPosition(index);
       if (view instanceof ChatView && ((ChatView) view).getChatId() == chatId) {
@@ -289,7 +293,7 @@ public class ChatsRecyclerView extends CustomRecyclerView implements ClickHelper
 
   public void updateChatPosition (long chatId, TdApi.ChatPosition position, boolean orderChanged, boolean sourceChanged, boolean pinStateChanged) {
     if (sourceChanged) {
-      int i = adapter.indexOfChat(chatId);
+      int i = adapter.findChatItemPosition(chatId);
       if (i != -1) {
         invalidateViewAt(i);
       }
@@ -317,8 +321,8 @@ public class ChatsRecyclerView extends CustomRecyclerView implements ClickHelper
     int updated = adapter.updateChatPhoto(chatId, photo);
     if (updated != -1) {
       View view = manager.findViewByPosition(updated);
-      if (view != null && view instanceof ChatView) {
-        ((ChatView) view).invalidateContentReceiver();
+      if (view instanceof ChatView) {
+        ((ChatView) view).invalidateAvatarReceiver();
       } else {
         adapter.notifyItemChanged(updated);
       }

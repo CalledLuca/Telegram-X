@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -67,7 +67,7 @@ public class RecordBackgroundView extends View {
   @Override
   protected void onDraw (Canvas c) {
     /*if (factor > 0f) {
-      int color = Utils.alphaColor(factor, Theme.getColor(R.id.theme_color_overlay));
+      int color = Utils.alphaColor(factor, Theme.getColor(ColorId.overlay));
       int halfColor = Utils.alphaColor(.5f, color);
       c.drawColor(halfColor);
       if (factor == 1f) {

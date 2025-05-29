@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,19 +22,21 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.component.chat.WallpaperView;
+import org.thunderdog.challegram.telegram.TdlibEntitySpan;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeDelegate;
 import org.thunderdog.challegram.theme.ThemeId;
 import org.thunderdog.challegram.theme.ThemeSet;
 import org.thunderdog.challegram.tool.Screen;
 
-import me.vkryl.core.ColorUtils;
 import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.ColorUtils;
+import tgx.td.Td;
 
-public class CustomTypefaceSpan extends MetricAffectingSpan {
+public class CustomTypefaceSpan extends MetricAffectingSpan implements TdlibEntitySpan {
   private static final int FLAG_FAKE_BOLD = 1;
   private static final int FLAG_REMOVE_UNDERLINE = 1 << 1;
   private static final int FLAG_NO_BACKGROUND_TRANSPARENCY = 1 << 2;
@@ -43,17 +45,17 @@ public class CustomTypefaceSpan extends MetricAffectingSpan {
   private static final int FLAG_NEED_REVEAL_ON_TAP = 1 << 5;
 
   private @Nullable Typeface typeface;
-  private @ThemeColorId int colorId;
+  private @ColorId int colorId;
   @Nullable
   private ThemeDelegate forcedTheme;
   private TdApi.TextEntityType type;
   private int flags;
   private float textSizeDp;
 
-  private @ThemeColorId int transparentColorId;
+  private @ColorId int transparentColorId;
   private WallpaperView boundTransparencyView;
 
-  private @ThemeColorId int backgroundColorId;
+  private @ColorId int backgroundColorId;
 
   private Object tag;
 
@@ -66,11 +68,24 @@ public class CustomTypefaceSpan extends MetricAffectingSpan {
     this.colorId = colorId;
   }
 
-  public CustomTypefaceSpan setBackgroundColorId (@ThemeColorId int colorId) {
+  public CustomTypefaceSpan (CustomTypefaceSpan copy) {
+    this(copy.typeface, copy.colorId);
+    this.type = copy.type;
+    this.backgroundColorId = copy.backgroundColorId;
+    this.flags = copy.flags;
+    this.textSizeDp = copy.textSizeDp;
+    this.forcedTheme = copy.forcedTheme;
+    this.transparentColorId = copy.transparentColorId;
+    this.boundTransparencyView = copy.boundTransparencyView;
+    this.onClickListener = copy.onClickListener;
+    this.tag = copy.tag;
+  }
+
+  public CustomTypefaceSpan setBackgroundColorId (@ColorId int colorId) {
     return setBackgroundColorId(colorId, false);
   }
 
-  public CustomTypefaceSpan setBackgroundColorId (@ThemeColorId int colorId, boolean noTransparency) {
+  public CustomTypefaceSpan setBackgroundColorId (@ColorId int colorId, boolean noTransparency) {
     this.backgroundColorId = colorId;
     this.flags = BitwiseUtils.setFlag(flags, FLAG_NO_BACKGROUND_TRANSPARENCY, noTransparency);
     return this;
@@ -126,21 +141,26 @@ public class CustomTypefaceSpan extends MetricAffectingSpan {
     return this;
   }
 
-  public CustomTypefaceSpan setEntityType (TdApi.TextEntityType type) {
+  @Override
+  public void setTextEntityType (TdApi.TextEntityType type) {
     this.type = type;
     if (type != null) {
-      setNeedUnderline(type.getConstructor() == TdApi.TextEntityTypeUnderline.CONSTRUCTOR);
-      setNeedStrikethrough(type.getConstructor() == TdApi.TextEntityTypeStrikethrough.CONSTRUCTOR);
-      setNeedRevealOnTap(type.getConstructor() == TdApi.TextEntityTypeSpoiler.CONSTRUCTOR);
+      setNeedUnderline(Td.isUnderline(type));
+      setNeedStrikethrough(Td.isStrikethrough(type));
+      setNeedRevealOnTap(Td.isSpoiler(type));
     } else {
       setNeedUnderline(false);
       setNeedStrikethrough(false);
       setNeedRevealOnTap(false);
     }
-    return this;
   }
 
-  public CustomTypefaceSpan setTransparencyColorId (@ThemeColorId int transparentColorId, WallpaperView wallpaperView) {
+  @Override
+  public TdApi.TextEntityType getTextEntityType () {
+    return type;
+  }
+
+  public CustomTypefaceSpan setTransparencyColorId (@ColorId int transparentColorId, WallpaperView wallpaperView) {
     this.transparentColorId = transparentColorId;
     this.boundTransparencyView = wallpaperView;
     return this;
@@ -153,10 +173,6 @@ public class CustomTypefaceSpan extends MetricAffectingSpan {
 
   public Object getTag () {
     return tag;
-  }
-
-  public TdApi.TextEntityType getEntityType () {
-    return type;
   }
 
   @Nullable
@@ -202,7 +218,7 @@ public class CustomTypefaceSpan extends MetricAffectingSpan {
 
   private void apply (final TextPaint paint) {
     paint.setFakeBoldText((flags & FLAG_FAKE_BOLD) != 0);
-    if (BitwiseUtils.getFlag(flags, FLAG_NEED_REVEAL_ON_TAP)) {
+    if (BitwiseUtils.hasFlag(flags, FLAG_NEED_REVEAL_ON_TAP)) {
       // TODO paint.bgColor = ...;
     }
     if (backgroundColorId != 0) {

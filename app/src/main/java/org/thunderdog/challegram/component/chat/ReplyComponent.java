@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,32 +17,38 @@ package org.thunderdog.challegram.component.chat;
 import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Looper;
 import android.view.MotionEvent;
 import android.view.View;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.Log;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Background;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.data.ContentPreview;
 import org.thunderdog.challegram.data.MediaWrapper;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.data.TGMessage;
+import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageFileLocal;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.telegram.TdlibSender;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.tool.DrawAlgorithms;
+import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
@@ -57,46 +63,31 @@ import me.vkryl.android.util.ViewProvider;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
-public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyable {
+public class ReplyComponent implements Client.ResultHandler, Destroyable {
   private static final int FLAG_ALLOW_TOUCH_EVENTS = 1 << 1;
   private static final int FLAG_FORCE_TITLE = 1 << 3;
   private static final int FLAG_LOADING = 1 << 4;
-  private static final int FLAG_PINNED_MESSAGE = 1 << 5;
-  private static final int FLAG_USE_COLORIZE = 1 << 7;
+  private static final int FLAG_USE_COLORIZE = 1 << 5;
 
   private final Tdlib tdlib;
-  private final @Nullable TGMessage parent;
+  private final @NonNull TGMessage parent;
 
-  private long chatId;
-  private long messageId;
   private TdApi.MessageSender sender;
   private String senderName;
-  private @ThemeColorId int nameColorId;
+  private TdlibAccentColor accentColor;
 
   private int maxWidth;
   private int flags;
 
   private String title;
-  private TD.ContentPreview content;
-  private ImageFile miniThumbnail;
-  private ImageFile preview;
-  private Path contour;
-  private boolean previewCircle;
+  private ContentPreview content;
+  private MediaPreview mediaPreview;
 
   private Text trimmedTitle, trimmedContent;
 
-  private View currentView;
   private ViewProvider viewProvider;
-
-  public ReplyComponent (@NonNull Tdlib tdlib) {
-    if (lineWidth == 0) {
-      initSizes();
-    }
-    this.tdlib = tdlib;
-    this.parent = null;
-  }
 
   public ReplyComponent (@NonNull TGMessage message) {
     if (lineWidth == 0) {
@@ -104,9 +95,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     }
     this.tdlib = message.tdlib();
     this.parent = message;
-    TdApi.Message msg = message.getMessage();
-    this.chatId = msg.chatId;
-    this.messageId = msg.replyToMessageId;
+    this.translatedText = message.getTranslatedText();
     /*TODO optimize displaying for channels, where you can reply to yourself only?
        if (channelTitle != null) {
       flags |= FLAG_CHANNEL;
@@ -126,6 +115,10 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     return sender != null ? tdlib.senderName(sender) : senderName;
   }
 
+  public TdApi.MessageSender getSender () {
+    return sender;
+  }
+
   public void layout (int maxWidth) {
     if (this.maxWidth != maxWidth && maxWidth > 0) {
       this.maxWidth = maxWidth;
@@ -133,18 +126,8 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     }
   }
 
-  public void postLayout (final int maxWidth) {
-    Background.instance().post(() -> {
-      if (ReplyComponent.this.maxWidth != maxWidth) {
-        ReplyComponent.this.maxWidth = maxWidth;
-        buildLayout();
-        invalidate(false);
-      }
-    });
-  }
-
   public void setCurrentView (@Nullable View view) {
-    this.currentView = view;
+    setViewProvider(new SingleViewProvider(view));
   }
 
   public void setViewProvider (@Nullable ViewProvider viewProvider) {
@@ -152,42 +135,16 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
   }
 
   public void invalidate (boolean requestImage) {
-    if (requestImage) {
-      UI.post(this);
-    } else {
-      if (currentView != null) {
-        UI.invalidate(currentView);
-      } else if (viewProvider != null) {
-        viewProvider.postInvalidate();
-      }
+    if (!UI.inUiThread()) {
+      UI.post(() -> invalidate(requestImage));
+      return;
     }
+    if (requestImage || (trimmedContent != null && trimmedContent.hasMedia())) {
+      viewProvider.invalidateContent(this);
+    }
+    viewProvider.invalidate();
   }
 
-  @Override
-  public void run () {
-    if (currentView != null) {
-      currentView.invalidate();
-      if (parent != null) {
-        View view = currentView;
-        if (view instanceof MessageViewGroup) {
-          view = ((MessageViewGroup) currentView).getMessageView();
-        }
-        if (view instanceof MessageView) {
-          ((MessageView) view).invalidateReplyReceiver();
-        }
-      }
-
-      if (currentView instanceof ReplyView) {
-        ((ReplyView) currentView).invalidateReceiver();
-      }
-    } else if (viewProvider != null) {
-      viewProvider.invalidate();
-      if (isMessageComponent()) {
-        parent.invalidateReplyReceiver();
-      }
-    }
-  }
-  
   private boolean isMessageComponent () {
     return parent != null;
   }
@@ -207,8 +164,17 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     }
   }
 
-  private int getContentWidth () {
-    return !hasPreview() ? maxWidth - paddingLeft - lineWidth - paddingLeft : maxWidth - paddingLeft - paddingLeft - lineWidth - lineWidth - (isMessageComponent() ? mHeight : height);
+  private static final float CORNER_PADDING = 1f;
+
+  private int getContentWidth (boolean isTitle) {
+    int maxWidth = this.maxWidth - paddingLeft - lineWidth - paddingLeft;
+    if (hasPreview()) {
+      maxWidth -= lineWidth + (isMessageComponent() ? mHeight : height);
+    }
+    if (isTitle && cornerDrawable != null) {
+      maxWidth -= cornerDrawable.getMinimumWidth() + Screen.dp(CORNER_PADDING);
+    }
+    return maxWidth;
   }
 
   public int width () {
@@ -216,7 +182,14 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
   }
 
   public int width (boolean isWhite) {
-    return (!hasPreview() ? Math.max(getTextWidth(), getTitleWidth()) + paddingLeft + paddingLeft + lineWidth : Math.max(getTextWidth(), getTitleWidth()) + paddingLeft + lineWidth + lineWidth + paddingLeft + (isMessageComponent() ? mHeight : height)) + (isWhite ? Screen.dp(3f) : 0);
+    int contentWidth = Math.max(getTextWidth(), getTitleWidth() + (cornerDrawable != null ? cornerDrawable.getMinimumWidth() + Screen.dp(CORNER_PADDING) : 0)) + paddingLeft + paddingLeft + lineWidth;
+    if (hasPreview()) {
+      contentWidth += lineWidth + (isMessageComponent() ? mHeight : height);
+    }
+    if (isWhite) {
+      contentWidth += Screen.dp(3f);
+    }
+    return contentWidth;
   }
 
   private int getTextWidth () {
@@ -236,26 +209,45 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
   }
 
   private void buildTitle () {
-    int width = getContentWidth();
-    String titleText = title != null ? title : Lang.getString(isChannel() ? R.string.LoadingChannel : R.string.LoadingUser);
+    int width = getContentWidth(true);
+    String titleText = computeTitleText(Lang.getString(isChannel() ? R.string.LoadingChannel : R.string.LoadingUser));
     trimmedTitle = new Text.Builder(titleText, width, getTitleStyleProvider(isMessageComponent()), getTitleColorSet())
       .singleLine()
       .clipTextArea()
-      .allBold()
+      .allBold(sender != null || StringUtils.isEmpty(senderName))
       .allClickable()
       .viewProvider(viewProvider)
       .build();
   }
 
   private void buildContent () {
-    int width = getContentWidth();
+    int width = getContentWidth(false);
 
+    //noinspection UnsafeOptInUsageError
     Text trimmedContent = new Text.Builder(content != null ? content.buildText(true) : Lang.getString(R.string.LoadingMessage), width, isMessageComponent() ? TGMessage.getTextStyleProvider() : getTextStyleProvider(), getContentColorSet())
       .singleLine()
       .textFlags(Text.FLAG_CUSTOM_LONG_PRESS)
       .ignoreNewLines().ignoreContinuousNewLines()
-      .entities(content != null && !Td.isEmpty(content.formattedText) ? TextEntity.valueOf(tdlib, content.formattedText.text, content.formattedText.entities, null) : null)
-      .viewProvider(viewProvider != null ? viewProvider : currentView != null ? new SingleViewProvider(currentView) : null)
+      .entities(
+        content != null && !Td.isEmpty(content.formattedText) ? TextEntity.valueOf(tdlib, content.formattedText.text, content.formattedText.entities, null) : null,
+        (text, specificMedia) -> {
+          if (isMessageComponent()) {
+            parent.invalidateReplyTextMediaReceiver(text, specificMedia);
+          } else {
+            /*viewProvider.performWithViews((view) -> {
+              if (view instanceof ReplyView) {
+                ComplexReceiver receiver = ((ReplyView) view).getTextMediaReceiver();
+                if (!text.invalidateMediaContent(receiver, specificMedia)) {
+                  requestTextContent(receiver);
+                }
+              } else {
+                throw new UnsupportedOperationException();
+              }
+            });*/
+          }
+        }
+      )
+      .viewProvider(viewProvider)
       .build();
 
     if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -266,12 +258,26 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
         ReplyComponent.this.trimmedContent = __trimmedContent;
       });
     }
+    if (trimmedContent.hasMedia()) {
+      invalidate(true);
+    }
   }
 
-  public void requestPreview (DoubleImageReceiver receiver) {
+  public void requestTextContent (ComplexReceiver textMediaReceiver) {
+    if (trimmedContent != null) {
+      trimmedContent.requestMedia(textMediaReceiver);
+    } else {
+      textMediaReceiver.clear();
+    }
+  }
+
+  public void requestPreview (DoubleImageReceiver receiver, ComplexReceiver textMediaReceiver) {
     int imageHeight = isMessageComponent() ? mHeight : height;
-    receiver.setRadius(previewCircle ? imageHeight / 2 : 0);
-    receiver.requestFile(miniThumbnail, preview);
+    if (mediaPreview != null) {
+      receiver.setRadius(mediaPreview.previewCircle ? imageHeight / 2f : 0);
+      receiver.requestFile(mediaPreview.miniThumbnail, mediaPreview.preview);
+    }
+    requestTextContent(textMediaReceiver);
   }
 
   private Path path;
@@ -302,7 +308,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
   }
 
   private boolean hasPreview () {
-    return miniThumbnail != null || preview != null;
+    return mediaPreview != null && (mediaPreview.miniThumbnail != null || mediaPreview.preview != null);
   }
 
   private int getTextLeft () {
@@ -313,13 +319,32 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     if (parent != null) {
       if (parent.separateReplyFromContent())
         return parent::getBubbleMediaReplyTextColor;
-      if (nameColorId != 0)
-        return () -> Theme.getColor(nameColorId);
       if (isPsa())
         return parent.getChatAuthorPsaColorSet();
+      if (useAccentColor())
+        return accentColorSet();
       return parent.getChatAuthorColorSet();
     }
+    if (useAccentColor())
+      return accentColorSet();
     return TextColorSets.Regular.NORMAL;
+  }
+
+  private TextColorSet accentColorSet () {
+    if (accentColor == null) {
+      throw new IllegalStateException();
+    }
+    return new TextColorSet() {
+      @Override
+      public int defaultTextColor () {
+        return accentColor.getNameColor();
+      }
+
+      @Override
+      public long mediaTextComplexColor () {
+        return accentColor.getNameComplexColor();
+      }
+    };
   }
 
   private TextColorSet getContentColorSet () {
@@ -346,7 +371,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
         }
       };
     }
-    if (BitwiseUtils.getFlag(flags, FLAG_ALLOW_TOUCH_EVENTS)) {
+    if (BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TOUCH_EVENTS)) {
       return TextColorSets.Regular.NORMAL;
     }
     return new TextColorSet() {
@@ -362,13 +387,31 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     };
   }
 
-  public void draw (Canvas c, int startX, int startY, int endX, int width, Receiver receiver, boolean rtl) {
+  public int getLastX () {
+    return lastX;
+  }
+
+  public int getLastY () {
+    return lastY;
+  }
+
+  public void draw (Canvas c, int startX, int startY, int endX, int width, Receiver receiver, ComplexReceiver textMediaReceiver, boolean rtl) {
     boolean isWhite = parent != null && parent.separateReplyFromContent();
 
     lastX = startX;
     lastY = startY;
 
     final boolean isOutBubble = isOutBubble();
+    final @ColorInt int lineColor;
+    if (isMessageComponent()) {
+      lineColor = isWhite ? parent.getBubbleMediaReplyTextColor() : isOutBubble ? Theme.getColor(ColorId.bubbleOut_chatVerticalLine) : useAccentColor() ? accentColor.getVerticalLineColor() : Theme.getColor(ColorId.messageVerticalLine);
+    } else {
+      lineColor = useAccentColor() ? accentColor.getVerticalLineColor() : Theme.getColor(ColorId.messageVerticalLine);
+    }
+
+    float cornerPositionX, cornerPositionY;
+    cornerPositionX = startX + width;
+    cornerPositionY = startY;
 
     RectF rectF = Paints.getRectF();
     if (isWhite) {
@@ -380,6 +423,11 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       rectF.right = startX + width;
       float mergeRadius = Theme.getBubbleMergeRadius();
       c.drawRoundRect(rectF, mergeRadius, mergeRadius, Paints.fillingPaint(parent.getBubbleMediaReplyBackgroundColor()));
+    }
+
+    if (cornerDrawable != null) {
+      // TODO: optimize
+      Drawables.draw(c, cornerDrawable, cornerPositionX - cornerDrawable.getMinimumWidth(), cornerPositionY, Paints.getPorterDuffPaint(lineColor));
     }
 
     if (hasPreview()) {
@@ -401,10 +449,18 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       } else {
         restoreToCount = Integer.MIN_VALUE;
       }
-      if (receiver.needPlaceholder()) {
-        receiver.drawPlaceholderContour(c, contour);
+      if (receiver.needPlaceholder() && mediaPreview != null) {
+        receiver.drawPlaceholderContour(c, mediaPreview.contour);
       }
       receiver.draw(c);
+      if (Config.DEBUG_STICKER_OUTLINES && mediaPreview != null) {
+        receiver.drawPlaceholderContour(c, mediaPreview.contour);
+      }
+      if (mediaPreview != null && mediaPreview.needFireIcon) {
+        float radius = Theme.getBubbleMergeRadius();
+        DrawAlgorithms.drawRoundRect(c, radius, receiver.getLeft(), receiver.getTop(), receiver.getRight(), receiver.getBottom(), Paints.fillingPaint(Theme.getColor(ColorId.spoilerMediaOverlay)));
+        DrawAlgorithms.drawParticles(c, radius, receiver.getLeft(), receiver.getTop(), receiver.getRight(), receiver.getBottom(), 1f);
+      }
       ViewSupport.restoreClipPath(c, restoreToCount);
     }
 
@@ -416,7 +472,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       }
 
       if (trimmedContent != null) {
-        trimmedContent.draw(c, startX + textLeft, startX + textLeft + trimmedContent.getWidth(), 0, startY + Screen.dp(22f));
+        trimmedContent.draw(c, startX + textLeft, startX + textLeft + trimmedContent.getWidth(), 0, startY + Screen.dp(22f), null, 1f, textMediaReceiver);
       }
 
       if (rtl) {
@@ -424,7 +480,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       } else {
         rectF.set(startX, startY, startX + lineWidth, startY + mHeight);
       }
-      c.drawRoundRect(rectF, lineWidth / 2, lineWidth / 2, Paints.fillingPaint(isWhite ? parent.getBubbleMediaReplyTextColor() : isOutBubble ? Theme.getColor(R.id.theme_color_bubbleOut_chatVerticalLine) : nameColorId != 0 ? Theme.getColor(nameColorId) : Theme.getColor(R.id.theme_color_messageVerticalLine)));
+      c.drawRoundRect(rectF, lineWidth / 2f, lineWidth / 2f, Paints.fillingPaint(lineColor));
 
       return;
     }
@@ -436,11 +492,11 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     }
 
     if (trimmedContent != null) {
-      trimmedContent.draw(c, left, left + trimmedContent.getWidth(), 0, startY + Screen.dp(19f));
+      trimmedContent.draw(c, left, left + trimmedContent.getWidth(), 0, startY + Screen.dp(19f), null, 1f, textMediaReceiver);
     }
 
     Paints.getRectF().set(startX, startY, startX + lineWidth, startY + height);
-    c.drawRoundRect(Paints.getRectF(), lineWidth / 2, lineWidth / 2, Paints.fillingPaint(Theme.getColor(R.id.theme_color_messageVerticalLine)));
+    c.drawRoundRect(Paints.getRectF(), lineWidth / 2f, lineWidth / 2f, Paints.fillingPaint(lineColor));
   }
 
   // Data workers
@@ -455,14 +511,8 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
   }
 
   public void set (@Nullable CharSequence forcedTitle, @NonNull TdApi.Message msg) {
+    this.accentColor = tdlib.senderAccentColor(msg.senderId);
     setTitleImpl(getTitle(forcedTitle, msg));
-    setMessage(msg, false, false);
-  }
-
-  public void set (@Nullable CharSequence forcedTitle, TdApi.Message msg, boolean isPinnedMessage) {
-    setTitleImpl(getTitle(forcedTitle, msg));
-    this.flags = BitwiseUtils.setFlag(flags, FLAG_FORCE_TITLE, !StringUtils.isEmpty(forcedTitle));
-    this.flags = BitwiseUtils.setFlag(flags, FLAG_PINNED_MESSAGE, isPinnedMessage);
     setMessage(msg, false, false);
   }
 
@@ -470,7 +520,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     return (flags & FLAG_ALLOW_TOUCH_EVENTS) != 0 && trimmedContent != null && trimmedContent.onTouchEvent(view, e);
   }
 
-  public void set (String title, TD.ContentPreview content, TdApi.Minithumbnail miniThumbnail, TdApi.File file) {
+  public void set (String title, ContentPreview content, TdApi.Minithumbnail miniThumbnail, TdApi.File file) {
     ImageFile image;
     if (file == null || TD.isFileEmpty(file)) {
       image = null;
@@ -491,30 +541,97 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       preview = null;
     }
 
-    setContent(title, content, null, preview, image, false, false);
+    setContent(title, content, new MediaPreview(preview, image, null, false, false), false);
   }
 
-  private TdApi.Function<?> retryFunction;
+  private @Nullable TdApi.Function<?> retryFunction;
+  private boolean ignoreFailures;
+  private @Nullable TdApi.TextQuote quote;
+  private Drawable cornerDrawable;
 
   public void load () {
-    if (parent != null) {
-      TdApi.Message foundMessage = parent.manager().getAdapter().tryFindMessage(chatId, messageId);
-      if (foundMessage != null) {
-        setMessage(foundMessage, false, true);
-        return;
+    if (parent == null)
+      return;
+    TdApi.Message message = parent.getMessage();
+    if (message.replyTo == null) {
+      return;
+    }
+    final TdApi.Function<?> function, retryFunction;
+    switch (message.replyTo.getConstructor()) {
+      case TdApi.MessageReplyToMessage.CONSTRUCTOR: {
+        TdApi.MessageReplyToMessage replyToMessage = (TdApi.MessageReplyToMessage) message.replyTo;
+        if (!Td.isEmpty(replyToMessage.quote) && replyToMessage.quote.isManual) {
+          cornerDrawable = Drawables.load(R.drawable.baseline_format_quote_close_18);
+        } else {
+          cornerDrawable = null;
+        }
+        if (replyToMessage.origin != null) {
+          handleOrigin(replyToMessage.origin);
+        }
+        if (!Td.isEmpty(replyToMessage.quote) || replyToMessage.content != null) {
+          this.quote = replyToMessage.quote;
+          TdApi.Message fakeMessage = TD.newFakeMessage(replyToMessage.chatId, sender, replyToMessage.content == null ? new TdApi.MessageText(replyToMessage.quote.text, null, null) : replyToMessage.content);
+          fakeMessage.id = replyToMessage.messageId;
+
+          ContentPreview contentPreview = ContentPreview.getChatListPreview(tdlib, fakeMessage.chatId, fakeMessage, true);
+          if (!Td.isEmpty(replyToMessage.quote)) {
+            contentPreview = new ContentPreview(contentPreview, replyToMessage.quote.text);
+          }
+          MediaPreview mediaPreview = replyToMessage.content != null ? newMediaPreview(replyToMessage.chatId, replyToMessage.content) : null;
+          this.content = new ContentPreview(translatedText, contentPreview);
+          setTitleImpl(computeTitleText(null));
+          this.mediaPreview = mediaPreview;
+          buildLayout();
+          invalidate(mediaPreview != null);
+          this.ignoreFailures = true;
+        } else if (message.chatId == replyToMessage.chatId) {
+          TdApi.Message foundMessage = parent.manager().getAdapter().tryFindMessage(replyToMessage.chatId, replyToMessage.messageId);
+          if (foundMessage != null) {
+            setMessage(foundMessage, false, true);
+            return;
+          }
+        }
+        if (replyToMessage.origin == null) {
+          if (Td.hasMessageSource(message.forwardInfo) && !parent.isRepliesChat()) {
+            function = new TdApi.GetRepliedMessage(message.forwardInfo.source.chatId, message.forwardInfo.source.messageId);
+          } else {
+            function = new TdApi.GetRepliedMessage(message.chatId, message.id);
+          }
+          if (replyToMessage.chatId != 0 && replyToMessage.messageId != 0) {
+            retryFunction = new TdApi.GetMessage(replyToMessage.chatId, replyToMessage.messageId);
+          } else {
+            retryFunction = null;
+          }
+        } else {
+          function = null;
+          retryFunction = null;
+        }
+        break;
+      }
+      case TdApi.MessageReplyToStory.CONSTRUCTOR: {
+        TdApi.MessageReplyToStory replyToStory = (TdApi.MessageReplyToStory) message.replyTo;
+        function = new TdApi.GetStory(replyToStory.storyPosterChatId, replyToStory.storyId, true);
+        retryFunction = new TdApi.GetStory(replyToStory.storyPosterChatId, replyToStory.storyId, false);
+        break;
+      }
+      default: {
+        Td.assertMessageReplyTo_699c5345();
+        throw Td.unsupported(message.replyTo);
       }
     }
-    flags |= FLAG_LOADING;
-    if (isMessageComponent()) {
-      retryFunction = new TdApi.GetMessage(chatId, parent.getMessage().replyToMessageId);
-      tdlib.client().send(new TdApi.GetRepliedMessage(chatId, parent.getId()), this);
-    } else {
-      tdlib.client().send(new TdApi.GetMessage(chatId, messageId), this);
+    if (function != null) {
+      flags |= FLAG_LOADING;
+      this.retryFunction = retryFunction;
+      tdlib.client().send(function, this);
     }
   }
 
   private void parseContent (final TdApi.Message msg, final boolean forceRequestImage) {
     Background.instance().post(() -> setMessage(msg, forceRequestImage, false));
+  }
+
+  private void parseContent (final TdApi.Story story, final boolean forceRequestImage) {
+    Background.instance().post(() -> setStory(story, forceRequestImage, false));
   }
 
   public void setChannelTitle (final String title) {
@@ -525,32 +642,33 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     });
   }
 
-  public void setTitle (final String title) {
-    Background.instance().post(() -> {
-      setTitleImpl(title);
-      buildTitle();
-      invalidate(false);
-    });
-  }
-
-  private void setContent (final String title, final TD.ContentPreview content, final Path contour, final ImageFile miniThumbnail, final ImageFile preview, final boolean previewCircle, final boolean forceRequest) {
+  private void setContent (final String title, final ContentPreview content, MediaPreview mediaPreview, final boolean forceRequest) {
     Background.instance().post(() -> {
       ReplyComponent.this.currentMessage = null;
-      ReplyComponent.this.content = content;
+      ReplyComponent.this.content = new ContentPreview(translatedText, content);
       setTitleImpl(title);
-      ReplyComponent.this.contour = contour;
-      ReplyComponent.this.miniThumbnail = miniThumbnail;
-      ReplyComponent.this.preview = preview;
-      ReplyComponent.this.previewCircle = previewCircle;
+      ReplyComponent.this.mediaPreview = mediaPreview;
       buildLayout();
-      invalidate(!isMessageComponent() || preview != null || miniThumbnail != null || forceRequest);
+      invalidate(!isMessageComponent() || mediaPreview != null || forceRequest);
     });
   }
 
   private TdApi.Message currentMessage;
+  private TdApi.Error currentError;
 
   public boolean hasValidMessage () {
     return currentMessage != null;
+  }
+
+  public TdApi.Error getError () {
+    return currentError;
+  }
+
+  public CharSequence toErrorText () {
+    if (currentError != null && currentError.code == 404) {
+      return Lang.getString(R.string.ReplyMessageDeletedHint);
+    }
+    return TD.toErrorString(currentError);
   }
 
   public boolean replaceMessageContent (long messageId, TdApi.MessageContent content) {
@@ -562,9 +680,20 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     return false;
   }
 
+  private TdApi.FormattedText translatedText;
+
+  public boolean replaceMessageTranslation (long messageId, TdApi.FormattedText translation) {
+    if (currentMessage != null && currentMessage.id == messageId) {
+      translatedText = translation;
+      parseContent(currentMessage, true);
+      return true;
+    }
+    return false;
+  }
+
   public boolean deleteMessageContent (long messageId) {
     if (currentMessage != null && currentMessage.id == messageId) {
-      setContent(Lang.getString(R.string.Error), new TD.ContentPreview(null, R.string.DeletedMessage), null, null, null, false,true);
+      setContent(Lang.getString(R.string.Error), new ContentPreview(null, R.string.DeletedMessage), null, true);
       return true;
     }
     return false;
@@ -572,33 +701,58 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
 
   // private boolean isPrivate;
 
-  private void setMessage (TdApi.Message msg, boolean forceRequestImage, boolean forceLocal) {
-    currentMessage = msg;
-    if ((flags & FLAG_USE_COLORIZE) != 0 && !tdlib.isSelfSender(msg)) {
-      nameColorId = TD.getNameColorId(new TdlibSender(tdlib, msg.chatId, msg.senderId).getAvatarColorId());
-    } else {
-      nameColorId = ThemeColorId.NONE;
+  private void setStory (TdApi.Story story, boolean forceRequestImage, boolean forceLocal) {
+    // TODO
+  }
+
+  private String computeTitleText (String defaultText) {
+    return BitwiseUtils.hasFlag(flags, FLAG_FORCE_TITLE) ? this.title :
+      sender == null ? StringUtils.isEmpty(senderName) ? (StringUtils.isEmpty(title) ? defaultText : title) : senderName :
+      StringUtils.isEmpty(senderName) ? tdlib.senderName(sender, isMessageComponent()) :
+      Lang.getString(isChannel() ? R.string.format_channelAndSignature : R.string.format_chatAndSignature, tdlib.senderName(sender, isMessageComponent()), senderName);
+  }
+
+  private static class MediaPreview {
+    private final ImageFile miniThumbnail;
+    private final ImageFile preview;
+    private final Path contour;
+    private final boolean needFireIcon;
+    private final boolean previewCircle;
+
+    public MediaPreview (ImageFile miniThumbnail, ImageFile preview, Path contour, boolean needFireIcon, boolean previewCircle) {
+      this.miniThumbnail = miniThumbnail;
+      this.preview = preview;
+      this.contour = contour;
+      this.needFireIcon = needFireIcon;
+      this.previewCircle = previewCircle;
     }
-    boolean isPrivate = msg.ttl != 0;
+  }
+
+  private MediaPreview newMediaPreview (long chatId, TdApi.MessageContent content) {
+    boolean isPrivate = Td.isSecret(content);
     Path contour = null;
     TdApi.Thumbnail thumbnail = null;
     TdApi.PhotoSize photoSize = null;
     TdApi.Minithumbnail miniThumbnail = null;
     boolean previewCircle = false;
-    switch (msg.content.getConstructor()) {
+    boolean hasSpoiler = false;
+    //noinspection SwitchIntDef
+    switch (content.getConstructor()) {
       case TdApi.MessagePhoto.CONSTRUCTOR: {
-        TdApi.Photo photo = ((TdApi.MessagePhoto) msg.content).photo;
-        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, msg.chatId);
+        TdApi.MessagePhoto messagePhoto = (TdApi.MessagePhoto) content;
+        TdApi.Photo photo = messagePhoto.photo;
+        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, chatId);
         TdApi.PhotoSize smallest = Td.findSmallest(photo);
         if (smallest != null && smallest != photoSize) {
           thumbnail = TD.toThumbnail(photoSize);
         }
         miniThumbnail = photo.minithumbnail;
+        hasSpoiler = messagePhoto.hasSpoiler;
         break;
       }
       case TdApi.MessageChatChangePhoto.CONSTRUCTOR: {
-        TdApi.ChatPhoto photo = ((TdApi.MessageChatChangePhoto) msg.content).photo;
-        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, msg.chatId);
+        TdApi.ChatPhoto photo = ((TdApi.MessageChatChangePhoto) content).photo;
+        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, chatId);
         TdApi.PhotoSize smallest = Td.findSmallest(photo.sizes);
         if (smallest != null && smallest != photoSize) {
           thumbnail = TD.toThumbnail(photoSize);
@@ -608,66 +762,197 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
         break;
       }
       case TdApi.MessageGame.CONSTRUCTOR: {
-        TdApi.Photo photo = ((TdApi.MessageGame) msg.content).game.photo;
-        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, msg.chatId);
+        TdApi.Photo photo = ((TdApi.MessageGame) content).game.photo;
+        photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.sizes, chatId);
         miniThumbnail = photo.minithumbnail;
         break;
       }
       case TdApi.MessageSticker.CONSTRUCTOR: {
-        TdApi.Sticker sticker = ((TdApi.MessageSticker) msg.content).sticker;
-        if (sticker == null) {
-          return;
-        }
+        TdApi.Sticker sticker = ((TdApi.MessageSticker) content).sticker;
         thumbnail = sticker.thumbnail != null ? sticker.thumbnail : TD.toThumbnail(sticker);
-        contour = Td.buildOutline(sticker.outline, Math.min((float) height / (float) sticker.width, (float) height / (float) sticker.height));
+        // FIXME contour = Td.buildOutline(sticker, isMessageComponent() ? mHeight : height);
         break;
       }
       case TdApi.MessageVideo.CONSTRUCTOR: {
-        TdApi.Video video = ((TdApi.MessageVideo) msg.content).video;
-        if (video == null) {
-          return;
-        }
+        TdApi.MessageVideo messageVideo = (TdApi.MessageVideo) content;
+        TdApi.Video video = messageVideo.video;
         miniThumbnail = video.minithumbnail;
         thumbnail = video.thumbnail;
+        hasSpoiler = messageVideo.hasSpoiler;
         break;
       }
       case TdApi.MessageAnimation.CONSTRUCTOR: {
-        TdApi.Animation animation = ((TdApi.MessageAnimation) msg.content).animation;
+        TdApi.MessageAnimation messageAnimation = (TdApi.MessageAnimation) content;
+        TdApi.Animation animation = messageAnimation.animation;
         miniThumbnail = animation.minithumbnail;
         thumbnail = animation.thumbnail;
+        hasSpoiler = messageAnimation.hasSpoiler;
         break;
       }
       case TdApi.MessageVideoNote.CONSTRUCTOR: {
-        TdApi.VideoNote videoNote = ((TdApi.MessageVideoNote) msg.content).videoNote;
+        TdApi.VideoNote videoNote = ((TdApi.MessageVideoNote) content).videoNote;
         miniThumbnail = videoNote.minithumbnail;
         thumbnail = videoNote.thumbnail;
         previewCircle = true;
         break;
       }
       case TdApi.MessageDocument.CONSTRUCTOR: {
-        TdApi.Document doc = ((TdApi.MessageDocument) msg.content).document;
-        if (doc == null) {
-          return;
-        }
+        TdApi.Document doc = ((TdApi.MessageDocument) content).document;
         miniThumbnail = doc.minithumbnail;
         thumbnail = doc.thumbnail;
         break;
       }
       case TdApi.MessageText.CONSTRUCTOR: {
-        TdApi.WebPage webPage = ((TdApi.MessageText) msg.content).webPage;
-        if (webPage != null) {
-          if (webPage.photo != null) {
-            photoSize = MediaWrapper.pickDisplaySize(tdlib, webPage.photo.sizes, msg.chatId);
-            miniThumbnail = webPage.photo.minithumbnail;
-          } else if (webPage.document != null && webPage.document.thumbnail != null) {
-            thumbnail = webPage.document.thumbnail;
-            miniThumbnail = webPage.document.minithumbnail;
-          } else if (webPage.sticker != null && webPage.sticker.thumbnail != null) {
-            thumbnail = webPage.sticker.thumbnail;
-            contour = Td.buildOutline(webPage.sticker.outline, Math.min((float) height / (float) webPage.sticker.width, (float) height / (float) webPage.sticker.height));
-          } else if (webPage.animation != null && webPage.animation.thumbnail != null) {
-            thumbnail = webPage.animation.thumbnail;
-            miniThumbnail = webPage.animation.minithumbnail;
+        TdApi.LinkPreview linkPreview = ((TdApi.MessageText) content).linkPreview;
+        if (linkPreview != null) {
+          switch (linkPreview.type.getConstructor()) {
+            case TdApi.LinkPreviewTypeSticker.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeSticker sticker = (TdApi.LinkPreviewTypeSticker) linkPreview.type;
+              thumbnail = sticker.sticker.thumbnail;
+              // FIXME contour = Td.buildOutline(sticker.sticker, isMessageComponent() ? mHeight : height);
+              break;
+            }
+            case TdApi.LinkPreviewTypeStickerSet.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeStickerSet stickerSet = (TdApi.LinkPreviewTypeStickerSet) linkPreview.type;
+              if (stickerSet.stickers.length > 0) {
+                TdApi.Sticker sticker = stickerSet.stickers[0];
+                thumbnail = sticker.thumbnail;
+                // FIXME contour = Td.buildOutline(sticker, isMessageComponent() ? mHeight : height);
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeAnimation.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeAnimation animation = (TdApi.LinkPreviewTypeAnimation) linkPreview.type;
+              thumbnail = animation.animation.thumbnail;
+              miniThumbnail = animation.animation.minithumbnail;
+              break;
+            }
+            case TdApi.LinkPreviewTypeDocument.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeDocument document = (TdApi.LinkPreviewTypeDocument) linkPreview.type;
+              thumbnail = document.document.thumbnail;
+              miniThumbnail = document.document.minithumbnail;
+              break;
+            }
+            case TdApi.LinkPreviewTypePhoto.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypePhoto photo = (TdApi.LinkPreviewTypePhoto) linkPreview.type;
+              photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.photo.sizes, chatId);
+              miniThumbnail = photo.photo.minithumbnail;
+              break;
+            }
+            case TdApi.LinkPreviewTypeArticle.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeArticle article = (TdApi.LinkPreviewTypeArticle) linkPreview.type;
+              if (article.photo != null) {
+                photoSize = MediaWrapper.pickDisplaySize(tdlib, article.photo.sizes, chatId);
+                miniThumbnail = article.photo.minithumbnail;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeVideo.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeVideo video = (TdApi.LinkPreviewTypeVideo) linkPreview.type;
+              if (video.video != null) {
+                thumbnail = video.video.thumbnail;
+                miniThumbnail = video.video.minithumbnail;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeEmbeddedAnimationPlayer.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeEmbeddedAnimationPlayer animationPlayer = (TdApi.LinkPreviewTypeEmbeddedAnimationPlayer) linkPreview.type;
+              if (animationPlayer.thumbnail != null) {
+                photoSize = MediaWrapper.pickDisplaySize(tdlib, animationPlayer.thumbnail.sizes, chatId);
+                miniThumbnail = animationPlayer.thumbnail.minithumbnail;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeEmbeddedVideoPlayer.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeEmbeddedVideoPlayer videoPlayer = (TdApi.LinkPreviewTypeEmbeddedVideoPlayer) linkPreview.type;
+              if (videoPlayer.thumbnail != null) {
+                photoSize = MediaWrapper.pickDisplaySize(tdlib, videoPlayer.thumbnail.sizes, chatId);
+                miniThumbnail = videoPlayer.thumbnail.minithumbnail;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeVideoNote.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeVideoNote videoNote = (TdApi.LinkPreviewTypeVideoNote) linkPreview.type;
+              thumbnail = videoNote.videoNote.thumbnail;
+              miniThumbnail = videoNote.videoNote.minithumbnail;
+              previewCircle = true;
+              break;
+            }
+            case TdApi.LinkPreviewTypeAlbum.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeAlbum album = (TdApi.LinkPreviewTypeAlbum) linkPreview.type;
+              if (album.media.length > 0) {
+                TdApi.LinkPreviewAlbumMedia albumMedia = album.media[0];
+                switch (albumMedia.getConstructor()) {
+                  case TdApi.LinkPreviewAlbumMediaPhoto.CONSTRUCTOR: {
+                    TdApi.LinkPreviewAlbumMediaPhoto photo = (TdApi.LinkPreviewAlbumMediaPhoto) albumMedia;
+                    photoSize = MediaWrapper.pickDisplaySize(tdlib, photo.photo.sizes, chatId);
+                    miniThumbnail = photo.photo.minithumbnail;
+                    break;
+                  }
+                  case TdApi.LinkPreviewAlbumMediaVideo.CONSTRUCTOR: {
+                    TdApi.LinkPreviewAlbumMediaVideo video = (TdApi.LinkPreviewAlbumMediaVideo) albumMedia;
+                    miniThumbnail = video.video.minithumbnail;
+                    thumbnail = video.video.thumbnail;
+                    break;
+                  }
+                  default: {
+                    Td.assertLinkPreviewAlbumMedia_8c33c943();
+                    throw Td.unsupported(albumMedia);
+                  }
+                }
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeChat.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeChat chat = (TdApi.LinkPreviewTypeChat) linkPreview.type;
+              if (chat.photo != null) {
+                photoSize = MediaWrapper.pickDisplaySize(tdlib, chat.photo.sizes, chatId);
+                TdApi.PhotoSize smallest = Td.findSmallest(chat.photo.sizes);
+                if (smallest != null && smallest != photoSize) {
+                  thumbnail = TD.toThumbnail(photoSize);
+                }
+                miniThumbnail = chat.photo.minithumbnail;
+                previewCircle = true;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeUser.CONSTRUCTOR: {
+              TdApi.LinkPreviewTypeUser user = (TdApi.LinkPreviewTypeUser) linkPreview.type;
+              if (user.photo != null) {
+                photoSize = MediaWrapper.pickDisplaySize(tdlib, user.photo.sizes, chatId);
+                TdApi.PhotoSize smallest = Td.findSmallest(user.photo.sizes);
+                if (smallest != null && smallest != photoSize) {
+                  thumbnail = TD.toThumbnail(photoSize);
+                }
+                miniThumbnail = user.photo.minithumbnail;
+                previewCircle = true;
+              }
+              break;
+            }
+            case TdApi.LinkPreviewTypeGroupCall.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeVideoChat.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeVoiceNote.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeApp.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeAudio.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeBackground.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeChannelBoost.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeEmbeddedAudioPlayer.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeInvoice.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeMessage.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypePremiumGiftCode.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeShareableChatFolder.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeStory.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeSupergroupBoost.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeTheme.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeUnsupported.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeUpgradedGift.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeWebApp.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeExternalAudio.CONSTRUCTOR:
+            case TdApi.LinkPreviewTypeExternalVideo.CONSTRUCTOR:
+              break;
+            default:
+              Td.assertLinkPreviewType_e3ce10d5();
+              throw Td.unsupported(linkPreview.type);
           }
         }
         break;
@@ -688,7 +973,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
       if (webp) {
         preview.setWebp();
       }
-      if (isPrivate) {
+      if (isPrivate || hasSpoiler) {
         preview.setIsPrivate();
         preview.setNeedBlur();
       }
@@ -701,60 +986,87 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
     } else {
       miniPreview = null;
     }
-    TD.ContentPreview contentPreview = TD.getChatListPreview(tdlib, msg.chatId, msg);
-    if (msg.forwardInfo != null && (parent != null && parent.getMessage().forwardInfo != null)) {
-      switch (msg.forwardInfo.origin.getConstructor()) {
-        case TdApi.MessageForwardOriginUser.CONSTRUCTOR:
-          sender = new TdApi.MessageSenderUser(((TdApi.MessageForwardOriginUser) msg.forwardInfo.origin).senderUserId);
-          senderName = null;
-          break;
-        case TdApi.MessageForwardOriginChannel.CONSTRUCTOR: {
-          TdApi.MessageForwardOriginChannel channel = ((TdApi.MessageForwardOriginChannel) msg.forwardInfo.origin);
-          sender = new TdApi.MessageSenderChat(channel.chatId);
-          senderName = !StringUtils.isEmpty(channel.authorSignature) ? channel.authorSignature : null;
-          break;
-        }
-        case TdApi.MessageForwardOriginChat.CONSTRUCTOR: {
-          TdApi.MessageForwardOriginChat chat = (TdApi.MessageForwardOriginChat) msg.forwardInfo.origin;
-          sender = new TdApi.MessageSenderChat(chat.senderChatId);
-          senderName = chat.authorSignature;
-          break;
-        }
-        case TdApi.MessageForwardOriginHiddenUser.CONSTRUCTOR: {
-          senderName = ((TdApi.MessageForwardOriginHiddenUser) msg.forwardInfo.origin).senderName;
-          sender = null;
+    return new MediaPreview(miniPreview, preview, contour, isPrivate || hasSpoiler, previewCircle);
+  }
+
+  private void setMessage (TdApi.Message msg, boolean forceRequestImage, boolean forceLocal) {
+    currentMessage = msg;
+    MediaPreview mediaPreview = newMediaPreview(msg.chatId, msg.content);
+    ContentPreview contentPreview = ContentPreview.getChatListPreview(tdlib, msg.chatId, msg, true);
+    if (!Td.isEmpty(quote)) {
+      contentPreview = new ContentPreview(contentPreview, quote.text);
+    }
+    if (msg.forwardInfo != null /*&& (parent != null && parent.getMessage().forwardInfo != null)*/) {
+      handleOrigin(msg.forwardInfo.origin);
+    } else if (msg.importInfo != null) {
+      handleOrigin(new TdApi.MessageOriginHiddenUser(msg.importInfo.senderName));
+    } else {
+      switch (msg.senderId.getConstructor()) {
+        case TdApi.MessageSenderUser.CONSTRUCTOR: {
+          handleOrigin(new TdApi.MessageOriginUser(((TdApi.MessageSenderUser) msg.senderId).userId));
           break;
         }
-        case TdApi.MessageForwardOriginMessageImport.CONSTRUCTOR: {
-          TdApi.MessageForwardOriginMessageImport messageImport = (TdApi.MessageForwardOriginMessageImport) msg.forwardInfo.origin;
-          senderName = messageImport.senderName;
-          sender = null;
+        case TdApi.MessageSenderChat.CONSTRUCTOR: {
+          handleOrigin(new TdApi.MessageOriginChat(((TdApi.MessageSenderChat) msg.senderId).chatId, tdlib.isFromAnonymousGroupAdmin(msg) ? msg.authorSignature : null));
           break;
         }
         default: {
-          throw new IllegalArgumentException(msg.forwardInfo.origin.toString());
+          Td.assertMessageSender_439d4c9c();
+          throw Td.unsupported(msg.senderId);
         }
       }
-    } else {
-      sender = msg.senderId;
-      senderName = tdlib.isFromAnonymousGroupAdmin(msg) ? msg.authorSignature : null;
     }
-    String title = BitwiseUtils.getFlag(flags, FLAG_FORCE_TITLE) ? this.title :
-      sender == null ? senderName :
-      StringUtils.isEmpty(senderName) ? tdlib.senderName(sender, isMessageComponent()) :
-      Lang.getString(isChannel() ? R.string.format_channelAndSignature : R.string.format_chatAndSignature, tdlib.senderName(sender, isMessageComponent()), senderName);
+    String title = computeTitleText(null);
+    if (parent != null) {
+      UI.execute(parent::onReplyLoaded);
+    }
     if (Thread.currentThread() == Background.instance().thread() || forceLocal) {
-      this.content = contentPreview;
+      this.content = new ContentPreview(translatedText, contentPreview);
       setTitleImpl(title);
-      this.miniThumbnail = miniPreview;
-      this.contour = contour;
-      this.preview = preview;
-      this.previewCircle = previewCircle;
+      this.mediaPreview = mediaPreview;
       buildLayout();
-      invalidate(forceRequestImage || !isMessageComponent() || miniPreview != null || preview != null);
+      invalidate(forceRequestImage || !isMessageComponent() || mediaPreview != null);
     } else {
-      setContent(title, contentPreview, contour, miniPreview, preview, previewCircle, false);
+      setContent(title, contentPreview, mediaPreview, false);
     }
+    if (parent != null) {
+      UI.execute(() -> parent.updateReactionAvatars(true));
+    }
+  }
+
+  private void handleOrigin (TdApi.MessageOrigin origin) {
+    switch (origin.getConstructor()) {
+      case TdApi.MessageOriginUser.CONSTRUCTOR:
+        sender = new TdApi.MessageSenderUser(((TdApi.MessageOriginUser) origin).senderUserId);
+        senderName = null;
+        break;
+      case TdApi.MessageOriginChannel.CONSTRUCTOR: {
+        TdApi.MessageOriginChannel channel = ((TdApi.MessageOriginChannel) origin);
+        sender = new TdApi.MessageSenderChat(channel.chatId);
+        senderName = !StringUtils.isEmpty(channel.authorSignature) ? channel.authorSignature : null;
+        break;
+      }
+      case TdApi.MessageOriginChat.CONSTRUCTOR: {
+        TdApi.MessageOriginChat chat = (TdApi.MessageOriginChat) origin;
+        sender = new TdApi.MessageSenderChat(chat.senderChatId);
+        senderName = chat.authorSignature;
+        break;
+      }
+      case TdApi.MessageOriginHiddenUser.CONSTRUCTOR: {
+        senderName = ((TdApi.MessageOriginHiddenUser) origin).senderName;
+        sender = null;
+        break;
+      }
+      default: {
+        Td.assertMessageOrigin_f2224a59();
+        throw Td.unsupported(origin);
+      }
+    }
+    accentColor = sender != null ? tdlib.senderAccentColor(sender) : null;
+  }
+
+  private boolean useAccentColor () {
+    return accentColor != null && BitwiseUtils.hasFlag(flags, FLAG_USE_COLORIZE);
   }
 
   private void setTitleImpl (CharSequence title) {
@@ -774,6 +1086,10 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
         parseContent((TdApi.Message) object, false);
         break;
       }
+      case TdApi.Story.CONSTRUCTOR: {
+        parseContent((TdApi.Story) object, false);
+        break;
+      }
       case TdApi.Error.CONSTRUCTOR: {
         if (retryFunction != null) {
           TdApi.Function<?> function = retryFunction;
@@ -781,13 +1097,18 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
           tdlib.client().send(function, this);
           return;
         }
-        setContent(Lang.getString(R.string.Error), TD.errorCode(object) == 404 ? new TD.ContentPreview(null, R.string.DeletedMessage) : new TD.ContentPreview(null, 0, TD.toErrorString(object), true), null, null, null, false, false);
-        currentMessage = null;
+        this.currentError = (TdApi.Error) object;
+        if (!ignoreFailures) {
+          String errorTitle = Lang.getString(R.string.Error);
+          setContent((sender == null && StringUtils.isEmpty(senderName)) ? errorTitle : computeTitleText(errorTitle), TD.errorCode(object) == 404 ? new ContentPreview(null, R.string.DeletedMessage) : new ContentPreview(null, 0, TD.toErrorString(object), true), null, false);
+          currentMessage = null;
+        } else {
+          setChannelTitle(TD.errorCode(object) == 404 ? Lang.getString(R.string.DeletedMessage) : TD.toErrorString(object));
+        }
         break;
       }
       default: {
-        Log.unexpectedTdlibResponse(object, TdApi.GetMessage.class, TdApi.Message.class);
-        break;
+        throw new UnsupportedOperationException(object.toString());
       }
     }
     flags &= ~FLAG_LOADING;
@@ -819,6 +1140,7 @@ public class ReplyComponent implements Client.ResultHandler, Runnable, Destroyab
 
   @Override
   public void performDestroy () {
+    this.cornerDrawable = null;
     this.isDestroyed = true;
   }
 }

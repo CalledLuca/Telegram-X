@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
@@ -47,18 +47,23 @@ import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.core.Media;
 import org.thunderdog.challegram.data.InlineResult;
 import org.thunderdog.challegram.data.InlineResultCommon;
+import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
 import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.Menu;
 import org.thunderdog.challegram.player.TGPlayerController;
+import org.thunderdog.challegram.telegram.RightId;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.ui.ListItem;
 import org.thunderdog.challegram.ui.SettingsAdapter;
+import org.thunderdog.challegram.util.HapticMenuHelper;
+import org.thunderdog.challegram.util.Permissions;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -69,6 +74,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import me.vkryl.android.StorageUtils;
 import me.vkryl.core.DateUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.RunnableData;
@@ -90,37 +96,37 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_more: {
-        header.addMoreButton(menu, this);
-        break;
-      }
+    if (id == R.id.menu_more) {
+      header.addMoreButton(menu, this);
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
     if (id == R.id.menu_btn_more) {
-      showSystemPicker();
+      showSystemPicker(false);
     }
   }
 
   @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
-  private void showSystemPicker () {
+  private void showSystemPicker (boolean forceDownloads) {
     RunnableData<Set<Uri>> callback = uris -> {
       if (uris != null && !uris.isEmpty()) {
-        List<String> files = new ArrayList<>(uris.size());
-        for (Uri uri : uris) {
-          String filePath = U.tryResolveFilePath(uri);
-          if (!StringUtils.isEmpty(filePath) && U.canReadFile(filePath)) {
-            files.add(filePath);
-          } else {
-            files.add(uri.toString());
+        Media.instance().post(() -> {
+          final ArrayList<InlineResult<?>> results = new ArrayList<>(uris.size());
+          final TD.FileInfo fileInfo = new TD.FileInfo();
+          for (Uri uri : uris) {
+            String filePath = U.tryResolveFilePath(uri);
+            if (!StringUtils.isEmpty(filePath) && U.canReadFile(filePath)) {
+              results.add(createItem(context, tdlib, new File(filePath), null));
+            } else {
+              final String path = uri.toString();
+              TD.createInputFile(path, null, fileInfo);
+              results.add(createItem(context, tdlib, path, R.drawable.baseline_insert_drive_file_24, fileInfo.title, Strings.buildSize(fileInfo.knownSize)));
+            }
           }
-        }
-        mediaLayout.pickDateOrProceed((forceDisableNotification, schedulingState, disableMarkdown) ->
-          mediaLayout.sendFilesMixed(files, null, new TdApi.MessageSendOptions(forceDisableNotification, false, false, schedulingState), false)
-        );
+          UI.post(() -> mediaLayout.getFilesControllerDelegate().onFilesSelected(results, false));
+        });
       }
     };
     final Intent intent = new Intent(Intent.ACTION_GET_CONTENT)
@@ -172,15 +178,21 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
   private int initialItemsCount;
 
   private void buildCells () {
-    navigateToPath(null, null, false, null, null, null);
+    navigateToPath(null, null, null, false, null, null, null);
   }
 
-  private void navigateToPath (final String currentPath, final String parentPath, boolean isUpper, final InlineResultCommon data, Runnable onDone, Runnable onError) {
+  private void navigateToPath (final View view, final String currentPath, final String parentPath, boolean isUpper, final InlineResultCommon data, Runnable onDone, Runnable onError) {
     cancelCurrentLoadOperation();
 
     ArrayList<ListItem> items = new ArrayList<>();
 
     if (currentPath != null && !currentPath.isEmpty()) {
+      if (!isUpper) {
+        boolean isMusic = KEY_MUSIC.equals(currentPath);
+        if (mediaLayout.getFilesControllerDelegate().showRestriction(view, isMusic ? RightId.SEND_AUDIO : RightId.SEND_DOCS)) {
+          return;
+        }
+      }
       LoadOperation operation;
       RunnableData<Runnable> before = null;
       if (KEY_GALLERY.equals(currentPath)) {
@@ -198,7 +210,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
         File external = UI.getAppContext().getExternalFilesDir(null);
         String externalPath = external != null ? external.getPath() : null;
         if (!isUpper && (path.equals(internalPath) || path.equals(externalPath))) {
-          before = after -> showOptions(Lang.getMarkdownString(this, R.string.ApplicationFolderWarning), new int[] {R.id.btn_done, R.id.btn_cancel}, new String[] {Lang.getString(R.string.ApplicationFolderWarningConfirm), Lang.getString(R.string.Cancel)}, new int[] {OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[] {R.drawable.baseline_warning_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+          before = after -> showOptions(Lang.getMarkdownString(this, R.string.ApplicationFolderWarning), new int[] {R.id.btn_done, R.id.btn_cancel}, new String[] {Lang.getString(R.string.ApplicationFolderWarningConfirm), Lang.getString(R.string.Cancel)}, new int[] {OptionColor.RED, OptionColor.NORMAL}, new int[] {R.drawable.baseline_warning_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
             if (id == R.id.btn_done) {
               after.run();
             }
@@ -226,15 +238,15 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
         final String environmentPath = baseExternalDir.getPath();
         final boolean isRemovable = Environment.isExternalStorageRemovable();
         StatFs fs = new StatFs(environmentPath);
-        String text = Lang.getString(R.string.FreeXofY, Strings.buildSize(U.getFreeMemorySize(fs)), Strings.buildSize(U.getTotalMemorySize(fs)));
-        InlineResultCommon internalStorage = new InlineResultCommon(context, tdlib, KEY_FOLDER + environmentPath, R.id.theme_color_fileAttach, isRemovable ? R.drawable.baseline_sd_storage_24 : R.drawable.baseline_storage_24, Lang.getString(isRemovable ? R.string.SdCard : R.string.InternalStorage), text);
+        String text = Lang.getString(R.string.FreeXofY, Strings.buildSize(StorageUtils.freeMemorySize(fs)), Strings.buildSize(StorageUtils.totalMemorySize(fs)));
+        InlineResultCommon internalStorage = new InlineResultCommon(context, tdlib, KEY_FOLDER + environmentPath, ColorId.fileAttach, isRemovable ? R.drawable.baseline_sd_storage_24 : R.drawable.baseline_storage_24, Lang.getString(isRemovable ? R.string.SdCard : R.string.InternalStorage), text).setDisableProgressInteract(true);
         items.add(createItem(internalStorage, R.id.btn_internalStorage));
       }
 
       final ArrayList<String> externalStorageFiles = U.getExternalStorageDirectories(baseExternalDir != null ? baseExternalDir.getPath() : null, false);
       if (externalStorageFiles != null) {
         for (String dir : externalStorageFiles) {
-          InlineResultCommon internalStorage = new InlineResultCommon(context, tdlib, KEY_FOLDER + dir, R.id.theme_color_fileAttach, R.drawable.baseline_storage_24, Lang.getString(R.string.Storage), dir);
+          InlineResultCommon internalStorage = new InlineResultCommon(context, tdlib, KEY_FOLDER + dir, ColorId.fileAttach, R.drawable.baseline_storage_24, Lang.getString(R.string.Storage), dir).setDisableProgressInteract(true);
           items.add(createItem(internalStorage, R.id.btn_internalStorage));
         }
       }
@@ -250,12 +262,13 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
     items.add(createItem(musicItem, R.id.btn_musicFiles));
 
     boolean addedDownloads = false;
-    if (U.canManageStorage()) {
+    boolean downloadsEmpty = false;
+    if (context.permissions().canManageStorage()) {
       try {
         File file = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (file.exists() && file.isDirectory()) {
           File[] files = file.listFiles();
-          if (files != null && files.length > 0) {
+          if (files != null && !(downloadsEmpty = files.length == 0)) {
             InlineResultCommon common = createItem(context, tdlib, KEY_FOLDER + file.getPath(), R.drawable.baseline_file_download_24, Lang.getString(R.string.Downloads), Lang.plural(R.string.xFiles, files.length));
             items.add(createItem(common, file.isDirectory() ? R.id.btn_folder : R.id.btn_file));
             addedDownloads = true;
@@ -265,7 +278,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
         Log.e("Cannot add Downloads directory", t);
       }
     }
-    if (!addedDownloads && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    if (!addedDownloads && !downloadsEmpty && context().permissions().canRequestDownloadsAccess()) {
       InlineResultCommon downloadsItem = createItem(context, tdlib, KEY_DOWNLOADS, R.drawable.baseline_file_download_24, Lang.getString(R.string.Downloads), Lang.getString(R.string.Files));
       items.add(createItem(downloadsItem, R.id.btn_downloads));
     }
@@ -290,7 +303,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
           text = Lang.plural(R.string.xFolders, foldersCount);
         else
           text = Lang.plural(R.string.xFiles, filesCount);
-        InlineResultCommon rootDirectory = new InlineResultCommon(context, tdlib, KEY_FOLDER + rootDir.getPath(), R.id.theme_color_fileAttach, R.drawable.baseline_folder_24, Lang.getString(R.string.RootDirectory), text);
+        InlineResultCommon rootDirectory = new InlineResultCommon(context, tdlib, KEY_FOLDER + rootDir.getPath(), ColorId.fileAttach, R.drawable.baseline_folder_24, Lang.getString(R.string.RootDirectory), text).setDisableProgressInteract(true);
         items.add(createItem(rootDirectory, R.id.btn_folder));
         hasRoot = true;
       }
@@ -679,7 +692,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
 
             for (FileEntry entry : entries) {
               final String subtitle = Lang.getFileTimestamp(Math.max(entry.getDateModified(), entry.getDateAdded()), TimeUnit.SECONDS, entry.getSize());
-              InlineResultCommon fileItem = new InlineResultCommon(context, tdlib, new File(entry.getData()), entry.getDisplayName(), subtitle, entry, false);
+              InlineResultCommon fileItem = new InlineResultCommon(context, tdlib, new File(entry.getData()), entry.getDisplayName(), subtitle, entry, false).setDisableProgressInteract(true);
               items.add(createItem(fileItem, R.id.btn_file));
             }
 
@@ -748,7 +761,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
           items.add(createItem(result, R.id.btn_folder_upper));
 
           for (MusicEntry entry : entries) {
-            items.add(new ListItem(ListItem.TYPE_CUSTOM_INLINE, R.id.btn_file).setData(new InlineResultCommon(context, tdlib, entry, MediaBottomFilesController.this)));
+            items.add(new ListItem(ListItem.TYPE_CUSTOM_INLINE, R.id.btn_file).setData(new InlineResultCommon(context, tdlib, entry, MediaBottomFilesController.this).setDisableProgressInteract(true)));
           }
 
           return new Result(items, true);
@@ -949,12 +962,12 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
 
   public static InlineResultCommon createItem (BaseActivity context, Tdlib tdlib, File file, @Nullable Object tag, String title, long lastModifiedTime, String subtitle, boolean isFolder) {
     if (file.isDirectory()) {
-      return new InlineResultCommon(context, tdlib, KEY_FOLDER + file.getPath(), R.id.theme_color_fileAttach, R.drawable.baseline_folder_24, file.getName(), Lang.getString(R.string.Folder));
+      return new InlineResultCommon(context, tdlib, KEY_FOLDER + file.getPath(), ColorId.fileAttach, R.drawable.baseline_folder_24, file.getName(), Lang.getString(R.string.Folder)).setDisableProgressInteract(true);
     } else {
       if (subtitle == null) {
         subtitle = Lang.getFileTimestamp(lastModifiedTime, TimeUnit.MILLISECONDS, file.length());
       }
-      return new InlineResultCommon(context, tdlib, file, title != null ? title : file.getName(), subtitle, tag, isFolder);
+      return new InlineResultCommon(context, tdlib, file, title != null ? title : file.getName(), subtitle, tag, isFolder).setDisableProgressInteract(true);
     }
   }
 
@@ -963,7 +976,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
   }
 
   public static InlineResultCommon createItem (BaseActivity context, Tdlib tdlib, String path, int iconRes, String title, String subtitle) {
-    return new InlineResultCommon(context, tdlib, path, R.id.theme_color_fileAttach, iconRes, title, subtitle);
+    return new InlineResultCommon(context, tdlib, path, ColorId.fileAttach, iconRes, title, subtitle).setDisableProgressInteract(true);
   }
 
   public static ListItem createItem (InlineResult<?> result, int id) {
@@ -1000,6 +1013,19 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
   }
 
   @Override
+  protected void addCustomItems (View view, @NonNull List<HapticMenuHelper.MenuItem> hapticItems) {
+    hapticItems.add(0, new HapticMenuHelper.MenuItem(R.id.btn_addCaption, Lang.getString(R.string.AddCaption), R.drawable.baseline_file_caption_24).setOnClickListener(this::onHapticMenuItemClick));
+  }
+
+  private boolean onHapticMenuItemClick (View view, View parentView, HapticMenuHelper.MenuItem item) {
+    final int id = view.getId();
+    if (id == R.id.btn_addCaption) {
+      mediaLayout.getFilesControllerDelegate().onFilesSelected(new ArrayList<>(selectedItems), true);
+    }
+    return true;
+  }
+
+  @Override
   public void onClick (View v) {
     if (v.getId() == R.id.btn_folder_upper) {
       navigateUpper();
@@ -1013,45 +1039,80 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
     ListItem item = (ListItem) tag;
     if (item.getViewType() == ListItem.TYPE_CUSTOM_INLINE) {
       InlineResultCommon result = (InlineResultCommon) item.getData();
-      switch (item.getId()) {
-        case R.id.btn_file:
-        case R.id.btn_music: {
-          if (inFileSelectMode) {
-            selectItem(item, result);
-          } else {
-            switch (result.getType()) {
-              case InlineResult.TYPE_AUDIO: {
-                mediaLayout.sendMusic((MusicEntry) result.getTag());
-                break;
-              }
-              case InlineResult.TYPE_DOCUMENT: {
-                mediaLayout.sendFile(result.getId());
-                break;
-              }
-            }
-          }
-          break;
+      final int itemId = item.getId();
+      if (itemId == R.id.btn_file || itemId == R.id.btn_music) {
+        if (inFileSelectMode) {
+          selectItem(item, result);
+        } else {
+          mediaLayout.getFilesControllerDelegate().onFilesSelected(new ArrayList<>(Collections.singleton(result)), false);
         }
-        case R.id.btn_bucket: {
-          navigateInside(KEY_BUCKET, result);
-          break;
+      } else if (itemId == R.id.btn_bucket) {
+        navigateInside(v, KEY_BUCKET, result);
+      } else {
+        String path = result.getId();
+        boolean isMusic = KEY_MUSIC.equals(path);
+        if (mediaLayout.getFilesControllerDelegate().showRestriction(v, isMusic ? RightId.SEND_AUDIO : RightId.SEND_DOCS)) {
+          return;
         }
-        default: {
-          if (v.getId() == R.id.btn_internalStorage && !U.canManageStorage()) {
-            showSystemPicker();
+        boolean isDownloads = KEY_DOWNLOADS.equals(path);
+        if (v.getId() == R.id.btn_internalStorage || isDownloads) {
+          if (!context.permissions().canManageStorage()) {
+            showSystemPicker(isDownloads);
             return;
           }
+          if (context.permissions().requestReadExternalStorage(Permissions.ReadType.ALL, grantType -> {
+            if (grantType != Permissions.GrantResult.ALL || !context.permissions().canManageStorage()) {
+              showSystemPicker(isDownloads);
+            } else {
+              navigateTo(v, result);
+            }
+          })) {
+            return;
+          }
+        }
 
-          String path = result.getId();
-          if (path != null) {
-            if (KEY_GALLERY.equals(path) || KEY_MUSIC.equals(path) || KEY_DOWNLOADS.equals(path) || KEY_BUCKET.equals(path) || path.startsWith(KEY_FOLDER)) {
-              navigateInside(path, result);
-            } else if (KEY_UPPER.equals(path)) {
-              navigateUpper();
+        if (path != null) {
+          switch (path) {
+            case KEY_GALLERY: {
+              if (context.permissions().requestReadExternalStorage(Permissions.ReadType.IMAGES_AND_VIDEOS, grantType -> {
+                if (grantType == Permissions.GrantResult.ALL) {
+                  navigateTo(v, result);
+                } else {
+                  // TODO 1-tap access to privacy settings?
+                  context.tooltipManager().builder(v).icon(R.drawable.baseline_warning_24).show(tdlib, R.string.MissingGalleryPermission).hideDelayed();
+                }
+              })) {
+                return;
+              }
+              break;
+            }
+            case KEY_MUSIC: {
+              if (context.permissions().requestReadExternalStorage(Permissions.ReadType.AUDIO, grantType -> {
+                if (grantType == Permissions.GrantResult.ALL) {
+                  navigateTo(v, result);
+                } else {
+                  // TODO 1-tap access to privacy settings?
+                  context.tooltipManager().builder(v).icon(R.drawable.baseline_warning_24).show(tdlib, R.string.MissingAudioPermission).hideDelayed();
+                }
+              })) {
+                return;
+              }
+              break;
             }
           }
-          break;
         }
+        navigateTo(v, result);
+      }
+    }
+  }
+
+  private void navigateTo (View view, InlineResultCommon result) {
+    String path = result.getId();
+    if (path != null) {
+      if (KEY_GALLERY.equals(path) || KEY_MUSIC.equals(path) || KEY_DOWNLOADS.equals(path) || KEY_BUCKET.equals(path) || path.startsWith(KEY_FOLDER)) {
+        navigateInside(view, path, result);
+      } else if (KEY_UPPER.equals(path)) {
+        navigateUpper();
       }
     }
   }
@@ -1063,6 +1124,10 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
 
   @Override
   public boolean onLongClick (View v) {
+    if (mediaLayout.inSingleMediaMode()) {
+      return false;
+    }
+
     Object tag = v.getTag();
     if (tag != null && tag instanceof ListItem) {
       ListItem item = (ListItem) tag;
@@ -1142,7 +1207,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
   }
 
   @Override
-  protected void onMultiSendPress (@NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
+  protected void onMultiSendPress (View view, @NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
     if (selectedItems == null || selectedItems.isEmpty()) {
       return;
     }
@@ -1167,7 +1232,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
       return;
     }
 
-    mediaLayout.sendFilesMixed(files, musicEntries, options, true);
+    mediaLayout.sendFilesMixed(view, files, musicEntries, options, true);
   }
 
   @Override
@@ -1201,7 +1266,7 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
         collapseToStart();
       } else {
         StackItem item = stack.get(stack.size() - 1);
-        navigateToPath(item.path, getLastPath(2), true, null, () -> {
+        navigateToPath(null, item.path, getLastPath(2), true, null, () -> {
           LinearLayoutManager manager = (LinearLayoutManager) recyclerView.getLayoutManager();
           manager.scrollToPositionWithOffset(removedItem.position, removedItem.positionOffset);
         }, this::navigateUpper);
@@ -1213,17 +1278,17 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
     return stack.size() < skipCount ? null : normalizePath(stack.get(stack.size() - skipCount).path);
   }
 
-  private void navigateInside (final String path, final InlineResultCommon data) {
+  private void navigateInside (final View view, final String path, final InlineResultCommon data) {
     if (inFileSelectMode) {
       mediaLayout.cancelMultiSelection();
     }
 
     final LinearLayoutManager manager = (LinearLayoutManager) recyclerView.getLayoutManager();
     final int firstPosition = manager.findFirstVisibleItemPosition();
-    final View view = firstPosition != RecyclerView.NO_POSITION ? manager.findViewByPosition(firstPosition) : null;
-    final int firstPositionOffset = view != null ? view.getTop() : 0;
+    final View firstView = firstPosition != RecyclerView.NO_POSITION ? manager.findViewByPosition(firstPosition) : null;
+    final int firstPositionOffset = firstView != null ? firstView.getTop() : 0;
 
-    navigateToPath(path, getLastPath(1), false, data, () -> {
+    navigateToPath(view, path, getLastPath(1), false, data, () -> {
       stack.add(new StackItem(path, firstPosition != RecyclerView.NO_POSITION ? firstPosition : 0, firstPositionOffset));
       manager.scrollToPositionWithOffset(0, 0);
     }, null);
@@ -1238,6 +1303,11 @@ public class MediaBottomFilesController extends MediaBottomBaseController<Void> 
   @Override
   protected int getRecyclerHeaderOffset () {
     return Screen.dp(101f);
+  }
+
+  public interface Delegate {
+    boolean showRestriction (View view, @RightId int rightId);
+    void onFilesSelected (ArrayList<InlineResult<?>> results, boolean needShowKeyboard);
   }
 }
 

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ import android.os.SystemClock;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -26,7 +26,7 @@ import java.util.List;
 import me.vkryl.core.lambda.Filter;
 import me.vkryl.core.lambda.Future;
 import me.vkryl.core.lambda.RunnableData;
-import me.vkryl.td.ChatPosition;
+import tgx.td.ChatPosition;
 
 public class TdlibChatListSlice {
   private final Tdlib tdlib;
@@ -76,6 +76,14 @@ public class TdlibChatListSlice {
     synchronized (filteredList) {
       return filteredList.size();
     }
+  }
+
+  public TdlibChatList sourceList () {
+    return sourceList;
+  }
+
+  public TdApi.ChatList chatList () {
+    return sourceList.chatList();
   }
 
   public boolean needProgressPlaceholder () {

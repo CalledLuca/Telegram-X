@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,8 +57,8 @@ public class GifState {
   private static final int FLAG_APPLY_NEXT = 1;
   private static final int FLAG_FROZEN = 1 << 1;
 
-  private int width, height, rotation;
-  private Callback callback;
+  private final int width, height, rotation;
+  private final Callback callback;
   private int flags;
   private final int queueSize;
 
@@ -73,9 +73,9 @@ public class GifState {
   }
 
   public interface Callback {
-    void onDrawNextFrame ();
-    void onApplyNextFrame (long no);
-    boolean onDraw ();
+    boolean onRequestNextFrame ();
+    void onApplyNextFrame (long frameNo);
+    boolean onDraw (long frameNo);
   }
 
   public interface FrameReader {
@@ -119,6 +119,14 @@ public class GifState {
     return busy;
   }
 
+  public void addBusyPrioritized (Frame free) {
+    synchronized (busy) {
+      while (!busy.isEmpty()) {
+        this.free.offer(busy.removeLast());
+      }
+      busy.offer(free);
+    }
+  }
   public void addBusy (Frame free) {
     synchronized (busy) {
       busy.offer(free);
@@ -154,8 +162,12 @@ public class GifState {
     free.clear();
   }
 
-  public void setCanApplyNext () {
-    flags |= FLAG_APPLY_NEXT;
+  public boolean setCanApplyNext () {
+    if (!BitwiseUtils.hasFlag(flags, FLAG_APPLY_NEXT)) {
+      flags |= FLAG_APPLY_NEXT;
+      return true;
+    }
+    return false;
   }
 
   public void setFrozen (boolean isFrozen) {
@@ -180,7 +192,7 @@ public class GifState {
             }
             free.offer(busy);
           }
-          callback.onDrawNextFrame();
+          callback.onRequestNextFrame();
         }
         flags &= ~FLAG_APPLY_NEXT;
       }
@@ -219,20 +231,25 @@ public class GifState {
   }
 
   public Bitmap getBitmap (boolean willDraw) {
+    Frame frame = getDrawFrame(willDraw);
+    return frame != null ? frame.bitmap : null;
+  }
+
+  public Frame getDrawFrame (boolean willDraw) {
     Frame frame = getFrame();
     if (frame != null) {
       if (willDraw) {
-        onDraw();
+        onDraw(frame.no);
       }
-      return frame.bitmap;
+      return frame;
     }
     return null;
   }
 
-  public void onDraw () {
-    if (callback.onDraw()) {
+  private void onDraw (long frameNo) {
+    if (callback.onDraw(frameNo)) {
       synchronized (busy) {
-        callback.onDrawNextFrame();
+        callback.onRequestNextFrame();
       }
     }
   }

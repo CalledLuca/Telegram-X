@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,27 +16,29 @@ package org.thunderdog.challegram.navigation;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
+import android.text.Layout;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
+import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.emoji.Emoji;
-import org.thunderdog.challegram.telegram.TGLegacyManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
-import org.thunderdog.challegram.widget.NoScrollTextView;
+import org.thunderdog.challegram.widget.EmojiTextView;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
@@ -44,8 +46,10 @@ import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener, FactorAnimator.Target, TextChangeDelegate, Destroyable, TGLegacyManager.EmojiLoadListener {
-  private TextView titleView, subtitleView;
+public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener, FactorAnimator.Target, TextChangeDelegate, Destroyable {
+  private final EmojiTextView titleView, subtitleView;
+
+  private @Nullable Drawable titleIcon;
 
   public DoubleHeaderView (Context context) {
     super(context);
@@ -55,7 +59,21 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
     params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | (Lang.rtl() ? Gravity.RIGHT : Gravity.LEFT));
     params.topMargin = Screen.dp(5f);
 
-    titleView = new NoScrollTextView(context);
+    titleView = new EmojiTextView(context) {
+      @Override
+      protected void onDraw (Canvas canvas) {
+        super.onDraw(canvas);
+        if (titleIcon != null && titleIcon.getMinimumWidth() > 0 && titleIcon.getMinimumHeight() > 0) {
+          Layout layout = getLayout();
+          float left = getPaddingLeft() + (layout != null ? U.getWidth(layout) + Screen.dp(1f) : 0);
+          if (left + titleIcon.getMinimumWidth() <= getWidth() - getPaddingRight()) {
+            float top = getPaddingTop() + (getHeight() - getPaddingTop() - getPaddingBottom()) / 2f - titleIcon.getMinimumHeight() / 2f;
+            Drawables.draw(canvas, titleIcon, left, top, Paints.getIconGrayPorterDuffPaint());
+          }
+        }
+      }
+    };
+    titleView.setScrollDisabled(true);
     titleView.setTextColor(Theme.headerTextColor());
     titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18f);
     titleView.setTypeface(Fonts.getRobotoMedium());
@@ -68,7 +86,8 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
     params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | (Lang.rtl() ? Gravity.RIGHT : Gravity.LEFT));
     params.topMargin = Screen.dp(28f);
 
-    subtitleView = new NoScrollTextView(context);
+    subtitleView = new EmojiTextView(context);
+    subtitleView.setScrollDisabled(true);
     subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14f);
     subtitleView.setTypeface(Fonts.getRobotoRegular());
     subtitleView.setSingleLine(true);
@@ -76,19 +95,12 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
     subtitleView.setGravity(Lang.gravity());
     subtitleView.setLayoutParams(params);
     addView(subtitleView);
-
-    TGLegacyManager.instance().addEmojiListener(this);
   }
 
   @Override
   public void performDestroy () {
-    TGLegacyManager.instance().removeEmojiListener(this);
-  }
-
-  @Override
-  public void onEmojiPartLoaded () {
-    titleView.invalidate();
-    subtitleView.invalidate();
+    titleView.performDestroy();
+    subtitleView.performDestroy();
   }
 
   @Override
@@ -129,7 +141,7 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
     }
   }
 
-  public void setThemedTextColor (@ThemeColorId int titleColorId, @ThemeColorId int subtitleColorId, @Nullable ViewController<?> themeProvider) {
+  public void setThemedTextColor (@ColorId int titleColorId, @ColorId int subtitleColorId, @Nullable ViewController<?> themeProvider) {
     titleView.setTextColor(Theme.getColor(titleColorId));
     subtitleView.setTextColor(Theme.getColor(subtitleColorId));
     customColors = true;
@@ -163,7 +175,15 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
   }
 
   public void setTitle (CharSequence title) {
-    Views.setMediumText(titleView, Emoji.instance().replaceEmoji(title));
+    Views.setMediumText(titleView, title);
+  }
+
+  public void setTitleIcon (@DrawableRes int iconRes) {
+    Drawable icon = iconRes != 0 ? Drawables.get(iconRes) : null;
+    if (titleIcon != icon) {
+      titleIcon = icon;
+      titleView.invalidate();
+    }
   }
 
   public void setSubtitle (@StringRes int subtitleRes) {
@@ -176,7 +196,7 @@ public class DoubleHeaderView extends FrameLayoutFix implements RtlCheckListener
   }
 
   public void setSubtitle (CharSequence subtitle) {
-    subtitleView.setText(Emoji.instance().replaceEmoji(subtitle));
+    subtitleView.setText(subtitle);
   }
 
 

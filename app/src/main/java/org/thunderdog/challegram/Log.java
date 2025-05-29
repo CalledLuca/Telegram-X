@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,14 +18,13 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Message;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.otaliastudios.transcoder.internal.utils.Logger;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.BaseThread;
 import org.thunderdog.challegram.telegram.TdlibManager;
@@ -43,10 +42,11 @@ import java.util.List;
 import java.util.Locale;
 
 import me.vkryl.android.SdkVersion;
+import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.FileUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.RunnableData;
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.util.Blob;
 
 public class Log {
@@ -65,12 +65,12 @@ public class Log {
    * @return Log storage directory. @null in case of error
    */
   public static @Nullable File getLogDir () {
-    File file = new File(UI.getAppContext().getFilesDir(), "logs");
-    if (!file.exists() && !file.mkdir()) {
-      android.util.Log.e(LOG_TAG, "Couldn't open logs directory: " + file.getAbsolutePath());
+    File logsDirectory = new File(UI.getAppContext().getFilesDir(), "logs");
+    if (!FileUtils.createDirectory(logsDirectory)) {
+      android.util.Log.e(LOG_TAG, "Couldn't open logs directory: " + logsDirectory.getAbsolutePath());
       return null;
     }
-    return file;
+    return logsDirectory;
   }
 
   /**
@@ -224,8 +224,8 @@ public class Log {
     }
   }
 
-  private static void deleteAllImpl (LogFiles list, @Nullable RunnableData<LogFiles> after, @Nullable RunnableData<LogFiles> onProgress) {
-    final int count = list.files.size();
+  private static void deleteAllImpl (@Nullable LogFiles list, @Nullable RunnableData<LogFiles> after, @Nullable RunnableData<LogFiles> onProgress) {
+    final int count = list != null ? list.files.size() : 0;
     for (int i = count - 1; i >= 0; i--) {
       File file = list.files.get(i);
       long size = file.length();
@@ -406,7 +406,6 @@ public class Log {
     TAG_YOUTUBE,
     TAG_CAMERA,
     TAG_EMOJI,
-
     TAG_TDLIB_FILES,
     TAG_TDLIB_OPTIONS
   };
@@ -454,13 +453,15 @@ public class Log {
         level = Log.LEVEL_VERBOSE;
         tags = TAG_NDK | TAG_CRASH;
       } else {
-        settings = prefs.getInt(Settings.KEY_LOG_SETTINGS, 0);
-        level = prefs.getInt(Settings.KEY_LOG_LEVEL, Log.LEVEL_WARNING);
-        long defaultTags = Log.TAG_CRASH | Log.TAG_FCM | Log.TAG_ACCOUNTS;
+        int defaultLogSettings = BuildConfig.DEBUG ? Log.SETTING_ANDROID_LOG : 0;
+        int defaultLogLevel = BuildConfig.DEBUG ? Log.LEVEL_VERBOSE : Log.LEVEL_ASSERT;
+        long defaultLogTags = Log.TAG_CRASH | Log.TAG_FCM | Log.TAG_ACCOUNTS;
         if (Config.DEBUG_GALAXY_TAB_2) {
-          defaultTags |= Log.TAG_INTRO;
+          defaultLogTags |= Log.TAG_INTRO;
         }
-        tags = prefs.getLong(Settings.KEY_LOG_TAGS, defaultTags);
+        settings = prefs.getInt(Settings.KEY_LOG_SETTINGS, defaultLogSettings);
+        level = prefs.getInt(Settings.KEY_LOG_LEVEL, defaultLogLevel);
+        tags = prefs.getLong(Settings.KEY_LOG_TAGS, defaultLogTags);
       }
 
       setLogLevelImpl(level);
@@ -939,27 +940,8 @@ public class Log {
     log(0, LEVEL_ASSERT, fmt, args);
   }
 
-  public static void unexpectedTdlibResponse (TdApi.Object response, @SuppressWarnings("rawtypes") Class<? extends TdApi.Function> function, Class<?>... objects) {
-    StringBuilder b = new StringBuilder("Unexpected TDLib response");
-    if (function != null) {
-      b.append(" for ");
-      b.append(function.getName());
-    }
-    b.append(". Expected: ");
-    boolean first = true;
-    for (Class<?> object : objects) {
-      if (first) {
-        first = false;
-      } else {
-        b.append(", ");
-      }
-      b.append(object.getName());
-    }
-    b.append(" but received: ");
-    b.append(response != null ? response : "null");
-    String message = b.toString();
-    UI.showToast(message, Toast.LENGTH_LONG);
-    Log.a("%s", message);
+  public static <T extends TdApi.Object> void ensureReturnType (Class<? extends TdApi.Function<T>> function, Class<T> expectedReturnType) {
+    // Do nothing.
   }
 
   public static void fixme () {
@@ -999,6 +981,21 @@ public class Log {
       e.setStackTrace(output);
       return e;
     }
+  }
+
+  public static String toErrorString (Throwable e) {
+
+    if (e == null) return "NULL";
+    String str = "";
+    if (e.getClass() != null && e.getClass().getSimpleName() != null) {
+      str = e.getClass().getSimpleName();
+      if (str == null) str = "";
+    }
+    if (e.getMessage() != null) {
+      if (str.length() > 0) str += ": ";
+      str += e.getMessage();
+    }
+    return str;
   }
 
   public static String toString (Throwable t) {

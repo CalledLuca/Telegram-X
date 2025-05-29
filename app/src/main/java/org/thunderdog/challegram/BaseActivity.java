@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,6 +40,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.Display;
@@ -59,11 +60,13 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.collection.SparseArrayCompat;
+import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.drinkmore.Tracer;
 import org.thunderdog.challegram.component.attach.MediaLayout;
 import org.thunderdog.challegram.component.base.ProgressWrap;
@@ -99,14 +102,15 @@ import org.thunderdog.challegram.player.TGPlayerController;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibManager;
+import org.thunderdog.challegram.telegram.TdlibMessageViewer;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.ColorState;
+import org.thunderdog.challegram.theme.PropertyId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeChangeListener;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeDelegate;
 import org.thunderdog.challegram.theme.ThemeListenerList;
 import org.thunderdog.challegram.theme.ThemeManager;
-import org.thunderdog.challegram.theme.ThemeProperty;
 import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Invalidator;
 import org.thunderdog.challegram.tool.Keyboard;
@@ -124,27 +128,38 @@ import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.util.ActivityPermissionResult;
 import org.thunderdog.challegram.util.AppUpdater;
 import org.thunderdog.challegram.util.KonfettiBuilder;
+import org.thunderdog.challegram.util.Permissions;
 import org.thunderdog.challegram.widget.BaseRootLayout;
 import org.thunderdog.challegram.widget.DragDropLayout;
 import org.thunderdog.challegram.widget.ForceTouchView;
 import org.thunderdog.challegram.widget.NetworkStatusBarView;
 import org.thunderdog.challegram.widget.PopupLayout;
+import org.thunderdog.challegram.widget.StickersSuggestionsLayout;
 
 import java.lang.ref.Reference;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import me.vkryl.android.AnimatorUtils;
+import me.vkryl.android.DeviceUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.lambda.CancellableRunnable;
+import me.vkryl.core.lambda.FutureBool;
 import me.vkryl.core.lambda.FutureInt;
+import me.vkryl.core.lambda.RunnableBool;
+import me.vkryl.core.lambda.RunnableData;
 import me.vkryl.core.reference.ReferenceList;
 import me.vkryl.core.reference.ReferenceUtils;
 import nl.dionsegijn.konfetti.xml.KonfettiView;
+import tgx.app.RecaptchaContext;
+import tgx.app.RecaptchaProviderRegistry;
 
+@SuppressWarnings("deprecation")
 public abstract class BaseActivity extends ComponentActivity implements View.OnTouchListener, FactorAnimator.Target, Keyboard.OnStateChangeListener, ThemeChangeListener, SensorEventListener, TGPlayerController.TrackChangeListener, TGLegacyManager.EmojiLoadListener, Lang.Listener, Handler.Callback {
   public static final long POPUP_SHOW_SLOW_DURATION = 240l;
 
@@ -160,8 +175,12 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   protected @Nullable DrawerController drawer;
   protected OverlayView overlayView;
   protected Invalidator invalidator;
+  protected RecaptchaContext recaptcha;
 
   private final ReferenceList<ActivityListener> activityListeners = new ReferenceList<>();
+
+  private final TdlibMessageViewer.Listener messageViewListener = (manager, needRestrictScreenshots) ->
+    checkDisallowScreenshots();
 
   private int currentOrientation;
   private boolean mHasSoftwareKeys;
@@ -186,30 +205,38 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     return gestureController;
   }
 
-  public int getSettingsErrorIcon () {
+  public static class ClickBait {
+    public final int iconRes;
+    public final boolean isError;
+
+    public ClickBait (@DrawableRes int iconRes, boolean isError) {
+      this.iconRes = iconRes;
+      this.isError = isError;
+    }
+  }
+
+  @Nullable
+  public ClickBait getSettingsClickBait () {
     // It's located here for future display inside header menu button
     if (hasTdlib()) {
       Tdlib tdlib = currentTdlib();
-      final boolean haveNotificationsProblem = tdlib.notifications().hasLocalNotificationProblem();
-      final TdApi.SuggestedAction singleAction = tdlib.singleSettingsSuggestion();
-      final boolean haveSuggestions = singleAction != null || tdlib.haveAnySettingsSuggestions();
-      final int totalCount = (singleAction != null ? 1 : haveSuggestions ? 2 : 0) + (haveNotificationsProblem ? 1 : 0);
-      if (totalCount > 1) {
-        return Tdlib.CHAT_FAILED;
-      } else if (haveNotificationsProblem) {
-        return R.drawable.baseline_notification_important_14;
-      } else if (singleAction != null) {
-        switch (singleAction.getConstructor()) {
-          case TdApi.SuggestedActionCheckPassword.CONSTRUCTOR:
-            return R.drawable.baseline_gpp_maybe_14;
-          case TdApi.SuggestedActionCheckPhoneNumber.CONSTRUCTOR:
-            return R.drawable.baseline_sim_card_alert_14;
-          default:
-            throw new UnsupportedOperationException(singleAction.toString());
-        }
+      @Tdlib.ResolvableProblem int problemType = tdlib.findResolvableProblem();
+      switch (problemType) {
+        case Tdlib.ResolvableProblem.NONE:
+          break;
+        case Tdlib.ResolvableProblem.MIXED:
+          return new ClickBait(0, true);
+        case Tdlib.ResolvableProblem.NOTIFICATIONS:
+          return new ClickBait(R.drawable.baseline_notification_important_14, true);
+        case Tdlib.ResolvableProblem.CHECK_PASSWORD:
+          return new ClickBait(R.drawable.baseline_gpp_maybe_14, true);
+        case Tdlib.ResolvableProblem.CHECK_PHONE_NUMBER:
+          return new ClickBait(R.drawable.baseline_sim_card_alert_14, true);
+        case Tdlib.ResolvableProblem.SET_BIRTHDATE:
+          return new ClickBait(R.drawable.baseline_cake_variant_14, false);
       }
     }
-    return 0;
+    return null;
   }
 
   public boolean isAnimating (boolean intercept) {
@@ -221,7 +248,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   public void addToRoot (View view, boolean ignoreStatusBar) {
-    int i = passcodeController != null && isPasscodeShowing ? rootView.indexOfChild(passcodeController.get()) : -1;
+    int i = passcodeController != null && isPasscodeShowing ? rootView.indexOfChild(passcodeController.getValue()) : -1;
 
     // TODO make some overlay for PiPs
     if (i == -1) {
@@ -238,6 +265,16 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     if (tooltipIndex != -1) {
       i = i == -1 ? tooltipIndex : Math.min(tooltipIndex, i);
     }
+
+    if (view == inlineResultsView) {
+      View customEmojiSuggestonsView = rootView.findViewById(R.id.view_customEmojiSuggestions);
+      int customEmojiSuggestionsIndex = customEmojiSuggestonsView != null ?
+        rootView.indexOfChild(customEmojiSuggestonsView) : -1;
+      if (customEmojiSuggestionsIndex != -1) {
+        i = i == -1 ? customEmojiSuggestionsIndex : Math.min(customEmojiSuggestionsIndex, i);
+      }
+    }
+
     if (i != -1) {
       rootView.addView(view, i);
     } else {
@@ -260,7 +297,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   public void removeFromNavigation (View view) {
-    ((ViewGroup) navigation.get()).removeView(view);
+    ((ViewGroup) navigation.getValue()).removeView(view);
   }
 
   public RoundVideoController getRoundVideoController () {
@@ -272,7 +309,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private View focusView;
-  private int activityState = UI.STATE_UNKNOWN;
+  private int activityState = UI.State.UNKNOWN;
 
   private RoundVideoController roundVideoController;
   private RecordAudioVideoController recordAudioVideoController;
@@ -297,15 +334,116 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       if (this.tdlib != null) {
         wasOnline = this.tdlib.isOnline();
         this.tdlib.setOnline(false);
+        this.tdlib.messageViewer().removeListener(messageViewListener);
       }
       this.tdlib = tdlib;
       recordAudioVideoController.setTdlib(tdlib);
       tdlib.setOnline(wasOnline);
+      tdlib.messageViewer().addListener(messageViewListener);
       if (drawer != null) {
         drawer.onCurrentTdlibChanged(tdlib);
       }
       onTdlibChanged();
+      runEmulatorChecks();
+      if (tdlib.isUnauthorized()) {
+        // Pre-initialize recaptcha to possibly save some initialization time.
+        recaptcha.initialize();
+      }
     }
+  }
+
+  public final RecaptchaContext recaptche () {
+    return recaptcha;
+  }
+
+  private boolean ranEmulatorChecks, emulatorChecksFinished;
+  private final List<RunnableData<Settings.EmulatorDetectionResult>> emulatorCheckFinishCallbacks = new ArrayList<>();
+
+  public void runEmulatorChecks () {
+    runEmulatorChecksImpl(false, null);
+  }
+
+  public void forceRunEmulatorChecks (@Nullable RunnableData<Settings.EmulatorDetectionResult> after) {
+    runEmulatorChecksImpl(true, after);
+  }
+
+  private void addEmulatorChecksCallback (@Nullable RunnableData<Settings.EmulatorDetectionResult> after) {
+    if (after == null) {
+      return;
+    }
+    boolean postponed;
+    synchronized (emulatorCheckFinishCallbacks) {
+      postponed = !emulatorChecksFinished;
+      if (postponed) {
+        emulatorCheckFinishCallbacks.add(after);
+      }
+    }
+    if (!postponed) {
+      after.runWithData(Settings.instance().getLastEmulatorDetectionResult());
+    }
+  }
+
+  private void runEmulatorChecksImpl (boolean force, @Nullable RunnableData<Settings.EmulatorDetectionResult> after) {
+    if (ranEmulatorChecks) {
+      addEmulatorChecksCallback(after);
+      return;
+    }
+
+    long installationId = Settings.instance().installationId();
+    if (!force) {
+      Settings.EmulatorDetectionResult previousResult = Settings.instance().getLastEmulatorDetectionResult();
+      List<FutureBool> conditions = Arrays.asList(
+        // every app launch without authorization
+        () -> !tdlib.context().hasActiveAccounts() || tdlib.isUnauthorized(),
+        () -> {
+          if (previousResult != null) {
+            if (previousResult.isEmulatorDetected()) {
+              return false;
+            }
+            long elapsed = System.currentTimeMillis() - previousResult.time;
+            // every 3 days or after every update
+            return installationId != previousResult.installationId || elapsed >= TimeUnit.DAYS.toMillis(3);
+          }
+          return true;
+        }
+      );
+      boolean hasAnyReason = false;
+      for (FutureBool condition : conditions) {
+        if (condition.getBoolValue()) {
+          hasAnyReason = true;
+          break;
+        }
+      }
+      if (!hasAnyReason) {
+        if (after != null) {
+          after.runWithData(previousResult);
+        }
+        return;
+      }
+    }
+
+    ranEmulatorChecks = true;
+    addEmulatorChecksCallback(after);
+
+    // Impl
+    new Thread(() -> {
+      long ms = SystemClock.uptimeMillis();
+      long detectionResult = DeviceUtils.detectEmulator(BaseActivity.this, BuildConfig.EXPERIMENTAL);
+      long elapsed = SystemClock.uptimeMillis() - ms;
+      Log.v("Ran emulator detections in %dms", elapsed);
+      Settings.EmulatorDetectionResult result = Settings.instance().trackEmulatorDetectionResult(installationId, elapsed, detectionResult);
+      tdlib.context().setIsEmulator(result.isEmulatorDetected());
+      UI.post(() -> {
+        emulatorChecksFinished = true;
+        if (activityState != UI.State.DESTROYED) {
+          for (int i = emulatorCheckFinishCallbacks.size() - 1; i >= 0; i--) {
+            RunnableData<Settings.EmulatorDetectionResult> act = emulatorCheckFinishCallbacks.remove(i);
+            act.runWithData(result);
+          }
+        }
+        emulatorCheckFinishCallbacks.clear();
+      });
+    }, "EmulatorDetector").start();
   }
 
   protected void onTdlibChanged () {
@@ -328,6 +466,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     AppState.initApplication();
     AppState.ensureReady();
 
+    recaptcha = new RecaptchaContext(getApplication());
+    RecaptchaProviderRegistry.INSTANCE.addProvider(recaptcha);
+
     appUpdater = new AppUpdater(this);
     roundVideoController = new RoundVideoController(this);
     recordAudioVideoController = new RecordAudioVideoController(this);
@@ -341,7 +482,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       this.isWindowLight = !Theme.isDark();
     }
     // UI.resetSizes();
-    setActivityState(UI.STATE_RESUMED);
+    setActivityState(UI.State.RESUMED);
     TdlibManager.instance().watchDog().onActivityCreate(this);
     Passcode.instance().checkAutoLock();
 
@@ -360,7 +501,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
     if (needDrawer()) {
       drawer = new DrawerController(this);
-      drawer.get();
+      drawer.getValue();
     }
 
     navigation = new NavigationController(this);
@@ -387,10 +528,10 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     focusView.setLayoutParams(FrameLayoutFix.newParams(1, 1, Gravity.CENTER));
 
     contentView.addView(focusView);
-    contentView.addView(navigation.get());
+    contentView.addView(navigation.getValue());
     contentView.addView(recordAudioVideoController.prepareViews());
     if (drawer != null) {
-      contentView.addView(drawer.get());
+      contentView.addView(drawer.getValue());
     }
 
     rootView.addView(contentView);
@@ -418,7 +559,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
     if (needTdlib()) {
       TdlibManager.instance().player().addTrackChangeListener(this);
-      TdlibManager.instance().resetBadge();
+      TdlibManager.instance().resetBadge(false);
     }
 
     Lang.addLanguageListener(this);
@@ -547,7 +688,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     try {
       dialog = b.show();
     } catch (Throwable t) {
-      if (UI.getUiState() == UI.STATE_RESUMED)
+      if (UI.getUiState() == UI.State.RESUMED)
         UI.showToast("Failed to display system pop-up, see application log for details", Toast.LENGTH_SHORT);
       Log.e("Cannot show dialog", t);
       return null;
@@ -564,7 +705,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     return modifyAlert(dialog, theme);
   }
 
-  private static boolean patchAlertButton (View v, ThemeDelegate theme, @ThemeColorId int colorId) {
+  private static boolean patchAlertButton (View v, ThemeDelegate theme, @ColorId int colorId) {
     if (v == null)
       return false;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -587,7 +728,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     if (theme == null)
       theme = ThemeManager.instance().currentTheme(false);
 
-    int textColor = theme.getColor(R.id.theme_color_text);
+    int textColor = theme.getColor(ColorId.text);
 
     view = dialog.findViewById(android.R.id.title);
     Views.makeFakeBold(view);
@@ -603,16 +744,16 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     if (view instanceof TextView)
       ((TextView) view).setTextColor(textColor);
 
-    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_POSITIVE), theme, R.id.theme_color_textNeutral))
-      patchAlertButton(dialog.findViewById(android.R.id.button1), theme, R.id.theme_color_textNeutral);
-    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_NEUTRAL), theme, R.id.theme_color_textNeutral))
-      patchAlertButton(dialog.findViewById(android.R.id.button2), theme, R.id.theme_color_textNeutral);
-    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_NEGATIVE), theme, R.id.theme_color_textNeutral))
-      patchAlertButton(dialog.findViewById(android.R.id.button3), theme, R.id.theme_color_textNeutral);
+    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_POSITIVE), theme, ColorId.textNeutral))
+      patchAlertButton(dialog.findViewById(android.R.id.button1), theme, ColorId.textNeutral);
+    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_NEUTRAL), theme, ColorId.textNeutral))
+      patchAlertButton(dialog.findViewById(android.R.id.button2), theme, ColorId.textNeutral);
+    if (!patchAlertButton(dialog.getButton(DialogInterface.BUTTON_NEGATIVE), theme, ColorId.textNeutral))
+      patchAlertButton(dialog.findViewById(android.R.id.button3), theme, ColorId.textNeutral);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
       Drawable drawable = dialog.getWindow().getDecorView().getBackground();
       if (drawable != null) {
-        drawable.setColorFilter(new PorterDuffColorFilter(theme.getColor(R.id.theme_color_overlayFilling), PorterDuff.Mode.SRC_IN));
+        drawable.setColorFilter(new PorterDuffColorFilter(theme.getColor(ColorId.overlayFilling), PorterDuff.Mode.SRC_IN));
       }
     }
     return dialog;
@@ -623,7 +764,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   @Override
-  public final void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     if (dialogMessages != null) {
       try {
         for (int i = dialogMessages.size() - 1; i >= 0; i--) {
@@ -745,6 +886,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   private static final int FULLSCREEN_FLAG_PASSCODE = 1 << 1; // Actually indicates fullscreen should not appear at all
   private static final int FULLSCREEN_FLAG_HAS_NO_FULLSCREEN_VIEWS = 1 << 2; // Actually indicates fullscreen should not appear at all
   private static final int FULLSCREEN_FLAG_HAS_FULLSCREEN_VIEWS = 1 << 3; // Actually indicates fullscreen should not appear at all
+  private static final int FULLSCREEN_FLAG_HIDE_NAVIGATION = 1 << 4; // Hide any navigation-related stuff for complete fullscreen
 
   private int fullScreenFlags;
 
@@ -752,7 +894,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     int flags = BitwiseUtils.setFlag(this.fullScreenFlags, flag, enabled);
     if (this.fullScreenFlags != flags) {
       this.fullScreenFlags = flags;
-      setFullScreen(flags != 0 && !BitwiseUtils.getFlag(flags, FULLSCREEN_FLAG_PASSCODE) && !BitwiseUtils.getFlag(flags, FULLSCREEN_FLAG_HAS_NO_FULLSCREEN_VIEWS));
+      setFullScreen(flags != 0 && !BitwiseUtils.hasFlag(flags, FULLSCREEN_FLAG_PASSCODE) && !BitwiseUtils.hasFlag(flags, FULLSCREEN_FLAG_HAS_NO_FULLSCREEN_VIEWS));
+      setHideNavigation(isFullscreen && BitwiseUtils.hasFlag(flags, FULLSCREEN_FLAG_HIDE_NAVIGATION));
+      updateNavigationBarColor();
     }
   }
 
@@ -784,11 +928,23 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   private boolean isFullscreen, cutoutIgnored;
 
+  private int computeUiVisibility () {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && isFullscreen) {
+      int uiVisibility = View.SYSTEM_UI_FLAG_LOW_PROFILE;
+      if (hideNavigation) {
+        uiVisibility |= View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
+      }
+      return uiVisibility;
+    }
+    return View.SYSTEM_UI_FLAG_VISIBLE;
+  }
+
   private void setFullScreen (boolean isFullscreen) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
       if (this.isFullscreen != isFullscreen) {
         this.isFullscreen = isFullscreen;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isFullscreen && (Config.CUTOUT_ENABLED || BitwiseUtils.getFlag(fullScreenFlags, FULLSCREEN_FLAG_CAMERA))) {
+        this.hideNavigation = BitwiseUtils.hasFlag(fullScreenFlags, FULLSCREEN_FLAG_HIDE_NAVIGATION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isFullscreen && (Config.CUTOUT_ENABLED || BitwiseUtils.hasFlag(fullScreenFlags, FULLSCREEN_FLAG_CAMERA))) {
           cutoutIgnored = true;
           Window w = getWindow();
           WindowManager.LayoutParams params = w.getAttributes();
@@ -796,21 +952,40 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
           w.setAttributes(params);
         }
         setWindowFlags(isFullscreen ? WindowManager.LayoutParams.FLAG_FULLSCREEN : 0, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        if (isFullscreen) {
-          int uiVisibility =  View.SYSTEM_UI_FLAG_LOW_PROFILE;
-          /*if (hideNavigation) {
-            uiVisibility |= View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
-          }*/
-          setWindowDecorSystemUiVisibility(uiVisibility, true);
-        } else {
-          setWindowDecorSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE, true);
-        }
+        int uiVisibility = computeUiVisibility();
+        setWindowDecorSystemUiVisibility(uiVisibility, true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !isFullscreen && (Config.CUTOUT_ENABLED || cutoutIgnored)) {
           Window w = getWindow();
           WindowManager.LayoutParams params = w.getAttributes();
           params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
           w.setAttributes(params);
         }
+      }
+    }
+  }
+
+  private final List<ViewController<?>> hideNavigationViews = new ArrayList<>();
+
+  public void addHideNavigationView (ViewController<?> viewController) {
+    if (!hideNavigationViews.contains(viewController)) {
+      hideNavigationViews.add(viewController);
+      setFullScreenFlag(FULLSCREEN_FLAG_HIDE_NAVIGATION, true);
+    }
+  }
+
+  public void removeHideNavigationView (ViewController<?> viewController) {
+    if (hideNavigationViews.remove(viewController)) {
+      setFullScreenFlag(FULLSCREEN_FLAG_HIDE_NAVIGATION, !hideNavigationViews.isEmpty());
+    }
+  }
+
+  private boolean hideNavigation;
+
+  private void setHideNavigation (boolean hideNavigation) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      if (this.hideNavigation != hideNavigation) {
+        this.hideNavigation = hideNavigation;
+        setWindowDecorSystemUiVisibility(computeUiVisibility(), true);
       }
     }
   }
@@ -848,9 +1023,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   private void setActivityState (int newState) {
     if (this.activityState != newState) {
       final int prevState = this.activityState;
-      boolean prevResumed = prevState == UI.STATE_RESUMED;
+      boolean prevResumed = prevState == UI.State.RESUMED;
       this.activityState = newState;
-      if (newState != UI.STATE_RESUMED) {
+      if (newState != UI.State.RESUMED) {
         if (prevResumed) {
           handler.removeMessages(DISPATCH_ACTIVITY_STATE);
         }
@@ -885,7 +1060,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   @Override
   public void onPause () {
     blockFocus();
-    setActivityState(UI.STATE_PAUSED);
+    setActivityState(UI.State.PAUSED);
     if (camera != null) {
       camera.onActivityPause();
     }
@@ -935,7 +1110,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   public void onResume () {
     boolean lockBefore = isPasscodeShowing;
     UI.setContext(this);
-    setActivityState(UI.STATE_RESUMED);
+    setActivityState(UI.State.RESUMED);
     Passcode.instance().checkAutoLock();
     checkPasscode(false);
     if (isPasscodeShowing && lockBefore && passcodeController != null) {
@@ -981,6 +1156,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       }
     }*/
     appUpdater.checkForUpdates();
+    runEmulatorChecks();
   }
 
   protected void setOnline (boolean isOnline) {
@@ -1013,6 +1189,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       Tracer.onUiError(t);
       throw t;
     }
+    setOrientationLockFlags(0);
     if (navigation != null) {
       navigation.destroy();
     }
@@ -1023,7 +1200,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     TGLegacyManager.instance().removeEmojiListener(this);
     TdlibManager.instance().watchDog().onActivityDestroy(this);
     Intents.revokeFileReadPermissions();
-    setActivityState(UI.STATE_DESTROYED);
+    setActivityState(UI.State.DESTROYED);
     if (isPasscodeShowing && passcodeController != null) {
       passcodeController.onActivityDestroy();
     }
@@ -1146,10 +1323,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     setSystemNightMode(newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK);
     if (needRecreate) {
       recreate();
+    } else {
+      Screen.checkRefreshRate();
     }
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   public void onBackPressed () {
     if (isPasscodeShowing) {
       super.onBackPressed();
@@ -1158,6 +1338,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     }
   }
 
+  @SuppressWarnings("deprecation")
   public void onBackPressed (boolean fromTop) {
     if (isProgressShowing) {
       if (progressListener != null) {
@@ -1230,8 +1411,8 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         break;
       }
       case DISPATCH_ACTIVITY_STATE: {
-        if (activityState == UI.STATE_RESUMED) {
-          if (!UI.setUiState(this, UI.STATE_RESUMED)) {
+        if (activityState == UI.State.RESUMED) {
+          if (!UI.setUiState(this, UI.State.RESUMED)) {
             TdlibManager.instance().watchDog().checkNetworkAvailability();
           }
         }
@@ -1264,17 +1445,6 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     return currentOrientation;
   }
 
-  public void lockOrientation (int newOrientation) {
-    if (currentOrientation != newOrientation) {
-      currentOrientation = newOrientation;
-      if (mIsOrientationBlocked) {
-        requestAndroidOrientation(newOrientation);
-      } else {
-        setIsOrientationBlocked(true);
-      }
-    }
-  }
-
   private void setIsOrientationBlocked (boolean blocked) {
     if (mIsOrientationBlocked == blocked || mIsOrientationRequested)
       return;
@@ -1282,21 +1452,24 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     mIsOrientationBlocked = blocked;
 
     if (blocked) {
-      int rotation = getWindowManager().getDefaultDisplay().getRotation();
-
-      if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE &&
-        (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_90)) {
-        requestAndroidOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-      } else if (currentOrientation == Configuration.ORIENTATION_PORTRAIT &&
-        (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_90)) {
-        requestAndroidOrientationPortrait();
-      } else if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE &&
-        (rotation == Surface.ROTATION_180 || rotation == Surface.ROTATION_270)) {
-        requestAndroidOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+        requestAndroidOrientation(ActivityInfo.SCREEN_ORIENTATION_LOCKED);
       } else {
-        if (currentOrientation == Configuration.ORIENTATION_PORTRAIT &&
-          (rotation == Surface.ROTATION_180 || rotation == Surface.ROTATION_270)) {
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE &&
+          (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_90)) {
+          requestAndroidOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        } else if (currentOrientation == Configuration.ORIENTATION_PORTRAIT &&
+          (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_90)) {
           requestAndroidOrientationPortrait();
+        } else if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE &&
+          (rotation == Surface.ROTATION_180 || rotation == Surface.ROTATION_270)) {
+          requestAndroidOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
+        } else {
+          if (currentOrientation == Configuration.ORIENTATION_PORTRAIT &&
+            (rotation == Surface.ROTATION_180 || rotation == Surface.ROTATION_270)) {
+            requestAndroidOrientationPortrait();
+          }
         }
       }
     } else {
@@ -1367,7 +1540,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     passcodeController.setPasscodeMode(PasscodeController.MODE_UNLOCK);
     passcodeController.onPrepareToShow();
     rootView.removeView(contentView);
-    rootView.addView(passcodeController.get());
+    rootView.addView(passcodeController.getValue());
     passcodeController.onActivityResume();
     passcodeController.onFocus();
 
@@ -1457,13 +1630,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       FactorAnimator animator = new FactorAnimator(0, new FactorAnimator.Target() {
         @Override
         public void onFactorChanged (int id, float factor, float fraction, FactorAnimator callee) {
-          passcodeController.get().setAlpha(1f - factor);
+          passcodeController.getValue().setAlpha(1f - factor);
           updateNavigationBarColor();
         }
 
         @Override
         public void onFactorChangeFinished (int id, float finalFactor, FactorAnimator callee) {
-          rootView.removeView(passcodeController.get());
+          rootView.removeView(passcodeController.getValue());
           passcodeController.destroy();
           if (dismissingPasscodeController == passcodeController) {
             dismissingPasscodeController = null;
@@ -1505,7 +1678,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     }
     overlayView.setVisibility(View.VISIBLE);
     Views.setLayerTypeOptionally(overlayView, View.LAYER_TYPE_HARDWARE);
-    int i = drawer != null ? contentView.indexOfChild(drawer.get()) : -1;
+    int i = drawer != null ? contentView.indexOfChild(drawer.getValue()) : -1;
     if (i == -1) {
       contentView.addView(overlayView);
     } else {
@@ -1758,7 +1931,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         PopupLayout window = windows.get(i);
         View boundView = window.getBoundView();
         ViewController<?> boundController = window.getBoundController();
-        if (isContextual(boundView) || (byNavigation && boundView instanceof StickerSetWrap) || (boundView instanceof MediaLayout && !(navigation.getCurrentStackItem() instanceof MessagesController)) || (byNavigation && isContextual(boundController)) ) {
+        if (isContextual(boundView) || (byNavigation && boundView instanceof StickerSetWrap) || (boundView instanceof MediaLayout && !((navigation.getCurrentStackItem() instanceof MessagesController) || (((MediaLayout) boundView).getMode() == MediaLayout.MODE_AVATAR_PICKER))) || (byNavigation && isContextual(boundController)) ) {
           window.hideWindow(true);
         }
       }
@@ -1775,14 +1948,14 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   public int getControllerWidth (View view) {
     int viewWidth = view.getMeasuredWidth();
-    return viewWidth != 0 ? viewWidth : navigation.get().getMeasuredWidth();
+    return viewWidth != 0 ? viewWidth : navigation.getValue().getMeasuredWidth();
   }
 
   // StickerPreview
 
   private PopupLayout stickerPreviewWindow;
   private StickerPreviewView stickerPreview;
-  private StickerSmallView stickerPreviewControllerView;
+  private View stickerPreviewControllerView;
 
   public void openStickerPreview (Tdlib tdlib, StickerSmallView stickerView, TGStickerObj sticker, int cx, int cy, int maxWidth, int viewportHeight, boolean disableEmojis) {
     if (stickerPreview != null) {
@@ -1792,7 +1965,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     stickerPreviewControllerView = stickerView;
 
     stickerPreview = new StickerPreviewView(this);
-    stickerPreview.setControllerView(stickerPreviewControllerView);
+    stickerPreview.setControllerView(stickerView);
     stickerPreview.setSticker(tdlib, sticker, cx, cy, maxWidth, viewportHeight, disableEmojis);
 
     stickerPreviewWindow = new PopupLayout(this);
@@ -1803,7 +1976,26 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     stickerPreviewWindow.showAnimatedPopupView(stickerPreview, stickerPreview);
   }
 
-  public void openStickerMenu (StickerSmallView stickerView, TGStickerObj sticker) {
+  public void openStickerPreview (Tdlib tdlib, View viewHolder, StickerPreviewView.PreviewCallback callback, TGStickerObj sticker, int cx, int cy, int maxWidth, int viewportHeight, boolean disableEmojis) {
+    if (stickerPreview != null) {
+      return;
+    }
+
+    stickerPreviewControllerView = viewHolder;
+
+    stickerPreview = new StickerPreviewView(this);
+    stickerPreview.setPreviewCallback(viewHolder, callback);
+    stickerPreview.setSticker(tdlib, sticker, cx, cy, maxWidth, viewportHeight, disableEmojis);
+
+    stickerPreviewWindow = new PopupLayout(this);
+    stickerPreviewWindow.setBackListener(stickerPreview);
+    stickerPreviewWindow.setOverlayStatusBar(true);
+    stickerPreviewWindow.init(true);
+    stickerPreviewWindow.setNeedRootInsets();
+    stickerPreviewWindow.showAnimatedPopupView(stickerPreview, stickerPreview);
+  }
+
+  public void openStickerMenu (View stickerView, TGStickerObj sticker) {
     if (this.stickerPreview != null && stickerPreviewControllerView == stickerView) {
       stickerPreview.openMenu(sticker);
     }
@@ -1831,7 +2023,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   // ReactionPreview
 
-  public void openReactionPreview (Tdlib tdlib, StickerSmallView stickerView, TGReaction reaction, int cx, int cy, int maxWidth, int viewportHeight, boolean disableEmojis) {
+  public void openReactionPreview (Tdlib tdlib, StickerSmallView stickerView, TGReaction reaction, @Nullable TGStickerObj effectAnimation, int cx, int cy, int maxWidth, int viewportHeight, boolean disableEmojis) {
     if (stickerPreview != null) {
       return;
     }
@@ -1839,8 +2031,8 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     stickerPreviewControllerView = stickerView;
 
     stickerPreview = new StickerPreviewView(this);
-    stickerPreview.setControllerView(stickerPreviewControllerView);
-    stickerPreview.setReaction(tdlib, reaction, cx, cy, maxWidth, viewportHeight, disableEmojis);
+    stickerPreview.setControllerView(stickerView);
+    stickerPreview.setReaction(tdlib, reaction, effectAnimation, cx, cy, maxWidth, viewportHeight, disableEmojis);
 
     stickerPreviewWindow = new PopupLayout(this);
     stickerPreviewWindow.setBackListener(stickerPreview);
@@ -1877,6 +2069,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       forceTouchView.initWithContext(context);
     } catch (Throwable t) {
       Log.e("Unable to open force touch preview", t);
+      if (BuildConfig.DEBUG && t instanceof RuntimeException) {
+        throw (RuntimeException) t;
+      }
       return false;
     }
 
@@ -1912,9 +2107,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   // Inline results
 
+  private StickersSuggestionsLayout emojiSuggestionsWrap;
   private InlineResultsWrap inlineResultsView;
 
   public void updateHackyOverlaysPositions () {
+    if (emojiSuggestionsWrap != null && emojiSuggestionsWrap.getParent() != null) {
+      emojiSuggestionsWrap.updatePosition(true);
+    }
     if (inlineResultsView != null && inlineResultsView.getParent() != null) {
       inlineResultsView.updatePosition(true);
     }
@@ -1928,6 +2127,10 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   public void showInlineResults (ViewController<?> context, Tdlib tdlib, @Nullable ArrayList<InlineResult<?>> results, boolean needBackground, @Nullable InlineResultsWrap.LoadMoreCallback callback) {
+    showInlineResults(context, tdlib, results, needBackground, callback, null, null);
+  }
+
+  public void showInlineResults (ViewController<?> context, Tdlib tdlib, @Nullable ArrayList<InlineResult<?>> results, boolean needBackground, @Nullable InlineResultsWrap.LoadMoreCallback callback, @Nullable RecyclerView.OnScrollListener scrollCallback, @Nullable StickerSmallView.StickerMovementCallback stickerMovementCallback) {
     if (inlineResultsView == null) {
       if (results == null || results.isEmpty()) {
         return;
@@ -1940,12 +2143,16 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       addToRoot(inlineResultsView, false);
     }
 
-    inlineResultsView.showItems(context, results, needBackground, callback, !context.isFocused());
+    inlineResultsView.showItems(context, results, needBackground, callback, scrollCallback, stickerMovementCallback, !context.isFocused());
   }
 
   public void addInlineResults (ViewController<?> context, ArrayList<InlineResult<?>> results, InlineResultsWrap.LoadMoreCallback callback) {
+    addInlineResults(context, results, callback, null, null);
+  }
+
+  public void addInlineResults (ViewController<?> context, ArrayList<InlineResult<?>> results, InlineResultsWrap.LoadMoreCallback callback, @Nullable RecyclerView.OnScrollListener scrollCallback, @Nullable StickerSmallView.StickerMovementCallback stickerMovementCallback) {
     if (inlineResultsView != null) {
-      inlineResultsView.addItems(context, results, callback);
+      inlineResultsView.addItems(context, results, callback, scrollCallback, stickerMovementCallback);
     }
   }
 
@@ -1958,6 +2165,56 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   public boolean areInlineResultsVisible () {
     return inlineResultsView != null && inlineResultsView.isDisplayingItems();
+  }
+
+  @Nullable
+  public InlineResultsWrap getInlineResultsView () {
+    return inlineResultsView;
+  }
+
+  public void setEmojiSuggestions (MessagesController context, @Nullable ArrayList<TGStickerObj> stickers, @Nullable RecyclerView.OnScrollListener scrollCallback, StickersSuggestionsLayout.Delegate choosingDelegate) {
+    if (emojiSuggestionsWrap == null) {
+      emojiSuggestionsWrap = new StickersSuggestionsLayout(context.context());
+      emojiSuggestionsWrap.setId(R.id.view_customEmojiSuggestions);
+      emojiSuggestionsWrap.init(context, true);
+    }
+    emojiSuggestionsWrap.setChoosingDelegate(choosingDelegate);
+    emojiSuggestionsWrap.setOnScrollListener(scrollCallback);
+    emojiSuggestionsWrap.setStickers(context, stickers);
+  }
+
+  public void updateEmojiSuggestionsPosition (boolean needTranslate) {
+    if (emojiSuggestionsWrap != null) {
+      emojiSuggestionsWrap.updatePosition(needTranslate);
+    }
+  }
+
+  public void addEmojiSuggestions (MessagesController context, ArrayList<TGStickerObj> stickers) {
+    if (emojiSuggestionsWrap != null && stickers != null && !stickers.isEmpty()) {
+      emojiSuggestionsWrap.addStickers(context, stickers);
+    }
+  }
+
+  public void setEmojiSuggestionsVisible (boolean visible) {
+    if (emojiSuggestionsWrap != null) {
+      if (visible) {
+        emojiSuggestionsWrap.updatePosition(false);
+      }
+      emojiSuggestionsWrap.setStickersVisible(visible);
+    }
+  }
+
+  public boolean hasEmojiSuggestions () {
+    return emojiSuggestionsWrap != null && emojiSuggestionsWrap.hasStickers();
+  }
+
+  public boolean isEmojiSuggestionsVisible () {
+    return emojiSuggestionsWrap != null && emojiSuggestionsWrap.isStickersVisible();
+  }
+
+  @Nullable
+  public StickersSuggestionsLayout getEmojiSuggestionsView () {
+    return emojiSuggestionsWrap;
   }
 
   // etc
@@ -2041,7 +2298,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       rootDrawable.setDisabled(isHidden);
     }
     final int visibility = isHidden ? View.GONE : View.VISIBLE;
-    navigation.get().setVisibility(visibility);
+    navigation.getValue().setVisibility(visibility);
     for (int i = 0; i < windows.size() - 1; i++) {
       windows.get(i).setVisibility(visibility);
     }
@@ -2065,7 +2322,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         return;
       }
     }
-    hideContextualPopups(false);
+    if (window.needDismissOtherPopUps()) {
+      hideContextualPopups(false);
+    }
     windows.add(window);
     checkDisallowScreenshots();
     window.showBoundWindow(rootView);
@@ -2206,6 +2465,14 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     return forgottenWindows;
   }
 
+  // Permissions 2.0
+
+  private final Permissions permissions = new Permissions(this);
+
+  public Permissions permissions () {
+    return permissions;
+  }
+
   // Permissions
 
   public static final int REQUEST_USE_FINGERPRINT = 0x01;
@@ -2254,18 +2521,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         requestPermissions(permissions, REQUEST_CUSTOM_NEW);
       } catch (Throwable t) {
         Log.e("Cannot check permissions: %s", TextUtils.join(", ", permissions));
-        after.onPermissionResult(REQUEST_CUSTOM_NEW, false);
+        int[] results = new int[permissions.length];
+        for (int i = 0; i < results.length; i++) {
+          results[i] = PackageManager.PERMISSION_DENIED;
+        }
+        after.onPermissionResult(REQUEST_CUSTOM_NEW, permissions, results, 0);
         this.requestCustomPermissionCallback = null;
       }
-    }
-  }
-
-  public void requestReadWritePermissions () {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      requestPermissions(new String[] {
-        Manifest.permission.READ_EXTERNAL_STORAGE,
-        Manifest.permission.WRITE_EXTERNAL_STORAGE
-      }, REQUEST_READ_STORAGE);
     }
   }
 
@@ -2274,7 +2536,12 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   public void requestLocationPermission (boolean needBackground, boolean skipAlert, ActivityPermissionResult handler) {
     requestLocationPermission(needBackground, skipAlert, () -> {
-      handler.onPermissionResult(REQUEST_FINE_LOCATION, false);
+      String[] permissions = locationPermissions(needBackground);
+      int[] grantResults = new int[permissions.length];
+      for (int i = 0; i < permissions.length; i++) {
+        grantResults[i] = PackageManager.PERMISSION_GRANTED;
+      }
+      handler.onPermissionResult(REQUEST_FINE_LOCATION, permissions, grantResults, 0);
     }, handler);
   }
 
@@ -2283,21 +2550,23 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       if (skipAlert) {
         requestLocationPermissionImpl(needBackground, handler);
       } else {
-        ModernOptions.showLocationAlert(this, needBackground, onCancel, () -> {
+        ModernOptions.showLocationAlert(navigation.getCurrentStackItem(), needBackground, onCancel, () -> {
           requestLocationPermissionImpl(needBackground, handler);
         });
       }
     }
   }
 
+  private static String[] locationPermissions (boolean needBackground) {if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Config.REQUEST_BACKGROUND_LOCATION && needBackground) {
+      return new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
+    } else {
+      return new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
+    }
+  }
+
   private void requestLocationPermissionImpl (boolean needBackground, ActivityPermissionResult handler) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      String[] permissions;
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Config.REQUEST_BACKGROUND_LOCATION && needBackground) {
-        permissions = new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
-      } else {
-        permissions = new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
-      }
+      String[] permissions = locationPermissions(needBackground);
       if (handler != null) {
         permissionsResultHandlers.put(REQUEST_FINE_LOCATION, handler);
         requestPermissions(permissions, REQUEST_CUSTOM);
@@ -2332,17 +2601,25 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       return;
     }
     switch (requestCode) {
-      case REQUEST_CUSTOM_NEW: {
-        if (requestCustomPermissionCallback != null) {
-          requestCustomPermissionCallback.onPermissionResult(requestCode, grantResults[0] == PackageManager.PERMISSION_GRANTED);
-          requestCustomPermissionCallback = null;
-        }
-        break;
-      }
+      case REQUEST_CUSTOM_NEW:
       case REQUEST_USE_MIC_CALL: {
-        if (requestMicPermissionCallback != null) {
-          requestMicPermissionCallback.onPermissionResult(requestCode, grantResults[0] == PackageManager.PERMISSION_GRANTED);
-          requestMicPermissionCallback = null;
+        ActivityPermissionResult callback =
+          requestCode == REQUEST_CUSTOM_NEW ?
+            requestCustomPermissionCallback :
+            requestMicPermissionCallback;
+        if (callback != null) {
+          if (requestCode == REQUEST_CUSTOM_NEW) {
+            requestCustomPermissionCallback = null;
+          } else {
+            requestMicPermissionCallback = null;
+          }
+          int grantCount = 0;
+          for (int grantResult : grantResults) {
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+              grantCount++;
+            }
+          }
+          callback.onPermissionResult(requestCode, permissions, grantResults, grantCount);
         }
         break;
       }
@@ -2378,7 +2655,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         if (key != 0) {
           ActivityPermissionResult handler = permissionsResultHandlers.get(key);
           if (handler != null) {
-            handler.onPermissionResult(key, grantResults[0] == PackageManager.PERMISSION_GRANTED);
+            int grantCount = 0;
+            for (int grantResult : grantResults) {
+              if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                grantCount++;
+              }
+            }
+            handler.onPermissionResult(requestCode, permissions, grantResults, grantCount);
             break;
           }
         }
@@ -2402,27 +2685,30 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   public final void checkDisallowScreenshots () {
+    if (UI.TEST_MODE == UI.TEST_MODE_AUTO) {
+      // Allow screen capture in Firebase Labs
+      return;
+    }
     boolean disallowScreenshots = false;
-    if (UI.TEST_MODE != UI.TEST_MODE_AUTO) {
-      disallowScreenshots = (navigation.shouldDisallowScreenshots() || Passcode.instance().shouldDisallowScreenshots());
-      if (!disallowScreenshots) {
-        for (PopupLayout popupLayout : windows) {
-          if (popupLayout.shouldDisallowScreenshots()) {
-            disallowScreenshots = true;
-            break;
-          }
-        }
+    disallowScreenshots = (navigation.shouldDisallowScreenshots() || Passcode.instance().shouldDisallowScreenshots());
+    if (tdlib != null && tdlib.messageViewer().needRestrictScreenshots()) {
+      disallowScreenshots = true;
+    }
+    for (PopupLayout popupLayout : windows) {
+      boolean shouldDisallowScreenshots = popupLayout.shouldDisallowScreenshots();
+      popupLayout.checkWindowFlags();
+      if (shouldDisallowScreenshots) {
+        disallowScreenshots = true;
       }
-      if (!disallowScreenshots) {
-        for (int i = 0; i < forgottenWindows.size(); i++) {
-          PopupLayout popupLayout = forgottenWindows.valueAt(i);
-          if (popupLayout == null)
-            continue;
-          if (popupLayout.shouldDisallowScreenshots()) {
-            disallowScreenshots = true;
-            break;
-          }
-        }
+    }
+    for (int i = 0; i < forgottenWindows.size(); i++) {
+      PopupLayout popupLayout = forgottenWindows.valueAt(i);
+      if (popupLayout == null)
+        continue;
+      boolean shouldDisallowScreenshots = popupLayout.shouldDisallowScreenshots();
+      popupLayout.checkWindowFlags();
+      if (shouldDisallowScreenshots) {
+        disallowScreenshots = true;
       }
     }
     setDisallowScreenshots(disallowScreenshots);
@@ -2488,9 +2774,9 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   private boolean canOpenCamera () {
     return !(
-      getCurrentPopupWindow() != null ||
+      // getCurrentPopupWindow() != null ||
       (cameraAnimator != null && cameraAnimator.isAnimating()) ||
-      activityState != UI.STATE_RESUMED ||
+      activityState != UI.State.RESUMED ||
       recordAudioVideoController.isOpen() ||
       isCameraOwnershipTaken ||
       isNavigationBusy()
@@ -2527,17 +2813,16 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private boolean openCameraByPermissionRequest (ViewController.CameraOpenOptions options) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      if (U.needsPermissionRequest(options.optionalMicrophone ? CameraController.VIDEO_ONLY_PERMISSIONS : CameraController.VIDEO_PERMISSIONS)) {
-        U.requestPermissions(options.optionalMicrophone ? CameraController.VIDEO_ONLY_PERMISSIONS : CameraController.VIDEO_PERMISSIONS, result -> {
-          if (result) {
-            openCameraByTap(options);
-          }
-        });
-        return true;
+    RunnableBool after = granted -> {
+      if (granted) {
+        openCameraByTap(options);
       }
+    };
+    if (options.optionalMicrophone) {
+      return permissions().requestAccessCameraPermission(after);
+    } else {
+      return permissions().requestRecordVideoPermissions(after);
     }
-    return false;
   }
 
   public static int getAndroidOrientationPortrait () {
@@ -2559,7 +2844,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   public boolean startCameraDrag (ViewController.CameraOpenOptions options, boolean isOpen) { // User has slided enough to start dragging
-    if (isCameraOpen == isOpen || !canOpenCamera() || isKeyboardVisible()) {
+    if (isCameraOpen == isOpen || !canOpenCamera() /*|| isKeyboardVisible()*/) {
       return false;
     }
     if (isOpen) {
@@ -2674,36 +2959,47 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     }
   }
 
-  private boolean cameraOrientationBlocked;
-  private int savedAnimation;
+  private int savedRotationAnimation = -1;
 
-  private void checkCameraOrientationBlocked () {
-    boolean isBlocked = ((cameraFactor < 1f && isCameraOpen) || (cameraFactor != 0f && cameraFactor != 1f) || isCameraDragging || (cameraFactor == 1f && camera != null && camera.supportsCustomRotations())) && !(camera != null && camera.hasOpenEditor());
-    if (cameraOrientationBlocked != isBlocked) {
-      cameraOrientationBlocked = isBlocked;
-      setIsOrientationBlocked(isBlocked);
-    }
+  private void requestWindowRotationAnimation (int requestedAnimation) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-      boolean needCrossFadeAnimation = cameraFactor == 1f;
-      int desiredRotation;
       Window window = getWindow();
       WindowManager.LayoutParams attrs = window.getAttributes();
-      if (needCrossFadeAnimation) {
-        if (attrs.rotationAnimation != WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT) {
-          savedAnimation = attrs.rotationAnimation;
-        }
-        desiredRotation = WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT;
+      int pendingRotationAnimation;
+      if (requestedAnimation == -1) {
+        pendingRotationAnimation = savedRotationAnimation;
+        savedRotationAnimation = -1;
       } else {
-        desiredRotation = savedAnimation;
+        pendingRotationAnimation = requestedAnimation;
+        if (savedRotationAnimation == -1) {
+          savedRotationAnimation = attrs.rotationAnimation;
+        }
       }
-      if (attrs.rotationAnimation != desiredRotation) {
-        attrs.rotationAnimation = desiredRotation;
+      if (pendingRotationAnimation != -1 && attrs.rotationAnimation != pendingRotationAnimation) {
+        attrs.rotationAnimation = pendingRotationAnimation;
         window.setAttributes(attrs);
       }
     }
-    /*if (isBlocked && camera != null && !camera.supportsCustomRotations()) {
-      lockOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-    }*/
+  }
+
+  private void checkCameraOrientationBlocked () {
+    boolean isBlocked = ((cameraFactor < 1f && isCameraOpen) || (cameraFactor != 0f && cameraFactor != 1f) || isCameraDragging || (cameraFactor == 1f && camera != null && camera.supportsCustomRotations())) && !(camera != null && camera.hasOpenEditor());
+    setOrientationLockFlagEnabled(ORIENTATION_FLAG_CAMERA, isBlocked);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      boolean needCrossFadeAnimation = cameraFactor == 1f;
+      int rotationAnimation;
+      if (needCrossFadeAnimation) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && false) {
+          // looks bad on AOSP (Pixel Fold), and exactly like JUMPCUT on Samsung devices
+          rotationAnimation = WindowManager.LayoutParams.ROTATION_ANIMATION_SEAMLESS;
+        } else {
+          rotationAnimation = WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT;
+        }
+      } else {
+        rotationAnimation = -1;
+      }
+      requestWindowRotationAnimation(rotationAnimation);
+    }
   }
 
   private void setCameraOpen (ViewController.CameraOpenOptions options, boolean isOpen, boolean byDrag) {
@@ -2776,11 +3072,13 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private void processCameraAnimationFinish (final float toFactor) {
-    if (toFactor == 1f && isCameraOpen) {
-      onCameraCompletelyOpen();
-    } else if (toFactor == 0f && !isCameraOpen) {
-      onCameraCompletelyClosed();
-    }
+    UI.post(() -> {
+      if (toFactor == 1f && isCameraOpen) {
+        onCameraCompletelyOpen();
+      } else if (toFactor == 0f && !isCameraOpen) {
+        onCameraCompletelyClosed();
+      }
+    });
   }
 
   private void replaceCameraWithContent (final boolean launchAnimation) { // called before closing, when camera has been completely open
@@ -2898,15 +3196,17 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private void initializeCamera (ViewController.CameraOpenOptions options) {
-    if (camera == null) {
+    final boolean needCreateCamera = camera == null;
+    if (needCreateCamera) {
       camera = new CameraController(this);
-      camera.setMode(options.mode, options.readyListener);
-      camera.setQrListener(options.qrCodeListener, options.qrModeSubtitle, options.qrModeDebug);
-      camera.get(); // Ensure view creation
+    }
+    camera.setMode(options.mode, options.readyListener);
+    camera.setAvatarPickerMode(options.avatarPickerMode);
+    camera.setQrListener(options.qrCodeListener, options.qrModeSubtitle, options.qrModeDebug);
+    camera.setMediaEditorDelegates(options.delegate, options.selectDelegate, options.sendDelegate);
+    if (needCreateCamera) {
+      camera.getValue(); // Ensure view creation
       addActivityListener(camera);
-    } else {
-      camera.setMode(options.mode, options.readyListener);
-      camera.setQrListener(options.qrCodeListener, options.qrModeSubtitle, options.qrModeDebug);
     }
     hideContextualPopups(false);
     closeAllMedia(true);
@@ -2931,12 +3231,12 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private boolean isOwningCamera () {
-    return camera != null && !isCameraOwnershipTaken && camera.get().getParent() != null;
+    return camera != null && !isCameraOwnershipTaken && camera.getValue().getParent() != null;
   }
 
   private void replaceContentWithCamera (final boolean launchAnimation) { // prepare camera
     initializeCamera(cameraOptions);
-    if (camera.get().getParent() == null) {
+    if (camera.getValue().getParent() == null) {
       if (launchAnimation) {
         camera.scheduleAnimation(() -> cameraAnimator.animateTo(1f), -1);
       }
@@ -2944,7 +3244,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
       camera.setOutputController(navigation.getCurrentStackItem());
       camera.onPrepareToShow();
       setIsCameraPrepared(true);
-      rootView.addView(camera.get(), 0);
+      rootView.addView(camera.getValue(), 0);
       ViewController<?> v = navigation.getCurrentStackItem();
       if (v != null) {
         v.onBlur();
@@ -2956,7 +3256,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
 
   private void onCameraCompletelyClosed () { // contentView is fully visible & user is not dragging
     camera.onCleanAfterHide();
-    rootView.removeView(camera.get());
+    rootView.removeView(camera.getValue());
     setIsCameraPrepared(false);
     ViewController<?> v = navigation.getCurrentStackItem();
     if (v != null) {
@@ -3001,6 +3301,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
     }
   }
 
+  @SuppressWarnings("deprecation")
   private void updateNavigationBarColor () {
     if (Config.USE_CUSTOM_NAVIGATION_COLOR) {
       int color;
@@ -3013,16 +3314,16 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         isLight = !Theme.isDark();
       }
       if (desiredIntensityFactor != 0f) {
-        color = ColorUtils.fromToArgb(color, ColorUtils.compositeColor(desiredColor != null ? desiredColor.get() : 0, 0x1E000000), desiredIntensityFactor);
+        color = ColorUtils.fromToArgb(color, ColorUtils.compositeColor(desiredColor != null ? desiredColor.getIntValue() : 0, 0x1E000000), desiredIntensityFactor);
         isLight = isLight && desiredAllowLight;
       }
       if (photoRevealFactor != 0f) {
         color = ColorUtils.fromToArgb(color, UI.NAVIGATION_BAR_COLOR, photoRevealFactor);
         isLight = false;
       }
-      float passcodeFactor = isPasscodeShowing ? 1f : dismissingPasscodeController != null ? dismissingPasscodeController.get().getAlpha() : 0f;
+      float passcodeFactor = isPasscodeShowing ? 1f : dismissingPasscodeController != null ? dismissingPasscodeController.getValue().getAlpha() : 0f;
       if (passcodeFactor != 0f) {
-        color = ColorUtils.fromToArgb(color, Theme.getColor(R.id.theme_color_passcode), passcodeFactor);
+        color = ColorUtils.fromToArgb(color, Theme.getColor(ColorId.passcode), passcodeFactor);
         isLight = isLight && passcodeFactor < .5f;
       }
       getWindow().setNavigationBarColor(color);
@@ -3035,6 +3336,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
         if (Theme.needLightStatusBar()) {
           visibility |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         }
+        // TODO: rework to WindowInsetsControlle
         getWindow().getDecorView().setSystemUiVisibility(visibility);
       }
     }
@@ -3083,7 +3385,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private void checkAutoNightMode () {
-    setRegisterLightSensor(activityState == UI.STATE_RESUMED && Settings.instance().getNightMode() == Settings.NIGHT_MODE_AUTO);
+    setRegisterLightSensor(activityState == UI.State.RESUMED && Settings.instance().getNightMode() == Settings.NIGHT_MODE_AUTO);
     setSystemNightMode(getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK);
   }
 
@@ -3146,7 +3448,7 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   private boolean needsLightSensorChanges () {
-    return (lightSensorRegistered && lightSensor != null && activityState == UI.STATE_RESUMED && Settings.instance().getNightMode() == Settings.NIGHT_MODE_AUTO);
+    return (lightSensorRegistered && lightSensor != null && activityState == UI.State.RESUMED && Settings.instance().getNightMode() == Settings.NIGHT_MODE_AUTO);
   }
 
   @Override
@@ -3212,10 +3514,10 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   }
 
   @Override
-  public void onThemePropertyChanged (int themeId, int propertyId, float value, boolean isDefault) {
+  public void onThemePropertyChanged (int themeId, @PropertyId int propertyId, float value, boolean isDefault) {
     switch (propertyId) {
-      case ThemeProperty.DARK:
-      case ThemeProperty.LIGHT_STATUS_BAR:
+      case PropertyId.DARK:
+      case PropertyId.LIGHT_STATUS_BAR:
         updateWindowDecorSystemUiVisibility();
         break;
     }
@@ -3300,16 +3602,21 @@ public abstract class BaseActivity extends ComponentActivity implements View.OnT
   public static final int ORIENTATION_FLAG_RECORDING = 1 << 5;
   public static final int ORIENTATION_FLAG_CROP = 1 << 6;
   public static final int ORIENTATION_FLAG_PROXIMITY = 1 << 7;
+  public static final int ORIENTATION_FLAG_CAMERA = 1 << 8;
 
   private int orientationFlags;
 
-  public void setOrientationLockFlagEnabled (int flag, boolean enabled) {
+  private void setOrientationLockFlags (int flags) {
     boolean oldLocked = this.orientationFlags != 0;
-    this.orientationFlags = BitwiseUtils.setFlag(this.orientationFlags, flag, enabled);
+    this.orientationFlags = flags;
     boolean newLocked =  this.orientationFlags != 0;
     if (oldLocked != newLocked) {
       setIsOrientationBlocked(newLocked);
     }
+  }
+
+  public void setOrientationLockFlagEnabled (int flag, boolean enabled) {
+    setOrientationLockFlags(BitwiseUtils.setFlag(this.orientationFlags, flag, enabled));
   }
 
   // Language

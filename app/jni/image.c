@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <setjmp.h>
 #include <android/bitmap.h>
+#include <string.h>
 #ifndef NO_WEBP
 #include <webp/decode.h>
 #endif
@@ -409,7 +410,7 @@ JNIEXPORT void Java_org_thunderdog_challegram_N_calcCDT(JNIEnv *env, jclass clas
         cdfsMax[i] = cdfs[i][PGPhotoEnhanceHistogramBins - 1];
     }
     
-    uint32_t resultSize = 4 * PGPhotoEnhanceHistogramBins * totalSegments;
+    // uint32_t resultSize = 4 * PGPhotoEnhanceHistogramBins * totalSegments;
     uint32_t resultBytesPerRow = 4 * PGPhotoEnhanceHistogramBins;
     
     unsigned char *result = (*env)->GetDirectBufferAddress(env, buffer);
@@ -466,12 +467,24 @@ JNIEXPORT jboolean Java_org_thunderdog_challegram_N_loadWebpImage (JNIEnv *env, 
   uint8_t *data = (uint8_t *) inputBuffer;
   size_t data_size = (size_t) len;
 
-  int bitmapWidth = 0;
-  int bitmapHeight = 0;
-  if (!WebPGetInfo(data, data_size, &bitmapWidth, &bitmapHeight)) {
-    (*env)->ThrowNew(env, jclass_RuntimeException, "Invalid WebP format");
+  WebPBitstreamFeatures features;
+  VP8StatusCode resultCode = WebPGetFeatures(data, data_size, &features);
+  if (resultCode != VP8_STATUS_OK) {
+    const char *fmt = "WebPGetFeatures failed: %d";
+    int code = (int) resultCode;
+
+    int count = snprintf(NULL, 0, fmt, code);
+    char buffer[count + 1];
+    buffer[count + 1] = '\0';
+    snprintf(buffer, count + 1, fmt, code);
+
+    (*env)->ThrowNew(env, jclass_RuntimeException, buffer);
+
     return 0;
   }
+
+  int bitmapWidth = features.width;
+  int bitmapHeight = features.height;
 
   if (options && (*env)->GetBooleanField(env, options, jclass_Options_inJustDecodeBounds) == JNI_TRUE) {
     (*env)->SetIntField(env, options, jclass_Options_outWidth, bitmapWidth);

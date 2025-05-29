@@ -33,7 +33,9 @@
   <item type="id" name="menu_chat" />
   <item type="id" name="menu_chatBulkActions" />
   <item type="id" name="menu_search" />
+  <item type="id" name="menu_archive" />
   <item type="id" name="menu_clear" />
+  <item type="id" name="menu_emoji" />
   <item type="id" name="menu_editLangPack" />
   <item type="id" name="menu_editLangPackString" />
   <item type="id" name="menu_proxy" />
@@ -47,6 +49,7 @@
   <item type="id" name="menu_btn_addContact" />
   <item type="id" name="menu_btn_done" />
   <item type="id" name="menu_btn_forward" />
+  <item type="id" name="menu_btn_settings" />
   <item type="id" name="menu_btn_copy" />
   <item type="id" name="menu_btn_archive" />
   <item type="id" name="menu_btn_help" />
@@ -57,6 +60,8 @@
   <item type="id" name="menu_btn_clearCache" />
   <item type="id" name="menu_btn_send" />
   <item type="id" name="menu_btn_edit" />
+  <item type="id" name="menu_btn_emoji" />
+  <item type="id" name="menu_btn_emoji_close" />
   <item type="id" name="menu_btn_delete" />
   <item type="id" name="menu_btn_retry" />
   <item type="id" name="menu_btn_view" />
@@ -89,12 +94,15 @@
   <item type="id" name="more_btn_addToContacts" />
   <item type="id" name="more_btn_cloudChat" />
   <item type="id" name="more_btn_addToGroup" />
+  <item type="id" name="more_btn_addToFolder" />
+  <item type="id" name="more_btn_removeFromFolder" />
   <item type="id" name="more_btn_edit" />
   <item type="id" name="more_btn_delete" />
   <item type="id" name="more_btn_addMember" />
   <item type="id" name="more_btn_editDescription" />
   <item type="id" name="more_btn_join" />
-  <item type="id" name="more_btn_archiveUnarchive" />
+  <item type="id" name="more_btn_archive" />
+  <item type="id" name="more_btn_unarchive" />
   <item type="id" name="more_btn_selectAll" />
   <item type="id" name="more_btn_markAsRead" />
   <item type="id" name="more_btn_report" />
@@ -114,6 +122,7 @@
   <item type="id" name="edit_proxy_password" />
   <item type="id" name="edit_proxy_secret" />
 
+  <item type="id" name="controller_msgTranslate" />
   <item type="id" name="controller_simplePager" />
   <item type="id" name="controller_logOut" />
   <item type="id" name="controller_editLanguage" />
@@ -124,11 +133,15 @@
   <item type="id" name="controller_request" />
   <item type="id" name="controller_phone" />
   <item type="id" name="controller_share" />
+  <item type="id" name="controller_sender" />
   <item type="id" name="controller_hashtag" />
   <item type="id" name="controller_camera" />
   <item type="id" name="controller_memberRights" />
   <item type="id" name="controller_linkChat" />
   <item type="id" name="controller_enabledReactions"/>
+  <item type="id" name="controller_deleteAccount"/>
+
+  <item type="id" name="controller_setEmojiStatusPager" />
 
   <item type="id" name="controller_messageOptionsPager" />
   <item type="id" name="controller_messageOptions" />
@@ -150,6 +163,7 @@
   <item type="id" name="controller_navigation" />
   <item type="id" name="controller_text" />
   <item type="id" name="controller_language" />
+  <item type="id" name="controller_translations" />
   <item type="id" name="controller_map" />
   <item type="id" name="controller_drawer" />
   <item type="id" name="controller_pollResults" />
@@ -163,6 +177,7 @@
   <item type="id" name="controller_call" />
   <item type="id" name="controller_people" />
   <item type="id" name="controller_settings" />
+  <item type="id" name="controller_archiveSettings" />
   <item type="id" name="controller_storageSettings" />
   <item type="id" name="controller_messages" />
   <item type="id" name="controller_wallpaper" />
@@ -177,6 +192,7 @@
   <item type="id" name="controller_newChannel_link" />
   <item type="id" name="controller_newGroup" />
   <item type="id" name="controller_emoji" />
+  <item type="id" name="controller_emojiCustom" />
   <item type="id" name="controller_emojiSets" />
   <item type="id" name="controller_iconSets" />
   <item type="id" name="controller_media__new" />
@@ -201,6 +217,7 @@
   <item type="id" name="controller_chatJoinRequests" />
   <item type="id" name="controller_messageSeen" />
   <item type="id" name="controller_joinDialog" />
+  <item type="id" name="controller_giftDialog" />
 
   <item type="id" name="controller_code" />
   <item type="id" name="controller_name" />
@@ -227,6 +244,13 @@
   <item type="id" name="controller_chatLinks" />
   <item type="id" name="controller_chatLinkMembers" />
   <item type="id" name="controller_sponsoredMessagesInfo" />
+  <item type="id" name="controller_featureToggles" />
+  <item type="id" name="controller_chatFolders" />
+  <item type="id" name="controller_chatFoldersFeature" />
+  <item type="id" name="controller_editChatFolderInviteLink" />
+  <item type="id" name="controller_chatFolderInviteLink" />
+  <item type="id" name="controller_editChatFolders" />
+  <item type="id" name="controller_selectChats" />
 
   <item type="id" name="separator" />
 
@@ -279,14 +303,35 @@
   <item type="id" name="result" />
   <item type="id" name="search_chat" />
   <item type="id" name="user" />
+  <item type="id" name="sender" />
   <item type="id" name="account" />
   <item type="id" name="btn_wallet" />
   <item type="id" name="contact" />
   <item type="id" name="call" />
   <item type="id" name="bucket" />
+  <item type="id" name="chatFolder" />
+  <item type="id" name="recommendedChatFolder" />
+  <item type="id" name="chatType_contact" />
+  <item type="id" name="chatType_nonContact" />
+  <item type="id" name="chatType_group" />
+  <item type="id" name="chatType_channel" />
+  <item type="id" name="chatType_bot" />
+  <item type="id" name="chatType_muted" />
+  <item type="id" name="chatType_read" />
+  <item type="id" name="chatType_archived" />
+
+  <item type="id" name="btn_chatTranslate" />
+  <item type="id" name="btn_chatTranslateOff" />
+  <item type="id" name="btn_chatTranslateStyle" />
+  <item type="id" name="btn_chatTranslateStylePopup" />
+  <item type="id" name="btn_chatTranslateStyleInline" />
+  <item type="id" name="btn_chatTranslateStyleNone" />
+  <item type="id" name="btn_chatDoNotTranslate" />
+  <item type="id" name="btn_chatDoNotTranslateAppLang" />
+  <item type="id" name="btn_chatDoNotTranslateSelected" />
+
   <item type="id" name="btn_pinUnpinChat" />
   <item type="id" name="btn_unpinAll" />
-  <item type="id" name="btn_reportLocation" />
   <item type="id" name="btn_archiveUnarchiveChat" />
   <item type="id" name="btn_pinChat" />
   <item type="id" name="btn_unpinChat" />
@@ -294,11 +339,21 @@
   <item type="id" name="btn_unarchiveChat" />
   <item type="id" name="btn_markChatAsRead" />
   <item type="id" name="btn_markChatAsUnread" />
+  <item type="id" name="btn_markFolderAsRead" />
+  <item type="id" name="btn_addChatToFolder" />
+  <item type="id" name="btn_removeChatFromFolder" />
   <item type="id" name="btn_members" />
   <item type="id" name="btn_membersReading" />
   <item type="id" name="btn_membersWriting" />
   <item type="id" name="btn_messages" />
   <item type="id" name="btn_send" />
+  <item type="id" name="btn_setEmojiStatus" />
+  <item type="id" name="btn_setEmojiStatusTimed" />
+  <item type="id" name="btn_setEmojiStatusTimed1Hour" />
+  <item type="id" name="btn_setEmojiStatusTimed2Hours" />
+  <item type="id" name="btn_setEmojiStatusTimed8Hours" />
+  <item type="id" name="btn_setEmojiStatusTimed2Days" />
+  <item type="id" name="btn_setEmojiStatusTimedCustom" />
   <item type="id" name="btn_places" />
   <item type="id" name="btn_shareLiveLocation" />
   <item type="id" name="btn_messageLiveStop" />
@@ -314,10 +369,13 @@
   <item type="id" name="btn_stickerSet" />
   <item type="id" name="btn_reactionSelector" />
   <item type="id" name="btn_description" />
+  <item type="id" name="btn_peer_id" />
+  <item type="id" name="btn_peer_id_copy" />
   <item type="id" name="btn_contactsRegistered" />
   <item type="id" name="btn_contactsUnregistered" />
   <item type="id" name="btn_bio" />
   <item type="id" name="btn_logout" />
+  <item type="id" name="btn_deleteAccount" />
   <item type="id" name="btn_camera" />
   <item type="id" name="btn_viewScheduled" />
   <item type="id" name="btn_takePhoto" />
@@ -359,12 +417,18 @@
   <item type="id" name="btn_addContact" />
   <item type="id" name="btn_inviteLink" />
   <item type="id" name="btn_toggleSignatures" />
+  <item type="id" name="btn_toggleShowAuthors" />
+  <item type="id" name="btn_toggleJoinByRequest" />
   <item type="id" name="btn_toggleProtection" />
+  <item type="id" name="btn_togglePermission" />
+  <item type="id" name="btn_togglePermissionGroup" />
   <item type="id" name="btn_allMembers" />
   <item type="id" name="btn_onlyAdmins" />
   <item type="id" name="btn_hidden" />
   <item type="id" name="btn_visible" />
   <item type="id" name="btn_channelType" />
+  <item type="id" name="btn_botDescription" />
+  <item type="id" name="btn_botEdit" />
   <item type="id" name="btn_linkedChat" />
   <item type="id" name="btn_paintType" />
   <item type="id" name="btn_recentActions" />
@@ -410,8 +474,10 @@
   <item type="id" name="btn_search_by" />
   <item type="id" name="btn_search_next" />
   <item type="id" name="btn_search_prev" />
+  <item type="id" name="btn_search_onlyResult" />
   <item type="id" name="btn_search_counter" />
   <item type="id" name="btn_search_jump" />
+  <item type="id" name="btn_search_setTypeFilter" />
   <item type="id" name="btn_gps" />
   <item type="id" name="place" />
   <item type="id" name="liveLocation" />
@@ -438,6 +504,8 @@
   <item type="id" name="btn_paint" />
   <item type="id" name="btn_adjust" />
   <item type="id" name="btn_rotate" />
+  <item type="id" name="btn_flipHorizontally" />
+  <item type="id" name="btn_mirrorHorizontal" />
   <item type="id" name="btn_proportion" />
   <item type="id" name="btn_proportion_free" />
   <item type="id" name="btn_proportion_original" />
@@ -465,6 +533,8 @@
   <item type="id" name="btn_night" />
   <item type="id" name="btn_bubble" />
   <item type="id" name="btn_notifications" />
+  <item type="id" name="btn_birthdate" />
+  <item type="id" name="btn_addBirthdate" />
   <item type="id" name="btn_groupsInCommon" />
   <item type="id" name="btn_chatBackground" />
   <item type="id" name="btn_forcePlainChannels" />
@@ -473,11 +543,15 @@
   <item type="id" name="btn_chatFontSizeReset" />
   <item type="id" name="btn_encryptionKey" />
   <item type="id" name="btn_cancel" />
+  <item type="id" name="btn_clear" />
   <item type="id" name="btn_removeProxy" />
   <item type="id" name="btn_save" />
   <item type="id" name="btn_blockedSenders" />
   <item type="id" name="btn_sessions" />
   <item type="id" name="btn_2fa" />
+  <item type="id" name="btn_loginEmail" />
+  <item type="id" name="btn_changeEmail" />
+  <item type="id" name="btn_suggestion" />
   <item type="id" name="btn_accountTTL" />
   <item type="id" name="btn_loggedWebsites" />
   <item type="id" name="btn_clearPaymentAndShipping" />
@@ -487,7 +561,9 @@
   <item type="id" name="btn_closeCall" />
   <item type="id" name="btn_declineCall" />
   <item type="id" name="btn_lastSeen" />
+  <item type="id" name="btn_newChatsPrivacy" />
   <item type="id" name="btn_privacyRule" />
+  <item type="id" name="btn_extraPrivacyRule" />
   <item type="id" name="btn_forwardLink" />
   <item type="id" name="btn_profilePhoto" />
   <item type="id" name="btn_calls" />
@@ -532,6 +608,7 @@
   <item type="id" name="btn_proxy" />
   <item type="id" name="occupiedChats" />
   <item type="id" name="btn_noProxy" />
+  <item type="id" name="btn_proxyAutoSwitch" />
   <item type="id" name="btn_addProxy" />
   <item type="id" name="btn_proxySocks5" />
   <item type="id" name="btn_proxyTelegram" />
@@ -539,10 +616,14 @@
   <item type="id" name="btn_proxyQr" />
   <item type="id" name="btn_showAdvanced" />
   <item type="id" name="btn_autoplayGIFs" />
+  <item type="id" name="btn_quickTranslate" />
+  <item type="id" name="btn_translate" />
+  <item type="id" name="btn_toggleCollapseRecentStickers" />
+  <item type="id" name="btn_emojiSuggestions" />
   <item type="id" name="btn_stickerSuggestions" />
-  <item type="id" name="btn_stickerSuggestionsAll" />
-  <item type="id" name="btn_stickerSuggestionsInstalled" />
-  <item type="id" name="btn_stickerSuggestionsNone" />
+  <item type="id" name="btn_stickerOrEmojiSuggestionsAll" />
+  <item type="id" name="btn_stickerOrEmojiSuggestionsInstalled" />
+  <item type="id" name="btn_stickerOrEmojiSuggestionsNone" />
   <item type="id" name="btn_switchPmButton" />
   <item type="id" name="btn_updateAutomatically" />
   <item type="id" name="btn_updateAutomaticallyWiFi" />
@@ -567,6 +648,9 @@
   <item type="id" name="btn_statsPublicShares" />
   <item type="id" name="btn_statsPublishDate" />
   <item type="id" name="btn_statsSignature" />
+  <item type="id" name="btn_openGiftSender" />
+  <item type="id" name="btn_openGiftReceiver" />
+  <item type="id" name="btn_showGiveawayMessage" />
 
   <item type="id" name="stats_memberCount" />
   <item type="id" name="stats_join" />
@@ -632,6 +716,7 @@
   <item type="id" name="btn_useInAppBrowser" />
   <item type="id" name="btn_switchRtl" />
   <item type="id" name="btn_debugSwitchRtl" />
+  <item type="id" name="btn_debugLtrEmoji" />
   <item type="id" name="btn_mediaWiFiLimits" />
   <item type="id" name="btn_mediaRoamingLimits" />
   <item type="id" name="btn_stopAllLiveLocations" />
@@ -641,6 +726,7 @@
   <item type="id" name="btn_cacheSettings" />
   <item type="id" name="btn_deleteMember" />
   <item type="id" name="btn_circle" />
+  <item type="id" name="btn_circleBackspace" />
   <item type="id" name="btn_shareMyContact" />
   <item type="id" name="btn_showPinnedMessage" />
   <item type="id" name="btn_botHelp" />
@@ -665,6 +751,7 @@
   <item type="id" name="btn_sendScheduled30Min" />
   <item type="id" name="btn_sendScheduled2Hr" />
   <item type="id" name="btn_sendScheduled8Hr" />
+  <item type="id" name="btn_sendScheduled1Yr" />
   <item type="id" name="btn_sendScheduledCustom" />
   <item type="id" name="btn_expireIn12h" />
   <item type="id" name="btn_expireIn2d" />
@@ -680,8 +767,11 @@
   <item type="id" name="btn_sendOnceOnline" />
   <item type="id" name="btn_sendNoMarkdown" />
   <item type="id" name="btn_sendToast" />
+  <item type="id" name="btn_openSendersMenu" />
+  <item type="id" name="btn_setMsgSender" />
   <item type="id" name="btn_sendNoSound" />
   <item type="id" name="btn_sendAsFile" />
+  <item type="id" name="btn_foregroundSync" />
 
   <item type="id" name="btn_ledDisabled" />
 
@@ -694,6 +784,7 @@
   <item type="id" name="btn_removeChatFromListOrClearHistory" />
   <item type="id" name="btn_destroyChat" />
 
+  <item type="id" name="btn_plain" />
   <item type="id" name="btn_bold" />
   <item type="id" name="btn_italic" />
   <item type="id" name="btn_spoiler" />
@@ -701,19 +792,24 @@
   <item type="id" name="btn_underline" />
   <item type="id" name="btn_monospace" />
   <item type="id" name="btn_link" />
+  <item type="id" name="btn_quote" />
   <item type="id" name="btn_inlinePlayPause" />
   <item type="id" name="btn_inlineClose" />
   <item type="id" name="btn_inlineOpen" />
   <item type="id" name="btn_copyText" />
+  <item type="id" name="btn_copyTranslation" />
   <item type="id" name="btn_sourceCode" />
   <item type="id" name="btn_sourceCodeChanges" />
   <item type="id" name="btn_copyDebug" />
   <item type="id" name="btn_pasteText" />
+  <item type="id" name="btn_pasteUrl" />
   <item type="id" name="btn_copyUsername" />
   <item type="id" name="btn_editUsername" />
   <item type="id" name="btn_openLink" />
   <item type="id" name="btn_copyLink" />
   <item type="id" name="btn_archive" />
+  <item type="id" name="btn_archiveAsFolder" />
+  <item type="id" name="btn_installStickerSet" />
   <item type="id" name="btn_shareLink" />
   <item type="id" name="btn_disabled" />
   <item type="id" name="membersList" />
@@ -755,6 +851,8 @@
   <item type="id" name="btn_openAdminInviteLinks" />
   <item type="id" name="btn_manageInviteLinks" />
   <item type="id" name="btn_manageJoinRequests" />
+  <item type="id" name="btn_manageGroup" />
+  <item type="id" name="btn_deleteThread" />
   <item type="id" name="btn_inviteLinkUserLimit" />
   <item type="id" name="btn_inviteLinkUserSlider" />
   <item type="id" name="btn_inviteLinkDateLimit" />
@@ -787,6 +885,9 @@
   <item type="id" name="btn_localContacts" />
   <item type="id" name="btn_gmailContacts" />
   <item type="id" name="btn_close" />
+  <item type="id" name="btn_replace" />
+  <item type="id" name="btn_toggleEnlarge" />
+  <item type="id" name="btn_toggleShowAbove" />
   <item type="id" name="btn_dataSaver" />
   <item type="id" name="btn_dataSaverForce" />
   <item type="id" name="btn_inChannelChats" />
@@ -874,13 +975,17 @@
   <item type="id" name="btn_secret_disableNetwork" />
   <item type="id" name="btn_secret_tdlibDatabaseStats" />
   <item type="id" name="btn_secret_databaseStats" />
+  <item type="id" name="btn_secret_attest" />
   <item type="id" name="btn_secret_stressTest" />
+  <item type="id" name="btn_secret_tgcalls" />
+  <item type="id" name="btn_secret_tgcallsOptions" />
   <item type="id" name="btn_secret_sendAllChangeLogs" />
   <item type="id" name="btn_secret_copyLanguageCodes" />
   <item type="id" name="btn_resetLocalData" />
   <item type="id" name="btn_secret_deleteProfilePhoto" />
   <item type="id" name="btn_secret_forceTcpInCalls" />
   <item type="id" name="btn_secret_forceTdlibRestarts" />
+  <item type="id" name="btn_secret_testPrompts" />
   <item type="id" name="btn_secret_dropHidden" />
   <item type="id" name="btn_secret_disableQrProcess" />
   <item type="id" name="btn_secret_debugQrRegions" />
@@ -893,6 +998,7 @@
   <item type="id" name="btn_secret_pushDuration" />
   <item type="id" name="btn_secret_pushConfig" />
   <item type="id" name="btn_secret_appFingerprint" />
+  <item type="id" name="btn_secret_testForeground" />
   <item type="id" name="btn_string" />
 
   <item type="id" name="btn_test_database" />
@@ -915,8 +1021,11 @@
   <item type="id" name="btn_log_tags" />
   <item type="id" name="btn_log_android" />
 
-  <!--<item type="id" name="btn_ton" />-->
   <item type="id" name="btn_tdlib" />
+  <item type="id" name="btn_webrtc" />
+  <item type="id" name="btn_ffmpeg" />
+  <item type="id" name="btn_webp" />
+  <item type="id" name="btn_tgcalls" />
   <item type="id" name="btn_pushService" />
   <item type="id" name="btn_tdlib_verbosity" />
   <item type="id" name="btn_tdlib_resetLogSettings" />
@@ -937,6 +1046,7 @@
   <item type="id" name="reactions_enabled_classic" />
   <item type="id" name="reactions_enabled" />
   <item type="id" name="reactions_premium_locked" />
+  <item type="id" name="reactions_limit" />
 
   <item type="id" name="theme_chat" />
   <item type="id" name="theme_chat_modern" />
@@ -988,7 +1098,10 @@
   <item type="id" name="btn_events_contactJoined" />
   <item type="id" name="btn_events_sentScheduled" />
   <item type="id" name="btn_archiveMuteNonContacts" />
+  <item type="id" name="btn_keepUnmutedChatsArchived" />
+  <item type="id" name="btn_keepFolderChatsArchived" />
   <item type="id" name="btn_silenceNonContacts" />
+  <item type="id" name="btn_archiveSettings" />
   <item type="id" name="btn_events_pinnedMessages" />
   <item type="id" name="btn_events_mentions" />
 
@@ -1008,6 +1121,16 @@
   <item type="id" name="text_email" />
   <item type="id" name="text_email_email" />
 
+  <item type="id" name="btn_messageSearchFilterAll" />
+  <item type="id" name="btn_messageSearchFilterText" />
+  <item type="id" name="btn_messageSearchFilterPhoto" />
+  <item type="id" name="btn_messageSearchFilterVideo" />
+  <item type="id" name="btn_messageSearchFilterVoice" />
+  <item type="id" name="btn_messageSearchFilterRound" />
+  <item type="id" name="btn_messageSearchFilterFiles" />
+  <item type="id" name="btn_messageSearchFilterMusic" />
+  <item type="id" name="btn_messageSearchFilterGif" />
+
   <item type="id" name="btn_messageMore" />
   <item type="id" name="btn_messageCopy" />
   <item type="id" name="btn_messageCopyLink" />
@@ -1021,7 +1144,6 @@
   <item type="id" name="btn_messagePin" />
   <item type="id" name="btn_messageUnpin" />
   <item type="id" name="btn_messageShare" />
-  <item type="id" name="btn_messageDiscuss" />
   <item type="id" name="btn_messageSelect" />
   <item type="id" name="btn_messageViewList" />
   <item type="id" name="btn_messageFavoriteContent" />
@@ -1029,11 +1151,14 @@
   <item type="id" name="btn_messageStickerSet" />
   <item type="id" name="btn_messageEdit" />
   <item type="id" name="btn_messageCall" />
+  <item type="id" name="btn_messageShareCallLogs" />
   <item type="id" name="btn_messageRetractVote" />
   <item type="id" name="btn_messagePollStop" />
   <item type="id" name="btn_messageApplyLocalization" />
   <item type="id" name="btn_messageInstallTheme" />
   <item type="id" name="btn_messageShowSource" />
+  <item type="id" name="btn_messageShowInChat" />
+  <item type="id" name="btn_messageShowInChatSearch" />
   <item type="id" name="btn_messageResend" />
   <item type="id" name="btn_messageCallContact" />
   <item type="id" name="btn_messageAddContact" />
@@ -1061,6 +1186,10 @@
   <item type="id" name="btn_username_copy_link" />
   <item type="id" name="btn_username_share" />
   <item type="id" name="btn_discard_record" />
+
+  <item type="id" name="btn_toggleAggressiveAntiSpam" />
+  <item type="id" name="btn_toggleHideMembers" />
+  <item type="id" name="btn_reportFalsePositive" />
 
   <item type="id" name="btn_approveChatRequest" />
   <item type="id" name="btn_declineChatRequest" />
@@ -1104,6 +1233,7 @@
   <item type="id" name="btn_savedMessages" />
   <item type="id" name="btn_contacts" />
   <item type="id" name="btn_invite" />
+  <item type="id" name="btn_inviteBack" />
   <item type="id" name="btn_help" />
 
   <item type="id" name="btn_neverAllow" />
@@ -1121,6 +1251,7 @@
 
   <item type="id" name="btn_caption_done" />
   <item type="id" name="btn_caption_emoji" />
+  <item type="id" name="btn_addCaption" />
 
   <item type="id" name="btn_photos" />
   <item type="id" name="btn_voice" />
@@ -1155,6 +1286,8 @@
   <item type="id" name="btn_downloadFile" />
   <item type="id" name="btn_pauseFile" />
 
+  <item type="id" name="btn_experiment" />
+
   <item type="id" name="btn_testingUtils" />
   <item type="id" name="btn_appLogs" />
 
@@ -1168,10 +1301,31 @@
   <item type="id" name="btn_messageUnblockMember" />
 
   <item type="id" name="btn_applyWallpaper" />
+  <item type="id" name="btn_chatFolders" />
+  <item type="id" name="btn_createNewFolder" />
+  <item type="id" name="btn_editFolder" />
+  <item type="id" name="btn_hideFolder" />
+  <item type="id" name="btn_shareFolder" />
+  <item type="id" name="btn_removeFolder" />
+  <item type="id" name="btn_folderIncludeChats" />
+  <item type="id" name="btn_folderExcludeChats" />
+  <item type="id" name="btn_chatFolderStyle" />
+  <item type="id" name="btn_changeFolderIcon" />
+  <item type="id" name="btn_labelOnly" />
+  <item type="id" name="btn_iconOnly" />
+  <item type="id" name="btn_labelAndIcon" />
+  <item type="id" name="btn_iconWithLabelOnActiveFolder" />
+  <item type="id" name="btn_countMutedChats" />
+  <item type="id" name="btn_displayFoldersAtTop" />
 
-  <item type="id" name="right_readMessages" />
+  <!--<item type="id" name="right_readMessages" />
   <item type="id" name="right_sendMessages" />
-  <item type="id" name="right_sendMedia" />
+  <item type="id" name="right_sendAudio" />
+  <item type="id" name="right_sendDocument" />
+  <item type="id" name="right_sendPhoto" />
+  <item type="id" name="right_sendVideo" />
+  <item type="id" name="right_sendVoiceNote" />
+  <item type="id" name="right_sendVideoNote" />
   <item type="id" name="right_sendStickersAndGifs" />
   <item type="id" name="right_sendPolls" />
   <item type="id" name="right_embedLinks" />
@@ -1184,7 +1338,7 @@
   <item type="id" name="right_pinMessages" />
   <item type="id" name="right_manageVideoChats" />
   <item type="id" name="right_remainAnonymous" />
-  <item type="id" name="right_addNewAdmins" />
+  <item type="id" name="right_addNewAdmins" />-->
 
   <item type="id" name="btn_camera_switch" />
   <item type="id" name="btn_camera_flash" />
@@ -1216,4 +1370,44 @@
   <item type="id" name="btn_themeCreateInfo" />
   <item type="id" name="btn_themeExportNeedDefault" />
   <item type="id" name="btn_themeExportSetAuthor" />
+
+  <item type="id" name="btn_featureToggles" />
+
+  <!-- * -->
+
+  <item type="id" name="tag_tooltip_location_provider" />
+
+  <item type="id" name="view_emojiPacksCount" />
+  <item type="id" name="view_customEmojiSuggestions" />
+
+  <item type="id" name="btn_animatedEmojiSettings" />
+  <item type="id" name="btn_stickerSettingsAndEmoji" />
+  <item type="id" name="btn_avatarsInReactions" />
+  <item type="id" name="btn_avatarsInReactionsAlways" />
+  <item type="id" name="btn_avatarsInReactionsSmartFilter" />
+  <item type="id" name="btn_avatarsInReactionsNever" />
+  <item type="id" name="btn_emojiPackInfoButton" />
+  <item type="id" name="btn_chatsSuggestion" />
+
+  <item type="id" name="controller_stickersAndEmoji" />
+  <item type="id" name="controller_emojiLayoutStickers" />
+  <item type="id" name="controller_emojiLayoutStickersTrending" />
+  <item type="id" name="controller_emojiLayoutEmoji" />
+  <item type="id" name="controller_emojiLayoutEmojiTrending" />
+  <item type="id" name="controller_emojiLayoutReactions" />
+  <item type="id" name="controller_reactionsPicker" />
+  <item type="id" name="btn_redeemGiftLink" />
+
+  <!-- BROADCAST BUTTONS -->
+
+  <item type="id" name="btn_convertToBroadcastGroup" />
+  <item type="id" name="btn_confirmConvertBroadcast" />
+  <item type="id" name="btn_convertBroadcastGroup" />
+
+  <item type="id" name="btn_playback_speed_0_5" />
+  <item type="id" name="btn_playback_speed_0_7" />
+  <item type="id" name="btn_playback_speed_1_0" />
+  <item type="id" name="btn_playback_speed_1_2" />
+  <item type="id" name="btn_playback_speed_1_5" />
+  <item type="id" name="btn_playback_speed_2_0" />
 </resources>

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,10 +21,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Screen;
 
 public class SeparatorView extends View {
@@ -37,7 +36,7 @@ public class SeparatorView extends View {
 
   private int height;
   private int forcedFillingColor;
-  private int forcedColor, colorId = R.id.theme_color_separator;
+  private int forcedColor, colorId = ColorId.separator;
   private boolean noAlign;
 
   public SeparatorView (Context context) {
@@ -50,7 +49,7 @@ public class SeparatorView extends View {
     height = Math.max(Screen.dp(.5f), 1);
   }
 
-  public void setColorId (@ThemeColorId int colorId) {
+  public void setColorId (@ColorId int colorId) {
     if (this.colorId != colorId) {
       this.colorId = colorId;
       this.paint.setColor(Theme.getColor(colorId));

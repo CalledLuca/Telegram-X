@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,12 +19,13 @@ import android.graphics.Bitmap;
 import androidx.annotation.Keep;
 import androidx.collection.ArraySet;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibAccount;
+import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.tool.UI;
 
 import java.util.ArrayList;
@@ -127,7 +128,7 @@ public class ImageLoader {
               });
             } else {
               if (!Config.DEBUG_DISABLE_DOWNLOAD) {
-                tdlib.client().send(new TdApi.DownloadFile(fileId, 32, 0, 0, false), tdlib.imageLoadHandler());
+                tdlib.send(new TdApi.DownloadFile(fileId, TdlibFilesManager.PRIORITY_IMAGE, 0, 0, false), tdlib.imageLoadHandler());
               }
             }
           } else {
@@ -167,12 +168,20 @@ public class ImageLoader {
 
     persistentFile.updateRemoteFile(file);
 
-    if (TD.isFileLoadedAndExists(file)) {
+    if (isFileLoaded(tdlib, file)) {
       onLoad(tdlib, file);
     } else {
       if (!Config.DEBUG_DISABLE_DOWNLOAD) {
-        tdlib.client().send(new TdApi.DownloadFile(file.id, 1, 0, 0, false), tdlib.imageLoadHandler());
+        tdlib.send(new TdApi.DownloadFile(file.id, TdlibFilesManager.PRIORITY_PERSISTENT_IMAGE, 0, 0, false), tdlib.imageLoadHandler());
       }
+    }
+  }
+
+  public static boolean isFileLoaded (Tdlib tdlib, TdApi.File file) {
+    if (tdlib != null) {
+      return TD.isFileLoadedAndExists(file);
+    } else {
+      return TD.isFileLoaded(file);
     }
   }
 

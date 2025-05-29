@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ComplexHeaderView;
@@ -33,6 +33,7 @@ import org.thunderdog.challegram.navigation.TextChangeDelegate;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.navigation.ViewPagerController;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.unsorted.Size;
@@ -134,7 +135,7 @@ public class HashtagChatController extends ViewPagerController<HashtagChatContro
       imageView.setImageResource(R.drawable.round_keyboard_arrow_left_24);
       imageView.setColorFilter(Theme.textAccentColor());
       imageView.setAlpha(.15f);
-      addThemeFilterListener(imageView, R.id.theme_color_text);
+      addThemeFilterListener(imageView, ColorId.text);
       imageView.setLayoutParams(FrameLayoutFix.newParams(Screen.dp(24f), Size.getHeaderPortraitSize(), Gravity.LEFT, Screen.dp(68f) - Screen.dp(12f), 0, 0, 0));
       headerCell.addView(imageView);
     }
@@ -186,7 +187,7 @@ public class HashtagChatController extends ViewPagerController<HashtagChatContro
     float totalFactor = (float) actualPosition + positionOffset;
     View v1 = headerCell.getChildAt(0);
     View v2 = headerCell.getChildAt(1);
-    float distance = (float) get().getMeasuredWidth() * .14f /*HeaderView.TRANSLATION_FACTOR*/;
+    float distance = (float) getValue().getMeasuredWidth() * .14f /*HeaderView.TRANSLATION_FACTOR*/;
     v1.setTranslationX(totalFactor == 1f ? 0 : -distance * totalFactor);
     v1.setAlpha(1f - totalFactor);
     if (v2 != null) {
@@ -216,17 +217,17 @@ public class HashtagChatController extends ViewPagerController<HashtagChatContro
 
   @Override
   protected int getHeaderColorId () {
-    return R.id.theme_color_filling;
+    return ColorId.filling;
   }
 
   @Override
   protected int getHeaderIconColorId () {
-    return R.id.theme_color_headerLightIcon;
+    return ColorId.headerLightIcon;
   }
 
   @Override
   protected int getHeaderTextColorId () {
-    return R.id.theme_color_text;
+    return ColorId.text;
   }
 
 }

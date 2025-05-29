@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,15 +16,17 @@ package org.thunderdog.challegram.data;
 
 import androidx.annotation.DrawableRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
 import org.thunderdog.challegram.tool.Strings;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import me.vkryl.core.DateUtils;
@@ -60,22 +62,8 @@ public class CallItem {
     return messageIds;
   }
 
-  public boolean canBeDeletedForAllUsers () {
-    for (TdApi.Message message : messages) {
-      if (!message.canBeDeletedForAllUsers)
-        return false;
-    }
-    return true;
-  }
-
-  public int getRevokeCount () {
-    int count = 0;
-    for (TdApi.Message message : messages) {
-      if (message.canBeDeletedForAllUsers) {
-        count++;
-      }
-    }
-    return count;
+  public List<TdApi.Message> getMessages () {
+    return messages;
   }
 
   public String getTime () {
@@ -94,13 +82,12 @@ public class CallItem {
     return isOutgoing ? R.drawable.baseline_call_made_18 : isMissed(call) ? R.drawable.baseline_call_missed_18 : R.drawable.baseline_call_received_18;
   }
 
-  public @ThemeColorId
-  int getSubtitleIconColorId () {
+  public @PorterDuffColorId int getSubtitleIconColorId () {
     return getSubtitleIconColorId((TdApi.MessageCall) lastMessage().content);
   }
 
-  public static @ThemeColorId int getSubtitleIconColorId (TdApi.MessageCall call) {
-    return isMissedOrCancelled(call) ? R.id.theme_color_iconNegative : R.id.theme_color_iconPositive;
+  public static @PorterDuffColorId int getSubtitleIconColorId (TdApi.MessageCall call) {
+    return isMissedOrCancelled(call) ? ColorId.iconNegative : ColorId.iconPositive;
   }
 
   public int getDate () {

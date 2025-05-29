@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,12 +23,12 @@ import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.N;
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.inline.CustomResultView;
 import org.thunderdog.challegram.emoji.Emoji;
 import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeId;
 import org.thunderdog.challegram.tool.Paints;
@@ -47,7 +47,7 @@ public class InlineResultEmojiSuggestion extends InlineResult<N.Suggestion> {
   public InlineResultEmojiSuggestion (BaseActivity context, Tdlib tdlib, N.Suggestion suggestion, @Nullable String query) {
     super(context, tdlib, TYPE_EMOJI_SUGGESTION, null, suggestion);
     this.emoji = Emoji.instance().replaceEmoji(suggestion.emoji);
-    this.text = Strings.highlightWords(suggestion.label, query, 1, SPECIAL_SPLITTERS);
+    this.text = Strings.highlightWords(suggestion.label, query, suggestion.label.startsWith(":") ? 1 : 0, SPECIAL_SPLITTERS);
     this.textWidth = U.measureText(suggestion.label, Paints.getTextPaint15());
   }
 
@@ -95,7 +95,7 @@ public class InlineResultEmojiSuggestion extends InlineResult<N.Suggestion> {
       startX += Screen.dp(24f);
     }
     if (trimmedText != null) {
-      final int color = forceDarkMode ? Theme.getColor(R.id.theme_color_text, ThemeId.NIGHT_BLACK) : Theme.textAccentColor();
+      final int color = forceDarkMode ? Theme.getColor(ColorId.text, ThemeId.NIGHT_BLACK) : Theme.textAccentColor();
       if (textLayout != null) {
         c.save();
         c.translate(startX, startY - Screen.dp(13f));

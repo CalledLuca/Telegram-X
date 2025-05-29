@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,9 +21,11 @@ import android.view.View;
 
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.PorterDuffPaint;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
 
@@ -123,9 +125,9 @@ public class PinButtonView extends View {
   @Override
   protected void onDraw (Canvas c) {
     if (number == -1) {
-      Drawables.draw(c, icon, bigLeft, bigTop, Paints.getPorterDuffPaint(Theme.getColor(R.id.theme_color_passcodeText)));
+      Drawables.draw(c, icon, bigLeft, bigTop, PorterDuffPaint.get(ColorId.passcodeText));
     } else {
-      c.drawText(getNumber(), bigLeft, bigTop, Paints.getRegularTextPaint(TEXT_SIZE_BIG, Theme.getColor(R.id.theme_color_passcodeText)));
+      c.drawText(getNumber(), bigLeft, bigTop, Paints.getRegularTextPaint(TEXT_SIZE_BIG, Theme.getColor(ColorId.passcodeText)));
       c.drawText(getCodes(), smallLeft, smallTop, Paints.getRegularTextPaint(TEXT_SIZE_SMALL, Theme.passcodeSubtitleColor()));
     }
   }

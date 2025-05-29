@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,9 +31,9 @@ import android.view.ViewGroup;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -72,7 +72,7 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
   }
 
   interface Callback {
-    boolean onBottomPrepareSectionChange (int fromIndex, int toIndex);
+    boolean onBottomPrepareSectionChange (int fromIndex, int toIndex, boolean ignorePermissionsRequest);
     void onBottomFactorChanged (float factor);
     void onBottomSectionChanged (int index);
 
@@ -191,7 +191,7 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
 
     int totalWidth;
     if (itemWidth > maxItemWidth) {
-      this.itemStartX = (maxItemWidth * items.length - barWidth) / 2;
+      this.itemStartX = (barWidth - maxItemWidth * items.length) / 2;
       totalWidth = maxItemWidth * items.length;
       itemWidth = maxItemWidth;
     } else {
@@ -296,7 +296,7 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
       }
       case MotionEvent.ACTION_UP: {
         if (touchIndex != -1 && findTouchIndex(x) == touchIndex) {
-          performSelection(touchIndex);
+          performSelection(touchIndex, false);
           return true;
         }
         break;
@@ -308,20 +308,24 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
   // Animation
 
   public boolean setSelectedIndex (int index) {
+   return setSelectedIndex(index, false);
+  }
+
+  public boolean setSelectedIndex (int index, boolean ignorePermissionsRequest) {
     int centerX = findCenterX(index);
     if (centerX == -1) {
       return false;
     }
     touchCenterX = centerX;
     touchIndex = index;
-    return performSelection(index);
+    return performSelection(index, ignorePermissionsRequest);
   }
 
   private boolean isAnimating;
   private BarItem fromItem, toItem;
   private float factor;
 
-  private boolean performSelection (final int index) {
+  private boolean performSelection (final int index, boolean ignorePermissionsRequest) {
     if (isAnimating) {
       return false;
     }
@@ -329,7 +333,7 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
     if (callback != null) {
       if (this.index == index) {
         callback.onBottomTopRequested(index);
-      } else if (!callback.onBottomPrepareSectionChange(this.index, index)) {
+      } else if (!callback.onBottomPrepareSectionChange(this.index, index, ignorePermissionsRequest)) {
         return false;
       }
     }
@@ -447,7 +451,7 @@ public class MediaBottomBar extends FrameLayoutFix implements GestureDetector.On
 
           int iconCenterY = item.factor == 0f ? centerY : centerY - (int) ((float) (iconActivePadding - item.paddingTop) * item.factor);
           int iconAlpha = item.factor == 1f ? 255 : 255 - (int) ((255f * .25f) * (1f - item.factor));
-          int color = Theme.getColor(R.id.theme_color_attachText);
+          int color = Theme.getColor(ColorId.attachText);
           Paint bitmapPaint = iconPaint != null && iconColor == color ? iconPaint : (iconPaint = Paints.createPorterDuffPaint(iconPaint, iconColor = color));
           bitmapPaint.setAlpha(iconAlpha);
           if (item.icon != null) {

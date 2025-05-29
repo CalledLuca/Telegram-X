@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@ package org.thunderdog.challegram.player;
 
 import android.content.Intent;
 import android.os.Build;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -25,21 +26,20 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
+import androidx.media3.common.C;
+import androidx.media3.common.IllegalSeekPositionException;
+import androidx.media3.common.Metadata;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Player;
+import androidx.media3.common.Timeline;
+import androidx.media3.common.TrackGroup;
+import androidx.media3.common.Tracks;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.extractor.metadata.id3.ApicFrame;
 
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.IllegalSeekPositionException;
-import com.google.android.exoplayer2.PlaybackException;
-import com.google.android.exoplayer2.PlaybackParameters;
-import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.Tracks;
-import com.google.android.exoplayer2.metadata.Metadata;
-import com.google.android.exoplayer2.metadata.id3.ApicFrame;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.TrackGroup;
-
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
@@ -61,6 +61,7 @@ import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.MathUtils;
+import tgx.td.Td;
 
 public class AudioController extends BasePlaybackController implements TGAudio.PlayListener, TGPlayerController.TrackListChangeListener, FactorAnimator.Target {
   private final TdlibManager context;
@@ -154,17 +155,25 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
     return (playFlags & TGPlayerController.PLAY_FLAG_SHUFFLE) != 0;
   }*/
 
+  private CancellationSignal serviceLaunchCancellationSignal;
+
   private void setPlaybackMode (int mode, boolean needForeground) {
     if (this.playbackMode != mode) {
       this.playbackMode = mode;
+      if (serviceLaunchCancellationSignal != null) {
+        serviceLaunchCancellationSignal.cancel();
+        serviceLaunchCancellationSignal = null;
+      }
       if (mode == PLAYBACK_MODE_EXOPLAYER_LIST) {
-        UI.startService(new Intent(UI.getAppContext(), AudioService.class), needForeground, false);
+        serviceLaunchCancellationSignal = new CancellationSignal();
+        UI.startService(new Intent(UI.getAppContext(), AudioService.class), needForeground, false, serviceLaunchCancellationSignal);
       }
     }
   }
 
   @Override
   protected boolean isSupported (TdApi.Message message) {
+    //noinspection SwitchIntDef
     switch (message.content.getConstructor()) {
       case TdApi.MessageAudio.CONSTRUCTOR:
       case TdApi.MessageVoiceNote.CONSTRUCTOR:
@@ -178,7 +187,7 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
   }
 
   protected boolean isPlayingVoice () {
-    return isPlayingSomething() && playList.get(playIndex).content.getConstructor() == TdApi.MessageVoiceNote.CONSTRUCTOR;
+    return isPlayingSomething() && Td.isVoiceNote(playList.get(playIndex).content);
   }
 
   @Override
@@ -268,12 +277,12 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
   @Override
   protected void startPlayback (Tdlib tdlib, TdApi.Message message, boolean byUserRequest, boolean hadObject, Tdlib previousTdlib, int previousFileId) {
     if (playbackMode == PLAYBACK_MODE_UNSET) {
-      setPlaybackMode(determineBestPlaybackMode(message.content.getConstructor() == TdApi.MessageVoiceNote.CONSTRUCTOR), message.content.getConstructor() == TdApi.MessageAudio.CONSTRUCTOR);
+      setPlaybackMode(determineBestPlaybackMode(Td.isVoiceNote(message.content)), Td.isAudio(message.content));
     }
     Log.i(Log.TAG_PLAYER, "startPlayback mode:%d byUserRequest:%b, hadObject:%b, previousFileId:%d", playbackMode, byUserRequest, hadObject, previousFileId);
     switch (playbackMode) {
       case PLAYBACK_MODE_LEGACY: {
-        if (message.content.getConstructor() == TdApi.MessageVoiceNote.CONSTRUCTOR) {
+        if (Td.isVoiceNote(message.content)) {
           legacyAudio = new TGAudio(tdlib, message, ((TdApi.MessageVoiceNote) message.content).voiceNote);
         } else {
           legacyAudio = new TGAudio(tdlib, message, ((TdApi.MessageAudio) message.content).audio);
@@ -340,12 +349,12 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
     if (reverseMode) {
       for (int i = count - 1; i >= 0; i--) {
         TdApi.Message track = trackList.get(i);
-        MediaSource source = U.newMediaSource(tdlib.id(), track);
+        MediaSource source = U.newAudioMediaSource(tdlib.id(), track);
         mediaSources.add(source);
       }
     } else {
       for (TdApi.Message track : trackList) {
-        MediaSource source = U.newMediaSource(tdlib.id(), track);
+        MediaSource source = U.newAudioMediaSource(tdlib.id(), track);
         mediaSources.add(source);
       }
     }
@@ -356,9 +365,10 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
       exoPlayer = null;
     }
 
-    exoPlayer = U.newExoPlayer(UI.getAppContext(), true);
+    ExoPlayer exoPlayer = this.exoPlayer = U.newExoPlayer(UI.getAppContext(), true);
     exoPlayer.addListener(this);
     setExoPlayerParameters();
+    setExoPlayerSpeed();
     exoPlayer.setVolume(volume);
     switch (TGPlayerController.getPlayRepeatFlag(playFlags)) {
       case TGPlayerController.PLAY_FLAG_REPEAT:
@@ -427,7 +437,7 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
     if (position <= playIndex) {
       playIndex++;
     }
-    MediaSource mediaSource = U.newMediaSource(tdlib.id(), newTrack);
+    MediaSource mediaSource = U.newAudioMediaSource(tdlib.id(), newTrack);
     int currentSize = exoPlayer.getMediaItemCount();
     int atIndex = inReverseMode() ? currentSize - position : position;
     exoPlayer.addMediaSource(atIndex, mediaSource);
@@ -535,7 +545,7 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
     boolean reverseOrder = (playFlags & TGPlayerController.PLAYLIST_FLAG_REVERSE) != 0;
     while (--remaining >= 0) {
       TdApi.Message addedTrack = addedItems.get(reverseOrder ? remaining : addedItems.size() - 1 - remaining);
-      newItems.add(U.newMediaSource(tdlib.id(), addedTrack));
+      newItems.add(U.newAudioMediaSource(tdlib.id(), addedTrack));
     }
 
     boolean addOnBottom = reverseOrder != areNew;
@@ -552,9 +562,7 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
 
   @Override
   public void onPlaybackSpeedChanged (int newSpeed) {
-    if (playbackMode == PLAYBACK_MODE_EXOPLAYER_LIST && exoPlayer != null) {
-      exoPlayer.setPlaybackParameters(TGPlayerController.newPlaybackParameters(isPlayingVoice(), newSpeed));
-    }
+    setExoPlayerSpeed(newSpeed);
   }
 
   @Override
@@ -608,6 +616,9 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
   // ExoPlayer seek
 
   private static void seekTo (@NonNull Player player, int windowIndex, int totalSize, boolean reverse) {
+    if (player == null) {
+      throw new NullPointerException();
+    }
     Log.i(Log.TAG_PLAYER, "seekTo windowIndex:%d size:%d, reverse:%b", windowIndex, totalSize, reverse);
     try {
       player.seekToDefaultPosition(reverse ? totalSize - windowIndex - 1 : windowIndex);
@@ -1059,6 +1070,16 @@ public class AudioController extends BasePlaybackController implements TGAudio.P
   private void setExoPlayerParameters () {
     if (exoPlayer != null) {
       context.player().proximityManager().modifyExoPlayer(exoPlayer, C.AUDIO_CONTENT_TYPE_MUSIC);
+    }
+  }
+
+  private void setExoPlayerSpeed () {
+    setExoPlayerSpeed (Settings.instance().getPlaybackSpeed());
+  }
+
+  private void setExoPlayerSpeed (int speed) {
+    if (exoPlayer != null) {
+      exoPlayer.setPlaybackParameters(TGPlayerController.newPlaybackParameters(false, speed));
     }
   }
 

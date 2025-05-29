@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.ScrollView;
+import android.widget.HorizontalScrollView;
 
 import androidx.annotation.Nullable;
 import androidx.collection.SparseArrayCompat;
@@ -36,7 +36,6 @@ import androidx.viewpager.widget.PagerAdapter;
 
 import org.json.JSONObject;
 import org.thunderdog.challegram.Log;
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.data.PageBlock;
 import org.thunderdog.challegram.data.PageBlockMedia;
 import org.thunderdog.challegram.loader.ComplexReceiver;
@@ -44,6 +43,7 @@ import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.util.DrawableProvider;
@@ -122,7 +122,7 @@ public class PageBlockWrapView extends FrameLayoutFix implements ViewPager.OnPag
           return super.onTouchEvent(event);
         }
       };
-      ViewSupport.setThemedBackground(webView, R.id.theme_color_placeholder);
+      ViewSupport.setThemedBackground(webView, ColorId.placeholder);
       webView.getSettings().setJavaScriptEnabled(true);
       webView.getSettings().setAllowContentAccess(true);
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
@@ -193,7 +193,17 @@ public class PageBlockWrapView extends FrameLayoutFix implements ViewPager.OnPag
         break;
       }
       case MODE_TABLE: {
-        ScrollView scrollView = new ScrollView(getContext());
+        HorizontalScrollView scrollView = new HorizontalScrollView(getContext()) {
+          @Override
+          public boolean onTouchEvent (MotionEvent ev) {
+            final PageBlock block = tableView.getBlock();
+            final int blockWidth = block != null ? block.getCustomWidth() : -1;
+            if (blockWidth <= getMeasuredWidth()) {
+              return false;
+            }
+            return super.onTouchEvent(ev);
+          }
+        };
         scrollView.setHorizontalScrollBarEnabled(true);
         scrollView.setVerticalScrollBarEnabled(false);
         scrollView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -477,7 +487,7 @@ public class PageBlockWrapView extends FrameLayoutFix implements ViewPager.OnPag
       SimpleMediaWrapperView wrapperView;
       if (recycledPool.isEmpty()) {
         wrapperView = new SimpleMediaWrapperView(context);
-        wrapperView.setBackgroundColorId(R.id.theme_color_placeholder);
+        wrapperView.setBackgroundColorId(ColorId.placeholder);
         wrapperView.setFitsBounds();
         wrapperView.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
       } else {
@@ -529,6 +539,7 @@ public class PageBlockWrapView extends FrameLayoutFix implements ViewPager.OnPag
 
   @Override
   public void onPageScrolled (int position, float positionOffset, int positionOffsetPixels) {
+    positionOffset = ViewPager.clampPositionOffset(positionOffset);
     this.viewPagerPosition = position + positionOffset;
     ViewPagerPositionView positionView = (ViewPagerPositionView) getChildAt(1);
     if (positionView != null) {

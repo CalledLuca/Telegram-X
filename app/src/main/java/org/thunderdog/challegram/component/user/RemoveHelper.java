@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,11 +20,12 @@ import android.graphics.drawable.Drawable;
 import android.view.View;
 
 import androidx.annotation.DrawableRes;
+import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -138,11 +139,11 @@ public class RemoveHelper implements FactorAnimator.Target {
 
 
     float alpha = (1f - fadeFactor);
-    Paint bitmapPaint = Paints.getPorterDuffPaint(0xffffffff);
+    Paint bitmapPaint = Paints.whitePorterDuffPaint();
     if (alpha < 1f) {
       bitmapPaint.setAlpha((int) (255f * alpha));
     }
-    int color = ColorUtils.alphaColor(alpha, Theme.getColor(R.id.theme_color_fillingNegative));
+    int color = ColorUtils.alphaColor(alpha, Theme.getColor(ColorId.fillingNegative));
     int iconX = Lang.rtl() ? Screen.dp(18f) : right - Screen.dp(18f) - icon.getMinimumWidth();
     int iconY = height / 2 - icon.getMinimumHeight() / 2;
 
@@ -175,6 +176,9 @@ public class RemoveHelper implements FactorAnimator.Target {
     boolean onMove (RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, RecyclerView.ViewHolder target);
     void onCompleteMovement (int fromPosition, int toPosition);
     boolean isLongPressDragEnabled ();
+    default boolean canDropOver (RecyclerView recyclerView, RecyclerView.ViewHolder current, RecyclerView.ViewHolder target) {
+      return true;
+    }
   }
 
   public static ItemTouchHelper attach (RecyclerView recyclerView, final Callback callback) {
@@ -184,7 +188,7 @@ public class RemoveHelper implements FactorAnimator.Target {
       @Override
       public int getMovementFlags (RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
         int dragFlags = callback instanceof ExtendedCallback ? ((ExtendedCallback) callback).makeDragFlags(recyclerView, viewHolder) : 0;
-        int movementFlags = recyclerView.getLayoutManager() != null && recyclerView.getAdapter() != null && recyclerView.getAdapter().getItemCount() > 0 && callback.canRemove(recyclerView, viewHolder, viewHolder.getAdapterPosition()) ? (Lang.rtl() ? ItemTouchHelper.RIGHT : ItemTouchHelper.LEFT) : 0;
+        int movementFlags = recyclerView.getLayoutManager() != null && recyclerView.getAdapter() != null && recyclerView.getAdapter().getItemCount() > 0 && callback.canRemove(recyclerView, viewHolder, viewHolder.getBindingAdapterPosition()) ? (Lang.rtl() ? ItemTouchHelper.RIGHT : ItemTouchHelper.LEFT) : 0;
         return dragFlags != 0 || movementFlags != 0 ? makeMovementFlags(dragFlags, movementFlags) : 0;
       }
 
@@ -234,8 +238,8 @@ public class RemoveHelper implements FactorAnimator.Target {
 
       @Override
       public boolean onMove (RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, RecyclerView.ViewHolder target) {
-        int fromPosition = viewHolder.getAdapterPosition();
-        int toPosition = target.getAdapterPosition();
+        int fromPosition = viewHolder.getBindingAdapterPosition();
+        int toPosition = target.getBindingAdapterPosition();
 
         if (callback instanceof ExtendedCallback && ((ExtendedCallback) callback).onMove(recyclerView, viewHolder, target)) {
           if (dragFrom == -1)
@@ -245,6 +249,14 @@ public class RemoveHelper implements FactorAnimator.Target {
         }
 
         return false;
+      }
+
+      @Override
+      public boolean canDropOver (@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder current, @NonNull RecyclerView.ViewHolder target) {
+        if (callback instanceof ExtendedCallback) {
+          return ((ExtendedCallback) callback).canDropOver(recyclerView, current, target);
+        }
+        return super.canDropOver(recyclerView, current, target);
       }
 
       private void reallyMoved (int from, int to) {

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,8 +29,9 @@ public class MediaStack {
   private final BaseActivity context;
   private final Tdlib tdlib;
   private int currentIndex;
-  private ArrayList<MediaItem> items;
+  private List<MediaItem> items;
   private int estimatedBefore, estimatedAfter;
+  private Boolean reverseModeHint, forceThumbsHint;
 
   private @Nullable
   MediaStackCallback callback;
@@ -39,6 +40,22 @@ public class MediaStack {
     this.context = context;
     this.tdlib = tdlib;
     this.currentIndex = -1;
+  }
+
+  public void setReverseModeHint (boolean reverseModeHint) {
+    this.reverseModeHint = reverseModeHint;
+  }
+
+  public boolean getReverseModeHint (boolean defaultValue) {
+    return reverseModeHint != null ? reverseModeHint : defaultValue;
+  }
+
+  public void setForceThumbsHint (boolean forceThumbsHint) {
+    this.forceThumbsHint = forceThumbsHint;
+  }
+
+  public boolean getForceThumbsHint (boolean defaultValue) {
+    return forceThumbsHint != null ? forceThumbsHint : defaultValue;
   }
 
   public void set (MediaItem item) {
@@ -74,7 +91,7 @@ public class MediaStack {
     currentIndex = foundIndex;
   }
 
-  public void set (int currentIndex, ArrayList<MediaItem> items) {
+  public void set (int currentIndex, List<MediaItem> items) {
     this.currentIndex = currentIndex;
     this.items = items;
   }
@@ -90,12 +107,14 @@ public class MediaStack {
     this.callback = callback;
   }
 
-  public void setEstimatedSize (int estimatedBefore, int estimatedAfter) {
+  public boolean setEstimatedSize (int estimatedBefore, int estimatedAfter) {
     if (this.estimatedBefore != estimatedBefore || this.estimatedAfter != estimatedAfter) {
       this.estimatedBefore = estimatedBefore;
       this.estimatedAfter = estimatedAfter;
       // notifyMediaChanged(false);
+      return true;
     }
+    return false;
   }
 
   public void insertItems (ArrayList<MediaItem> items, boolean onTop) {
@@ -116,10 +135,35 @@ public class MediaStack {
     notifyMediaChanged(true);
   }
 
+  public MediaItem deleteItemAt (int index) {
+    MediaItem removedItem = items.remove(index);
+    if (currentIndex > index) {
+      currentIndex--;
+    }
+    notifyMediaChanged(true);
+    return removedItem;
+  }
+
+  public void setItemAt (int index, MediaItem item) {
+    this.items.set(index, item);
+    notifyMediaChanged(false);
+  }
+
   public int indexOfImageFile (ImageFile imageFile) {
     int i = 0;
     for (MediaItem item : items) {
       if (item.getSourceGalleryFile() == imageFile) {
+        return i;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  public int indexOfMessage (long chatId, long messageId) {
+    int i = 0;
+    for (MediaItem item : items) {
+      if (item.getSourceChatId() == chatId && item.getSourceMessageId() == messageId) {
         return i;
       }
       i++;
@@ -145,7 +189,7 @@ public class MediaStack {
     return items != null ? items.size() : 0;
   }
 
-  public ArrayList<MediaItem> getAll () {
+  public List<MediaItem> getAll () {
     return items;
   }
 
@@ -169,6 +213,12 @@ public class MediaStack {
     return items != null ? items.get(items.size() - 1) : null;
   }
 
+  public void onEndReached (boolean after) {
+    if (setEstimatedSize(after ? estimatedBefore : 0, after ? 0 : estimatedAfter)) {
+      notifyMediaChanged(true);
+    }
+  }
+
   public int getCurrentIndex () {
     return currentIndex;
   }
@@ -183,9 +233,9 @@ public class MediaStack {
 
   // appliers
 
-  private void notifyMediaChanged (boolean itemsAdded) {
+  public void notifyMediaChanged (boolean itemCountChanged) {
     if (callback != null) {
-      callback.onMediaChanged(estimatedBefore + currentIndex, getEstimatedSize(), items.get(currentIndex), itemsAdded);
+      callback.onMediaChanged(estimatedBefore + currentIndex, getEstimatedSize(), items.get(currentIndex), itemCountChanged);
     }
   }
 

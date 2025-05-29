@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.inline.CustomResultView;
@@ -29,6 +29,8 @@ import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+
+import tgx.td.Td;
 
 public class InlineResultCommand extends InlineResult<TdApi.BotCommand> {
   private final UserContext userContext;
@@ -43,8 +45,14 @@ public class InlineResultCommand extends InlineResult<TdApi.BotCommand> {
     this.userContext = new UserContext(tdlib, user);
   }
 
+  @Nullable
   public String getUsername () {
-    return userContext.getUser() != null ? userContext.getUser().username : null;
+    return Td.primaryUsername(getUsernames());
+  }
+
+  @Nullable
+  public TdApi.Usernames getUsernames () {
+    return userContext.getUser() != null ? userContext.getUser().usernames : null;
   }
 
   public String getCommand () {
@@ -86,7 +94,7 @@ public class InlineResultCommand extends InlineResult<TdApi.BotCommand> {
 
   @Override
   public void requestContent (ComplexReceiver receiver, boolean isInvalidate) {
-    receiver.clearReceivers((receiverType, receiver1, key) -> receiverType == ComplexReceiver.RECEIVER_TYPE_IMAGE && key == 0);
+    receiver.clearReceivers((receiverType, receiver1, key) -> receiverType == ComplexReceiver.ReceiverType.IMAGE && key == 0);
     receiver.getImageReceiver(0).requestFile(userContext.getImageFile());
   }
 

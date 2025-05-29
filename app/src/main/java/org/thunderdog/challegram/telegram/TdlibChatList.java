@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.data.TD;
 
 import java.lang.annotation.Retention;
@@ -30,8 +30,8 @@ import java.util.List;
 import me.vkryl.core.lambda.Filter;
 import me.vkryl.core.lambda.RunnableBool;
 import me.vkryl.core.lambda.RunnableData;
-import me.vkryl.td.ChatPosition;
-import me.vkryl.td.Td;
+import tgx.td.ChatPosition;
+import tgx.td.Td;
 
 public class TdlibChatList implements Comparator<TdlibChatList.Entry>, CounterChangeListener {
   public static class Entry implements Comparable<Entry> {
@@ -394,11 +394,12 @@ public class TdlibChatList implements Comparator<TdlibChatList.Entry>, CounterCh
   // Internal
 
   private void addChatToList (Entry entry, Tdlib.ChatChange changeInfo) {
-    int atIndex = Collections.binarySearch(this.list, entry, this);
-    if (atIndex >= 0)
-      throw new IllegalStateException();
-    atIndex = atIndex * -1 - 1;
+    int atIndex;
     synchronized (list) {
+      atIndex = Collections.binarySearch(this.list, entry, this);
+      if (atIndex >= 0)
+        throw new IllegalStateException();
+      atIndex = atIndex * -1 - 1;
       list.add(atIndex, entry);
     }
     for (RunnableData<TdApi.Chat> perChatCallback : perChatCallbacks) {

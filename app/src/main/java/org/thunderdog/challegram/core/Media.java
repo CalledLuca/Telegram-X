@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -49,11 +49,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import me.vkryl.core.StringUtils;
 import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.StringUtils;
 
 public class Media {
   public static final String DATE_COLUMN = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? MediaStore.Images.Media.DATE_MODIFIED : MediaStore.Images.Media.DATE_TAKEN;
@@ -182,8 +183,9 @@ public class Media {
   private static String[] getGalleryProjection (boolean allowVideos) {
     String[] projection;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      final List<String> projectionList = new ArrayList<>();
       if (allowVideos) {
-        projection = new String[] {
+        Collections.addAll(projectionList,
           MediaStore.Files.FileColumns.MEDIA_TYPE,
           MediaStore.Files.FileColumns.MIME_TYPE,
 
@@ -197,11 +199,11 @@ public class Media {
           MediaStore.Images.ImageColumns.WIDTH,
           MediaStore.Images.ImageColumns.HEIGHT,
 
-          MediaStore.Video.VideoColumns.DURATION,
+          MediaStore.Video.VideoColumns.DURATION
           // MediaStore.Video.VideoColumns.RESOLUTION
-        };
+        );
       } else {
-        projection = new String[] {
+        Collections.addAll(projectionList,
           MediaStore.Images.ImageColumns._ID,
           MediaStore.Images.ImageColumns.DATA,
           MediaStore.Images.ImageColumns.DATE_MODIFIED,
@@ -210,9 +212,13 @@ public class Media {
           MediaStore.Images.ImageColumns.BUCKET_ID,
           MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME,
           MediaStore.Images.ImageColumns.WIDTH,
-          MediaStore.Images.ImageColumns.HEIGHT,
-        };
+          MediaStore.Images.ImageColumns.HEIGHT
+        );
       }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        projectionList.add(MediaStore.Images.ImageColumns.IS_FAVORITE);
+      }
+      projection = projectionList.toArray(new String[0]);
     } else {
       if (allowVideos) {
         projection = new String[] {
@@ -260,7 +266,23 @@ public class Media {
       }
 
       if (context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-        return null;
+        boolean fail = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          if (
+            context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+            context.checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+          ) {
+            fail = false;
+          }
+        }
+        if (fail && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+          if (context.checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED) {
+            fail = false;
+          }
+        }
+        if (fail) {
+          return null;
+        }
       }
     }
     Cursor cursor = null;
@@ -339,7 +361,7 @@ public class Media {
       bucketNameColumn,
       durationColumn,
       resolutionColumn,
-      widthColumn, heightColumn;
+      widthColumn, heightColumn, faveColumn;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       imageIdColumn = c.getColumnIndex(MediaStore.Images.ImageColumns._ID);
       dataColumn = c.getColumnIndex(MediaStore.Images.ImageColumns.DATA);
@@ -352,6 +374,11 @@ public class Media {
       heightColumn = c.getColumnIndex(MediaStore.Images.ImageColumns.HEIGHT);
       durationColumn = c.getColumnIndex(MediaStore.Video.VideoColumns.DURATION);
       resolutionColumn = -1;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        faveColumn = c.getColumnIndex(MediaStore.Images.ImageColumns.IS_FAVORITE);
+      } else {
+        faveColumn = -1;
+      }
     } else {
       imageIdColumn = c.getColumnIndex(MediaStore.Images.Media._ID);
       dataColumn = c.getColumnIndex(MediaStore.Images.Media.DATA);
@@ -364,12 +391,14 @@ public class Media {
       heightColumn = c.getColumnIndex(MediaStore.Images.Media.HEIGHT);
       durationColumn = c.getColumnIndex(MediaStore.Video.Media.DURATION);
       resolutionColumn = c.getColumnIndex(MediaStore.Video.Media.RESOLUTION); // TODO: check if it actually works?
+      faveColumn = -1;
     }
 
     LongSparseArray<GalleryBucket> buckets = new LongSparseArray<>();
     BitmapFactory.Options opts = null;
 
     ArrayList<ImageFile> allMedia = new ArrayList<>(count);
+    ArrayList<ImageFile> allFaves = new ArrayList<>();
     ArrayList<ImageFile> allVideo = new ArrayList<>();
     HashMap<String, AtomicInteger> unknownSizeMediaCount = null;
 
@@ -390,6 +419,13 @@ public class Media {
         }
         final int orientation = c.getInt(orientationColumn);
         long bucketId = U.getLongOrInt(c, bucketIdColumn);
+        boolean isFavorite = false;
+        if (faveColumn != -1) {
+          try {
+            int faveValue = c.getInt(faveColumn);
+            isFavorite = faveValue == 1;
+          } catch (Throwable ignored) { }
+        }
 
         if (path == null || path.length() == 0) {
           continue;
@@ -464,6 +500,7 @@ public class Media {
         }
 
         image = new ImageGalleryFile(imageId, path, dateTaken, width, height, bucketId, needThumb);
+        image.setFavorite(isFavorite);
         image.setRotation(orientation);
         image.setScaleType(scaleType);
         if (image.isScreenshot()) {
@@ -502,7 +539,10 @@ public class Media {
         bucket.add(image);
         allMedia.add(image);
         if (image.isVideo()) {
-          allVideo.add(image);;
+          allVideo.add(image);
+        }
+        if (image.isFavorite()) {
+          allFaves.add(image);
         }
       } catch (Throwable t) {
         Log.w("Cannot parse image, skipping", t);
@@ -526,24 +566,27 @@ public class Media {
       };
       Collections.sort(allMedia, comparator);
       Collections.sort(allVideo, comparator);
+      Collections.sort(allFaves, comparator);
       for (int i = 0; i < buckets.size(); i++) {
         Collections.sort(buckets.valueAt(i).media, comparator);
       }
     }
 
-    return new Gallery(allMedia, allVideo, buckets);
+    return new Gallery(allMedia, allVideo, allFaves, buckets);
   }
 
   public static class Gallery {
     private final ArrayList<GalleryBucket> buckets;
-    private final GalleryBucket allMediaBucket, allVideoBucket;
+    private final GalleryBucket allMediaBucket, allVideoBucket, allFavesBucket;
 
-    public Gallery (ArrayList<ImageFile> allMedia, ArrayList<ImageFile> allVideos, LongSparseArray<GalleryBucket> buckets) {
+    public Gallery (ArrayList<ImageFile> allMedia, ArrayList<ImageFile> allVideos, ArrayList<ImageFile> allFaves, LongSparseArray<GalleryBucket> buckets) {
       this.buckets = new ArrayList<>(buckets.size());
       this.allMediaBucket = new GalleryBucket(Long.MIN_VALUE, allMedia, R.string.AllMedia);
       this.allMediaBucket.setPriority(GalleryBucket.PRIORITY_ALL_MEDIA);
       this.allVideoBucket = new GalleryBucket(Long.MIN_VALUE + 1, allVideos, R.string.AllVideos);
       this.allVideoBucket.setPriority(GalleryBucket.PRIORITY_ALL_VIDEOS);
+      this.allFavesBucket = new GalleryBucket(Long.MIN_VALUE + 2, allFaves, R.string.AllFaves);
+      this.allFavesBucket.setPriority(GalleryBucket.PRIORITY_ALL_FAVES);
 
       boolean cameraFound = false;
       boolean screenshotsFound = false;
@@ -566,8 +609,12 @@ public class Media {
 
       if (!allMedia.isEmpty()) {
         this.buckets.add(allMediaBucket);
-        if (!allVideos.isEmpty() && allVideos.size() < allMedia.size())
+        if (!allVideos.isEmpty() && allVideos.size() < allMedia.size()) {
           this.buckets.add(allVideoBucket);
+        }
+        if (!allFaves.isEmpty() && allFaves.size() < allMedia.size()) {
+          this.buckets.add(allFavesBucket);
+        }
         Collections.sort(this.buckets, (o1, o2) -> {
           int p1 = o1.getPriority();
           int p2 = o2.getPriority();
@@ -648,8 +695,9 @@ public class Media {
   }
 
   public static class GalleryBucket {
-    public static final int PRIORITY_ALL_MEDIA = 5;
-    public static final int PRIORITY_ALL_VIDEOS = 4;
+    public static final int PRIORITY_ALL_MEDIA = 6;
+    public static final int PRIORITY_ALL_VIDEOS = 5;
+    public static final int PRIORITY_ALL_FAVES = 4;
     public static final int PRIORITY_CAMERA = 3;
     public static final int PRIORITY_SCREENSHOTS = 2;
     public static final int PRIORITY_DOWNLOADS = 1;
@@ -659,7 +707,7 @@ public class Media {
     private final ArrayList<ImageFile> media;
     private int priority;
 
-    private int photosCount, videosCount;
+    private int photosCount, videosCount, favesCount;
 
     public GalleryBucket (long id, String name) {
       this.id = id;
@@ -675,7 +723,11 @@ public class Media {
       if (allImages != null) {
         for (ImageFile file : allImages) {
           if (file instanceof ImageGalleryFile) {
-            if (((ImageGalleryFile) file).isVideo()) {
+            ImageGalleryFile galleryFile = (ImageGalleryFile) file;
+            if (galleryFile.isFavorite()) {
+              favesCount++;
+            }
+            if (galleryFile.isVideo()) {
               videosCount++;
             } else {
               photosCount++;
@@ -706,6 +758,10 @@ public class Media {
 
     public int getVideosCount () {
       return videosCount;
+    }
+
+    public int getFavesCount () {
+      return favesCount;
     }
 
     void setPriority (int priority) {

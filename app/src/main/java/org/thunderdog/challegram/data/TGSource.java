@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,9 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextPart;
@@ -35,8 +36,8 @@ public abstract class TGSource {
   public abstract boolean open (View view, Text text, TextPart part,  @Nullable TdlibUi.UrlOpenParameters openParameters, Receiver receiver);
   public abstract void load ();
   public abstract String getAuthorName ();
-  public abstract ImageFile getAvatar ();
-  public abstract AvatarPlaceholder.Metadata getAvatarPlaceholderMetadata ();
+  public abstract TdlibAccentColor getAuthorAccentColor ();
+  public abstract void requestAvatar (AvatarReceiver receiver);
   public abstract void destroy ();
 
   public boolean isReady () {

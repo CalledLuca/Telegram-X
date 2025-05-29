@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,9 @@ import android.os.Bundle;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
@@ -28,7 +29,7 @@ import org.thunderdog.challegram.tool.UI;
 
 import java.util.concurrent.TimeUnit;
 
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class TdlibNotificationExtras {
   private static long[] getLongOrIntArray (Bundle bundle, String key) {
@@ -116,6 +117,7 @@ public class TdlibNotificationExtras {
   public final int maxNotificationId;
   public final int notificationGroupId;
   public final boolean needReply;
+  public final boolean forceExternalReply = false; // Keep this flag in case it will be needed in future
   public final boolean areMentions;
   public final long[] messageIds;
   public final long[] userIds;
@@ -147,26 +149,33 @@ public class TdlibNotificationExtras {
     intent.putExtra("user_ids", userIds);
   }
 
-  public void mute (Tdlib tdlib) {
+  public void setMuteFor (Tdlib tdlib, int muteForSeconds) {
     boolean needToast = tdlib.notifications().isUnknownGroup(notificationGroupId);
     String text = null;
-    int muteFor = (int) TimeUnit.HOURS.toSeconds(1);
     if (areMentions) {
       if (userIds != null) {
         if (needToast) {
           if (userIds.length == 1) {
-            text = Lang.getString(R.string.NotificationMutedPerson, tdlib.cache().userName(userIds[0]));
+            @StringRes int stringRes = muteForSeconds == 0 ? R.string.NotificationUnmutedPerson : R.string.NotificationMutedPerson;
+            text = Lang.getString(stringRes, tdlib.cache().userName(userIds[0]));
           } else {
-            text = Lang.plural(R.string.NotificationMutedPersons, userIds.length);
+            @StringRes int stringRes = muteForSeconds == 0 ? R.string.NotificationUnmutedPeople : R.string.NotificationMutedPersons;
+            text = Lang.plural(stringRes, userIds.length);
           }
         }
         for (long userId : userIds) {
-          tdlib.setMuteForSync(userId, muteFor);
+          tdlib.setMuteForSync(userId, muteForSeconds);
         }
       }
     } else {
-      tdlib.setMuteForSync(chatId, muteFor);
-      text = needToast ? Lang.getString(ChatId.isUserChat(chatId) ? R.string.NotificationMutedPerson : R.string.NotificationMutedChat, tdlib.chatTitle(chatId)) : null;
+      tdlib.setMuteForSync(chatId, muteForSeconds);
+      @StringRes int stringRes;
+      if (muteForSeconds == 0) {
+        stringRes = ChatId.isUserChat(chatId) ? R.string.NotificationUnmutedPerson : R.string.NotificationUnmutedChat;
+      } else {
+        stringRes = ChatId.isUserChat(chatId) ? R.string.NotificationMutedPerson : R.string.NotificationMutedChat;
+      }
+      text = needToast ? Lang.getString(stringRes, tdlib.chatTitle(chatId)) : null;
     }
     hide(tdlib);
     if (needToast) {
@@ -174,12 +183,21 @@ public class TdlibNotificationExtras {
     }
   }
 
+  public void unmute (Tdlib tdlib) {
+    setMuteFor(tdlib, 0);
+  }
+
+  public void mute (Tdlib tdlib) {
+    int muteFor = (int) TimeUnit.HOURS.toSeconds(1);
+    setMuteFor(tdlib, muteFor);
+  }
+
   public void read (Tdlib tdlib) {
     boolean needToast = tdlib.notifications().isUnknownGroup(notificationGroupId);
     if (areMentions) {
       tdlib.client().send(new TdApi.ReadAllChatMentions(chatId), tdlib.silentHandler());
     } else {
-      tdlib.readMessages(chatId, messageThreadId, messageIds);
+      tdlib.readMessages(chatId, messageIds, new TdApi.MessageSourceNotification());
     }
     hide(tdlib);
     if (needToast) {

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@ import android.view.View;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.attach.CustomItemAnimator;
@@ -43,11 +43,11 @@ import org.thunderdog.challegram.widget.EmbeddableStickerView;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.core.ArrayUtils;
+import me.vkryl.core.ObjectUtils;
 
 public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener, Client.ResultHandler {
   private static final String UTYAN_EMOJI = "\uD83D\uDE0E";
@@ -135,17 +135,13 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
       msg.append("\n").append(Lang.wrap(Lang.getString(R.string.InviteLinkRequestSince, Lang.getMessageTimestamp(request.date, TimeUnit.SECONDS)), Lang.italicCreator()));
     }
 
-    controller.showOptions(msg, new int[]{R.id.btn_approveChatRequest, R.id.btn_declineChatRequest, R.id.btn_openChat}, new String[]{Lang.getString(isChannel ? R.string.InviteLinkActionAcceptChannel : R.string.InviteLinkActionAccept), Lang.getString(R.string.InviteLinkActionDeclineAction), Lang.getString(R.string.InviteLinkActionWrite)}, new int[] { ViewController.OPTION_COLOR_BLUE, ViewController.OPTION_COLOR_RED, ViewController.OPTION_COLOR_NORMAL }, new int[]{R.drawable.baseline_person_add_24, R.drawable.baseline_delete_24, R.drawable.baseline_person_24}, (itemView2, id2) -> {
-      switch (id2) {
-        case R.id.btn_approveChatRequest:
-          acceptRequest(user);
-          break;
-        case R.id.btn_openChat:
-          openProfile(user);
-          break;
-        case R.id.btn_declineChatRequest:
-          declineRequest(user);
-          break;
+    controller.showOptions(msg, new int[]{R.id.btn_approveChatRequest, R.id.btn_declineChatRequest, R.id.btn_openChat}, new String[]{Lang.getString(isChannel ? R.string.InviteLinkActionAcceptChannel : R.string.InviteLinkActionAccept), Lang.getString(R.string.InviteLinkActionDeclineAction), Lang.getString(R.string.InviteLinkActionWrite)}, new int[] {ViewController.OptionColor.BLUE, ViewController.OptionColor.RED, ViewController.OptionColor.NORMAL}, new int[]{R.drawable.baseline_person_add_24, R.drawable.baseline_delete_24, R.drawable.baseline_person_24}, (itemView2, id2) -> {
+      if (id2 == R.id.btn_approveChatRequest) {
+        acceptRequest(user);
+      } else if (id2 == R.id.btn_openChat) {
+        openProfile(user);
+      } else if (id2 == R.id.btn_declineChatRequest) {
+        declineRequest(user);
       }
 
       return true;
@@ -161,7 +157,7 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
       @Override
       protected void setEmbedSticker (ListItem item, int position, EmbeddableStickerView userView, boolean isUpdate) {
         TdApi.Sticker sticker = (TdApi.Sticker) item.getData();
-        userView.setSticker(new TGStickerObj(tdlib(), sticker, UTYAN_EMOJI, sticker.type));
+        userView.setSticker(new TGStickerObj(tdlib(), sticker, UTYAN_EMOJI, sticker.fullType));
         userView.setCaptionText(Strings.buildMarkdown(controller, Lang.getString(isChannel ? R.string.InviteLinkRequestsHintChannel : R.string.InviteLinkRequestsHint, "tg://need_update_for_some_feature"), (view, span, clickedText) -> {
           ChatLinksController linksController = new ChatLinksController(context(), tdlib());
           linksController.setArguments(new ChatLinksController.Args(chatId, tdlib().myUserId(), null, null, tdlib().chatStatus(chatId).getConstructor() == TdApi.ChatMemberStatusCreator.CONSTRUCTOR));
@@ -174,9 +170,10 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
       protected void setJoinRequest (ListItem item, int position, DoubleTextViewWithIcon group, boolean isUpdate) {
         TGUser user = joinRequests.get((isBottomSheet || isSeparateLink || inSearchMode()) ? position : position - 3);
         group.setTag(user);
-        group.text().setAvatar(user.getAvatar(), user.getAvatarPlaceholderMetadata());
+        group.text().setSenderAvatar(tdlib(), user.getSenderId());
         group.text().setText(user.getName(), user.getStatus());
         group.text().setIcon(R.drawable.baseline_person_add_16, (v) -> acceptRequest(user));
+        group.text().setEmojiStatus(tdlib(), user.getUser());
         group.icon().setImageResource(R.drawable.baseline_close_24);
         group.setIconClickListener((v) -> declineRequest(user));
         group.setTextClickListener((v) -> onClick(group));
@@ -248,7 +245,7 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
   }
 
   private void acceptRequest (TGUser user) {
-    controller.showOptions(Lang.getStringBold(R.string.AreYouSureAcceptJoinRequest, user.getName(), tdlib().chatTitle(chatId)), new int[]{R.id.btn_approveChatRequest, R.id.btn_cancel}, new String[]{Lang.getString(isChannel ? R.string.InviteLinkActionAcceptChannel : R.string.InviteLinkActionAccept), Lang.getString(R.string.Cancel)}, new int[]{ViewController.OPTION_COLOR_BLUE, ViewController.OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_person_add_24, R.drawable.baseline_cancel_24}, (itemView2, id2) -> {
+    controller.showOptions(Lang.getStringBold(R.string.AreYouSureAcceptJoinRequest, user.getName(), tdlib().chatTitle(chatId)), new int[]{R.id.btn_approveChatRequest, R.id.btn_cancel}, new String[]{Lang.getString(isChannel ? R.string.InviteLinkActionAcceptChannel : R.string.InviteLinkActionAccept), Lang.getString(R.string.Cancel)}, new int[]{ViewController.OptionColor.BLUE, ViewController.OptionColor.NORMAL}, new int[]{R.drawable.baseline_person_add_24, R.drawable.baseline_cancel_24}, (itemView2, id2) -> {
       if (id2 == R.id.btn_approveChatRequest) {
         tdlib().client().send(new TdApi.ProcessChatJoinRequest(chatId, user.getUserId(), true), obj -> removeSender(user));
       }
@@ -258,7 +255,7 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
   }
 
   private void declineRequest (TGUser user) {
-    controller.showOptions(Lang.getStringBold(R.string.AreYouSureDeclineJoinRequest, user.getName()), new int[]{R.id.btn_declineChatRequest, R.id.btn_cancel}, new String[]{Lang.getString(R.string.InviteLinkActionDeclineAction), Lang.getString(R.string.Cancel)}, new int[]{ViewController.OPTION_COLOR_RED, ViewController.OPTION_COLOR_NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView2, id2) -> {
+    controller.showOptions(Lang.getStringBold(R.string.AreYouSureDeclineJoinRequest, user.getName()), new int[]{R.id.btn_declineChatRequest, R.id.btn_cancel}, new String[]{Lang.getString(R.string.InviteLinkActionDeclineAction), Lang.getString(R.string.Cancel)}, new int[]{ViewController.OptionColor.RED, ViewController.OptionColor.NORMAL}, new int[]{R.drawable.baseline_delete_24, R.drawable.baseline_cancel_24}, (itemView2, id2) -> {
       if (id2 == R.id.btn_declineChatRequest) {
         tdlib().client().send(new TdApi.ProcessChatJoinRequest(chatId, user.getUserId(), false), obj -> removeSender(user));
       }
@@ -292,9 +289,12 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
     ArrayList<ListItem> items = new ArrayList<>();
 
     if (!isBottomSheet && !isSeparateLink && !inSearchMode()) {
-      items.add(new ListItem(ListItem.TYPE_EMPTY_OFFSET_SMALL));
-      items.add(new ListItem(ListItem.TYPE_EMBED_STICKER).setData(tdlib().findTgxEmoji(UTYAN_EMOJI)));
-      items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
+      TdApi.Sticker tgxEmoji = tdlib().findTgxEmoji(UTYAN_EMOJI);
+      if (tgxEmoji != null) {
+        items.add(new ListItem(ListItem.TYPE_EMPTY_OFFSET_SMALL));
+        items.add(new ListItem(ListItem.TYPE_EMBED_STICKER).setData(tgxEmoji));
+        items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
+      }
     }
 
     if (joinRequests != null) {
@@ -367,7 +367,7 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
   }
 
   public void search (String query) {
-    if (Objects.equals(currentQuery, query)) {
+    if (ObjectUtils.equals(currentQuery, query)) {
       return;
     }
 
@@ -414,7 +414,7 @@ public class JoinRequestsComponent implements TGLegacyManager.EmojiLoadListener,
   }
 
   @Override
-  public void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     adapter.updateAllValuedSettingsById(R.id.user);
   }
 }

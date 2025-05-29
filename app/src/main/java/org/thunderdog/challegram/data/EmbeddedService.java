@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import android.net.Uri;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 import me.vkryl.core.StringUtils;
+import tgx.td.Td;
 
 public class EmbeddedService {
   public static final int TYPE_UNKNOWN = 0;
@@ -142,28 +143,64 @@ public class EmbeddedService {
     return TYPE_UNKNOWN;
   }
 
-  public static EmbeddedService parse (TdApi.WebPage webPage) {
-    EmbeddedService service = parse(webPage.url, webPage.embedWidth, webPage.embedHeight, webPage.photo, webPage.embedUrl);
+  public static EmbeddedService parse (TdApi.LinkPreview linkPreview) {
+    EmbeddedService service = parse(linkPreview.url, linkPreview.type, true);
     if (service != null)
       return service;
-    if ("iframe".equals(webPage.embedType) && !StringUtils.isEmpty(webPage.embedUrl)) {
+    /*if ("iframe".equals(linkPreview.embedType) && !StringUtils.isEmpty(linkPreview.embedUrl)) {
       if ((
-           ("gif".equals(webPage.type) && webPage.animation != null) ||
-           ("video".equals(webPage.type) && webPage.photo != null && webPage.animation == null) ||
-           ("photo".equals(webPage.type) && webPage.photo != null && webPage.animation == null)
-          ) && webPage.video == null && webPage.videoNote == null && webPage.document == null && webPage.audio == null) {
-        return new EmbeddedService(resolveTypeForHost(StringUtils.domainOf(webPage.url)), webPage.url, webPage.embedWidth, webPage.embedHeight, webPage.photo, webPage.embedUrl, webPage.embedType);
+           ("gif".equals(linkPreview.type) && linkPreview.animation != null) ||
+           ("video".equals(linkPreview.type) && linkPreview.photo != null && linkPreview.animation == null) ||
+           ("photo".equals(linkPreview.type) && linkPreview.photo != null && linkPreview.animation == null)
+          ) && linkPreview.video == null && linkPreview.videoNote == null && linkPreview.document == null && linkPreview.audio == null) {
+        return new EmbeddedService(resolveTypeForHost(StringUtils.domainOf(linkPreview.url)), linkPreview.url, linkPreview.embedWidth, linkPreview.embedHeight, linkPreview.photo, linkPreview.embedUrl, linkPreview.embedType);
       }
-    }
+    }*/
     // if ("type".equals(webPage.type) && webpage)
     return null;
   }
 
   public static EmbeddedService parse (TdApi.PageBlockEmbedded embedded) {
-    return parse(embedded.url, embedded.width, embedded.height, embedded.posterPhoto, null);
+    return parse(embedded.url, embedded.width, embedded.height, embedded.posterPhoto, null, false);
   }
 
-  private static EmbeddedService parse (String webPageUrl, int width, int height, TdApi.Photo thumbnail, @Nullable String embedUrl) {
+  private static String buildYouTubeEmbedUrl (Uri uri, String videoId, boolean allowAutoplay) {
+    String time = uri.getQueryParameter("t");
+    Uri.Builder b = new Uri.Builder()
+      .scheme("https")
+      .authority("www.youtube.com")
+      .path("embed/" + videoId);
+    if (allowAutoplay) {
+      b.appendQueryParameter("autoplay", "1");
+    }
+    if (!StringUtils.isEmpty(time)) {
+      b.appendQueryParameter("start", time);
+    }
+    return b.build().toString();
+  }
+
+  private static EmbeddedService parse (String url, TdApi.LinkPreviewType type, boolean allowAutoplay) {
+    switch (type.getConstructor()) {
+      case TdApi.LinkPreviewTypeEmbeddedAnimationPlayer.CONSTRUCTOR: {
+        TdApi.LinkPreviewTypeEmbeddedAnimationPlayer animationPlayer = (TdApi.LinkPreviewTypeEmbeddedAnimationPlayer) type;
+        return parse(url, animationPlayer.width, animationPlayer.height, animationPlayer.thumbnail, animationPlayer.url, allowAutoplay);
+      }
+      case TdApi.LinkPreviewTypeEmbeddedAudioPlayer.CONSTRUCTOR: {
+        TdApi.LinkPreviewTypeEmbeddedAudioPlayer audioPlayer = (TdApi.LinkPreviewTypeEmbeddedAudioPlayer) type;
+        return parse(url, audioPlayer.width, audioPlayer.height, audioPlayer.thumbnail, audioPlayer.url, allowAutoplay);
+      }
+      case TdApi.LinkPreviewTypeEmbeddedVideoPlayer.CONSTRUCTOR: {
+        TdApi.LinkPreviewTypeEmbeddedVideoPlayer videoPlayer = (TdApi.LinkPreviewTypeEmbeddedVideoPlayer) type;
+        return parse(url, videoPlayer.width, videoPlayer.height, videoPlayer.thumbnail, videoPlayer.url, allowAutoplay);
+      }
+      default:
+        Td.assertLinkPreviewType_e3ce10d5();
+        break;
+    }
+    return null;
+  }
+
+  private static EmbeddedService parse (String webPageUrl, int width, int height, TdApi.Photo thumbnail, @Nullable String embedUrl, boolean allowAutoplay) {
     if (StringUtils.isEmpty(webPageUrl))
       return null;
     try {
@@ -189,7 +226,7 @@ public class EmbeddedService {
           // https://www.youtube.com/watch?v=zg-HMBwYckc&feature=player_embedded
           viewType = TYPE_YOUTUBE;
           if (segments.length == 1 && "watch".equals(segments[0]) && !StringUtils.isEmpty(viewIdentifier = uri.getQueryParameter("v"))) {
-            embedUrl = "https://www.youtube.com/embed/" + viewIdentifier;
+            embedUrl = buildYouTubeEmbedUrl(uri, viewIdentifier, allowAutoplay);
           }
           break;
         }
@@ -197,7 +234,7 @@ public class EmbeddedService {
           // https://youtu.be/zg-HMBwYckc
           viewType = TYPE_YOUTUBE;
           if (segments.length == 1 && !StringUtils.isEmpty(viewIdentifier = segments[0])) {
-            embedUrl = "https://www.youtube.com/embed/" + viewIdentifier;
+            embedUrl = buildYouTubeEmbedUrl(uri, viewIdentifier, allowAutoplay);
           }
           break;
         }
@@ -312,7 +349,7 @@ public class EmbeddedService {
 
   // Creates embed data from a page's URL (if the site is supported by TGX in-app parser)
   public static EmbeddedService parseUrl (String pageUrl) {
-    return parse(pageUrl, 0, 0, null, null);
+    return parse(pageUrl, 0, 0, null, null, true);
   }
 
   // If YouTube URL and YouTube app is installed - better wait for Telegram preview to get a webpage

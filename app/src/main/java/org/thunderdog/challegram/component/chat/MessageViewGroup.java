@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
@@ -271,6 +272,7 @@ public class MessageViewGroup extends ViewGroup implements Destroyable, AttachDe
   public void setMessage (TGMessage message) {
     messageView.setMessage(message);
     overlayView.setMessage(message);
+    videoPlayerView.setVisibility(TD.isSelfDestructTypeImmediately(message.getMessage()) ? GONE:  VISIBLE);
     requestVideo(message);
 
     if (getMeasuredHeight() != messageView.getCurrentHeight()) {

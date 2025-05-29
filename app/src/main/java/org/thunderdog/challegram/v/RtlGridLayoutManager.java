@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,5 +44,26 @@ public class RtlGridLayoutManager extends GridLayoutManager {
   @Override
   protected final boolean isLayoutRTL () {
     return !alignOnly && Lang.rtl();
+  }
+
+  private boolean isCanScrollVertically = true;
+  private boolean isCanScrollHorizontally = true;
+
+  public void setCanScrollVertically (boolean canScrollVertically) {
+    isCanScrollVertically = canScrollVertically;
+  }
+
+  public void setCanScrollHorizontally (boolean canScrollHorizontally) {
+    isCanScrollHorizontally = canScrollHorizontally;
+  }
+
+  @Override
+  public boolean canScrollVertically () {
+    return isCanScrollVertically && super.canScrollVertically();
+  }
+
+  @Override
+  public boolean canScrollHorizontally () {
+    return isCanScrollHorizontally && super.canScrollHorizontally();
   }
 }

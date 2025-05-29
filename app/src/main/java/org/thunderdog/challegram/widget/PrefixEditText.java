@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,12 +31,12 @@ import androidx.annotation.StringRes;
 
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.UI;
-import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
 
-public class PrefixEditText extends EditText implements InputFilter, View.OnLongClickListener {
+public class PrefixEditText extends EmojiEditText implements InputFilter, View.OnLongClickListener {
   private String prefix;
   private int minLength;
   private boolean forceEdit;
@@ -44,6 +44,7 @@ public class PrefixEditText extends EditText implements InputFilter, View.OnLong
 
   public PrefixEditText (Context context) {
     super(context);
+    initDefault();
     editable = true;
     setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
     setFilters(new InputFilter[] {this});
@@ -78,11 +79,11 @@ public class PrefixEditText extends EditText implements InputFilter, View.OnLong
     this.prefix = prefix;
     Spannable spannable = new SpannableString(prefix);
     if (prefix.length() > 0) {
-      spannable.setSpan(new CustomTypefaceSpan(null, R.id.theme_color_textPlaceholder), 0, prefix.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+      spannable.setSpan(new CustomTypefaceSpan(null, ColorId.textPlaceholder), 0, prefix.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
     minLength = spannable.length();
     forceText(spannable);
-    Views.setSelection(this, minLength);
+    setSelection(minLength);
   }
 
   /**
@@ -95,7 +96,7 @@ public class PrefixEditText extends EditText implements InputFilter, View.OnLong
       spannable.setSpan(new ForegroundColorSpan(Theme.textPlaceholderColor()), 0, prefix.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
     forceText(spannable);
-    Views.setSelection(this, spannable.length());
+    setSelection(spannable.length());
   }
 
   public String getSuffix () {
@@ -134,7 +135,7 @@ public class PrefixEditText extends EditText implements InputFilter, View.OnLong
   @Override
   protected void onSelectionChanged (int selStart, int selEnd) {
     if (editable && selStart < minLength && getText().length() >= minLength) {
-      Views.setSelection(this, minLength);
+      setSelection(minLength);
     } else {
       super.onSelectionChanged(selStart, selEnd);
     }

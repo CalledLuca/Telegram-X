@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,9 +15,10 @@
 package org.thunderdog.challegram.loader.gif;
 
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.core.BaseThread;
 
 public class GifBridgeThread extends BaseThread {
@@ -25,7 +26,6 @@ public class GifBridgeThread extends BaseThread {
   private static final int REMOVE_WATCHER = 2;
   private static final int LOAD_COMPLETE = 3;
   private static final int GIF_LOADED = 4;
-  private static final int GIF_NEXT_FRAME_READY = 6;
 
   public GifBridgeThread () {
     super("GifThread");
@@ -51,7 +51,7 @@ public class GifBridgeThread extends BaseThread {
     return !getCustomHandler().hasMessages(fileId, actor);
   }
 
-  public boolean scheduleNextFrame (GifActor actor, int fileId, int delay, boolean force) {
+  public boolean scheduleNextFrame (GifActor actor, int fileId, long delay, boolean force) {
     final Handler handler = getCustomHandler();
     if (force) {
       handler.removeMessages(fileId, actor);
@@ -64,19 +64,14 @@ public class GifBridgeThread extends BaseThread {
 
   @Override
   protected Handler createCustomHandler () {
-    return new FrameHandler();
+    return new Handler(Looper.myLooper(), message -> {
+      ((GifActor) message.obj).onNextFrame(true, false);
+      return true;
+    });
   }
 
-  private static class FrameHandler extends Handler {
-    @Override
-    public void handleMessage (Message msg) {
-      ((GifActor) msg.obj).onNextFrame(true);
-    }
-  }
-
-  public void nextFrameReady (GifActor actor) {
-    // sendMessage(Message.obtain(getHandler(), GIF_NEXT_FRAME_READY, actor), 0);
-    actor.nextFrameReady();
+  public void nextFrameReady (GifActor actor, boolean restarted) {
+    actor.nextFrameReady(restarted);
   }
 
   @Override
@@ -111,10 +106,6 @@ public class GifBridgeThread extends BaseThread {
         obj[0] = null;
         obj[1] = null;
 
-        break;
-      }
-      case GIF_NEXT_FRAME_READY: {
-        ((GifActor) msg.obj).nextFrameReady();
         break;
       }
     }

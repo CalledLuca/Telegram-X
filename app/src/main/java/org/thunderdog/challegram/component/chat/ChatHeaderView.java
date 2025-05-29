@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,9 @@ import android.view.MotionEvent;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
-import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.TD;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.data.ThreadInfo;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.navigation.ComplexHeaderView;
 import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.ViewController;
@@ -32,7 +30,7 @@ import org.thunderdog.challegram.theme.ThemeDeprecated;
 import org.thunderdog.challegram.tool.Screen;
 
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class ChatHeaderView extends ComplexHeaderView {
   public interface Callback {
@@ -95,23 +93,25 @@ public class ChatHeaderView extends ComplexHeaderView {
   public void setChat (Tdlib tdlib, TdApi.Chat chat, @Nullable ThreadInfo messageThread) {
     this.tdlib = tdlib;
 
-    setShowLock(chat != null && ChatId.isSecret(chat.id));
-
     if (chat == null) {
       setText("Debug controller", "nobody should find this view");
       return;
     }
 
+    getAvatarReceiver().requestChat(tdlib, chat.id, AvatarReceiver.Options.FULL_SIZE);
+    setShowVerify(tdlib.chatVerified(chat));
+    setShowScam(tdlib.chatScam(chat));
+    setShowFake(tdlib.chatFake(chat));
+    setShowMute(tdlib.chatNeedsMuteIcon(chat));
+    setShowLock(ChatId.isSecret(chat.id));
     if (messageThread != null) {
-      setInnerMargins(Screen.dp(56f), Screen.dp(49f));
-      setText(Lang.plural(messageThread.areComments() ? R.string.xComments : R.string.xReplies, messageThread.getSize()), null);
+      setEmojiStatus(null);
+      setText(messageThread.chatHeaderTitle(), !StringUtils.isEmpty(forcedSubtitle) ? forcedSubtitle : messageThread.chatHeaderSubtitle());
+      setExpandedSubtitle(null);
+      setUseRedHighlight(false);
       attachChatStatus(messageThread.getChatId(), messageThread.getMessageThreadId());
     } else {
-      setChatPhoto(chat, chat.photo);
-      setShowVerify(tdlib.chatVerified(chat));
-      setShowScam(tdlib.chatScam(chat));
-      setShowFake(tdlib.chatFake(chat));
-      setShowMute(TD.needMuteIcon(chat.notificationSettings, tdlib.scopeNotificationSettings(chat.id)));
+      setEmojiStatus(tdlib.isSelfChat(chat) ? null : tdlib.chatUser(chat));
       setText(tdlib.chatTitle(chat), !StringUtils.isEmpty(forcedSubtitle) ? forcedSubtitle : tdlib.status().chatStatus(chat));
       setExpandedSubtitle(tdlib.status().chatStatusExpanded(chat));
       setUseRedHighlight(tdlib.isRedTeam(chat.id));
@@ -119,38 +119,7 @@ public class ChatHeaderView extends ComplexHeaderView {
     }
   }
 
-  private void setChatPhoto (TdApi.Chat chat, @Nullable TdApi.ChatPhotoInfo photo) {
-    boolean empty = tdlib.isSelfChat(chat.id) || photo == null;
-    setPhotoOpenDisabled(empty);
-    if (empty) {
-      setAvatarPlaceholder(tdlib.chatPlaceholder(chat, true, getBaseAvatarRadiusDp(), null));
-    } else {
-      setAvatar(photo);
-    }
-  }
-
   // Updates (new)
-
-  public void updateChatTitle (long chatId, String title) {
-    setTitle(title);
-    TdApi.Chat chat = tdlib.chat(chatId);
-    if (chat != null && chat.photo == null) {
-      setChatPhoto(chat, null);
-      updateAvatar();
-    }
-  }
-
-  public void updateChatPhoto (TdApi.Chat chat, @Nullable TdApi.ChatPhotoInfo photo) {
-    setChatPhoto(chat, photo);
-    updateAvatar();
-  }
-
-  public void updateNotificationSettings (long chatId, TdApi.ChatNotificationSettings settings) {
-    boolean isMuted = TD.needMuteIcon(settings, tdlib.scopeNotificationSettings(chatId));
-    if (getShowMute() != isMuted) {
-      setShowMute(isMuted);
-    }
-  }
 
   private Tdlib tdlib;
 

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,8 +23,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.ColorChangeAcceptorDelegate;
 import org.thunderdog.challegram.util.CustomStateListDrawable;
@@ -45,8 +45,15 @@ public class RippleSupport {
     }
   }
 
-  public static void setSimpleWhiteBackground (@NonNull View view, @ThemeColorId int backgroundColorId, @Nullable ViewController<?> themeProvider) {
+  public static void setSimpleWhiteBackground (@NonNull View view, @ColorId int backgroundColorId, @Nullable ViewController<?> themeProvider) {
     ViewUtils.setBackground(view, Theme.fillingSelector(backgroundColorId));
+    if (themeProvider != null) {
+      themeProvider.addThemeInvalidateListener(view);
+    }
+  }
+
+  public static void setSimpleWhiteBackground (@NonNull View view, @ColorId int backgroundColorId, float radius, @Nullable ViewController<?> themeProvider) {
+    ViewUtils.setBackground(view, Theme.fillingSelector(backgroundColorId, radius));
     if (themeProvider != null) {
       themeProvider.addThemeInvalidateListener(view);
     }
@@ -54,6 +61,13 @@ public class RippleSupport {
 
   public static void setTransparentSelector (View view) {
     ViewUtils.setBackground(view, Theme.transparentSelector());
+  }
+
+  public static void setTransparentSelector (View view, float radius, @Nullable ViewController<?> themeProvider) {
+    ViewUtils.setBackground(view, Theme.transparentRoundSelector(radius));
+    if (themeProvider != null) {
+      themeProvider.addThemeInvalidateListener(view);
+    }
   }
 
   public static void setTransparentBlackSelector (View view) {
@@ -73,11 +87,7 @@ public class RippleSupport {
     }
   }
 
-  public static void setCircleBackground (View view, float size, float padding, @ThemeColorId int colorId) {
-    setCircleBackground(view, size, padding, colorId, null);
-  }
-
-  public static void changeViewColor (View view, @ThemeColorId int fromColorId, @ThemeColorId int toColorId, float factor) {
+  public static void changeViewColor (View view, @ColorId int fromColorId, @ColorId int toColorId, float factor) {
     if (view != null) {
       Drawable drawable = view.getBackground();
       boolean updated = false;
@@ -133,22 +143,24 @@ public class RippleSupport {
     return 0;
   }
 
-  public static void setCircleBackground (View view, float size, float padding, @ThemeColorId int colorId, @Nullable ViewController<?> themeProvider) {
+  public static void setCircleBackground (View view, float size, float padding, @ColorId int colorId, boolean needShadow, @Nullable ViewController<?> themeProvider) {
     ViewUtils.setBackground(view, Theme.circleSelector(size, colorId));
     if (SimpleShapeDrawable.USE_SOFTWARE_SHADOW) {
       view.setLayerType(View.LAYER_TYPE_SOFTWARE, Views.getLayerPaint());
     }
-    Views.initCircleButton(view, size, padding);
+    if (needShadow) {
+      Views.initCircleButton(view, size, padding);
+    }
     if (themeProvider != null) {
       themeProvider.addThemeInvalidateListener(view);
     }
   }
 
-  public static void setRectBackground (View view, float size, float padding, @ThemeColorId int colorId) {
+  public static void setRectBackground (View view, float size, float padding, @ColorId int colorId) {
     setRectBackground(view, size, padding, colorId, null);
   }
 
-  public static void setRectBackground (View view, float size, float padding, @ThemeColorId int colorId, @Nullable ViewController<?> themeProvider) {
+  public static void setRectBackground (View view, float size, float padding, @ColorId int colorId, @Nullable ViewController<?> themeProvider) {
     ViewUtils.setBackground(view, Theme.rectSelector(size, padding, colorId));
     if (SimpleShapeDrawable.USE_SOFTWARE_SHADOW) {
       view.setLayerType(View.LAYER_TYPE_SOFTWARE, Views.getLayerPaint());

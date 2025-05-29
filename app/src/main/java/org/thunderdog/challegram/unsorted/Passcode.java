@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -136,7 +136,7 @@ public class Passcode implements UI.StateListener {
 
   @Override
   public void onUiStateChanged (int newState) {
-    if (newState == UI.STATE_PAUSED) {
+    if (newState == UI.State.PAUSED) {
       trackUserActivity(true);
     }
   }
@@ -268,7 +268,7 @@ public class Passcode implements UI.StateListener {
   public boolean isLockedAndVisible () {
     if (isLocked()) {
       BaseActivity activity = UI.getUiContext();
-      return UI.getUiState() != UI.STATE_RESUMED || activity == null || activity.isPasscodeShowing();
+      return UI.getUiState() != UI.State.RESUMED || activity == null || activity.isPasscodeShowing();
     }
     return false;
   }

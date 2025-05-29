@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,16 +41,6 @@ public class CameraLayout extends FrameLayoutFix {
     }
   }
 
-  private int originalWidth, originalHeight;
-
-  public int getOriginalWidth () {
-    return originalWidth;
-  }
-
-  public int getOriginalHeight () {
-    return originalHeight;
-  }
-
   @Override
   protected void onMeasure (int widthMeasureSpec, int heightMeasureSpec) {
     int viewWidth = getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec);
@@ -62,7 +52,7 @@ public class CameraLayout extends FrameLayoutFix {
       final float maxAspectRatio = Settings.instance().getCameraAspectRatio();
       if (maxAspectRatio != 0f) {
         float aspectRatio = MathUtils.aspectRatio(viewWidth, viewHeight);
-        if (aspectRatio != maxAspectRatio) {
+        if (aspectRatio > maxAspectRatio) {
           if (viewWidth > viewHeight) {
             viewWidth = (int) ((float) viewWidth / aspectRatio * maxAspectRatio);
           } else {
@@ -72,7 +62,10 @@ public class CameraLayout extends FrameLayoutFix {
       }
     }
 
-    super.onMeasure(MeasureSpec.makeMeasureSpec(viewWidth, MeasureSpec.getMode(widthMeasureSpec)), MeasureSpec.makeMeasureSpec(viewHeight, MeasureSpec.getMode(heightMeasureSpec)));
+    super.onMeasure(
+      MeasureSpec.makeMeasureSpec(viewWidth, MeasureSpec.getMode(widthMeasureSpec)),
+      MeasureSpec.makeMeasureSpec(viewHeight, MeasureSpec.getMode(heightMeasureSpec))
+    );
 
     int width = getMeasuredWidth();
     int height = getMeasuredHeight();

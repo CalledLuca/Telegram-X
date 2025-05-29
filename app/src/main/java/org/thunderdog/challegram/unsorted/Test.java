@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ package org.thunderdog.challegram.unsorted;
 import android.os.SystemClock;
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
@@ -39,7 +39,7 @@ import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
 import me.vkryl.core.util.Blob;
 import me.vkryl.leveldb.LevelDB;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class Test {
   private static void testFormat (String format, Object... args) {
@@ -110,9 +110,14 @@ public class Test {
     c.showOptions(info, ids.get(), strings.get(), null, null, new OptionDelegate() {
       @Override
       public boolean onOptionItemPressed (View optionItemView, int id) {
-        TdApi.ChatAction action = actions[id];
-        testAction = action.getConstructor() == TdApi.ChatActionCancel.CONSTRUCTOR ? null : action;
-        context.currentTdlib().__sendFakeAction(action);
+        TdApi.ChatAction action = actions[id] == null || actions[id].getConstructor() == TdApi.ChatActionCancel.CONSTRUCTOR ? null : actions[id];
+        testAction = action;
+        final Tdlib tdlib = context.currentTdlib();
+        tdlib.getAllChats(new TdApi.ChatListMain(), chat -> {
+          if (chat.lastMessage != null) {
+            tdlib.sendFakeUpdate(new TdApi.UpdateChatAction(chat.id, 0, chat.lastMessage.senderId, action));
+          }
+        }, null, false);
         return true;
       }
     });
@@ -134,7 +139,7 @@ public class Test {
         userId = Td.getSenderUserId(chat.lastMessage);
       }
       if (chat.lastMessage != null) {
-        tdlib.sendFakeUpdate(new TdApi.UpdateChatAction(chat.id, 0, chat.lastMessage.senderId, tdlib.status().hasStatus(chat.id, 0) ? new TdApi.ChatActionCancel() : testAction != null ? testAction : new TdApi.ChatActionTyping()), false);
+        tdlib.sendFakeUpdate(new TdApi.UpdateChatAction(chat.id, 0, chat.lastMessage.senderId, tdlib.status().hasStatus(chat.id, 0) ? new TdApi.ChatActionCancel() : testAction != null ? testAction : new TdApi.ChatActionTyping()));
       }
       return true;
     }
@@ -264,7 +269,7 @@ public class Test {
 
   public static File getTestDBDir () {
     File pmcDir = new File(UI.getAppContext().getFilesDir(), "pmc");
-    if (!pmcDir.exists() && !pmcDir.mkdir()) {
+    if (!FileUtils.createDirectory(pmcDir)) {
       throw new IllegalStateException("Unable to create working directory");
     }
     return new File(pmcDir, "test");

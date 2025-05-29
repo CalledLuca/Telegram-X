@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,8 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.view.View;
+
+import androidx.annotation.NonNull;
 
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.mediaview.paint.PaintState;
@@ -153,19 +155,27 @@ public class CropTargetView extends View {
       w *= scale;
       h *= scale;
       setMeasuredDimension(w, h);
-      setTranslationY(availHeight / 2 - h / 2);
+      setTranslationY(availHeight / 2f - h / 2f);
       checkDegreesRotationScale();
     } else {
       super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
   }
 
-  @Override
-  protected void onDraw (Canvas c) {
-    // c.drawColor(0xffff0000);
+  private float mirrorHorizontallyFactor = 0;
+  private float mirrorVerticallyFactor = 0;
 
-    int cx = getMeasuredWidth() / 2;
-    int cy = getMeasuredHeight() / 2;
+  public void setMirrorFactors (float mirrorHorizontallyFactor, float mirrorVerticallyFactor) {
+    this.mirrorHorizontallyFactor = mirrorHorizontallyFactor;
+    this.mirrorVerticallyFactor = mirrorVerticallyFactor;
+    invalidate();
+  }
+
+
+  @Override
+  protected void onDraw (@NonNull Canvas c) {
+    float cx = getMeasuredWidth() / 2f;
+    float cy = getMeasuredHeight() / 2f;
 
     final boolean saved = rotateInternally && (degrees != 0f || rotationScale != 1f);
     if (saved) {
@@ -174,7 +184,7 @@ public class CropTargetView extends View {
       c.scale(rotationScale, rotationScale, cx, cy);
     }
 
-    DrawAlgorithms.drawScaledBitmap(getMeasuredWidth(), getMeasuredHeight(), c, bitmap, rotation, paintState);
+    DrawAlgorithms.drawScaledBitmap(getMeasuredWidth(), getMeasuredHeight(), c, bitmap, rotation, mirrorHorizontallyFactor, mirrorVerticallyFactor, paintState);
 
     if (saved) {
       c.restore();

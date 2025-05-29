@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 package org.thunderdog.challegram.emoji;
 
 import android.content.SharedPreferences;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -28,13 +27,17 @@ import androidx.annotation.Nullable;
 
 import com.coremedia.iso.Hex;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Media;
 import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.telegram.TGLegacyManager;
+import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.tool.EmojiCode;
 import org.thunderdog.challegram.tool.EmojiData;
+import org.thunderdog.challegram.tool.Emojis;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
@@ -57,6 +60,9 @@ import me.vkryl.core.reference.ReferenceList;
 import me.vkryl.core.util.LocalVar;
 
 public class Emoji {
+  public static final @Deprecated String CUSTOM_EMOJI_CACHE_OLD = "custom_emoji_id_";
+  public static final String CUSTOM_EMOJI_CACHE = "_";
+
   private static Emoji instance;
 
   public static Emoji instance () {
@@ -69,20 +75,23 @@ public class Emoji {
     return instance;
   }
 
-  private final HashMap<CharSequence, EmojiInfo> rects;
+  private final HashMap<String, EmojiInfo> rects;
   private final ReferenceList<EmojiChangeListener> emojiChangeListeners = new ReferenceList<>();
 
-  private final CountLimiter singleLimiter = new org.thunderdog.challegram.emoji.Emoji.CountLimiter() {
-    @Override
-    public int getEmojiCount () {
-      return 0;
-    }
+  private final CountLimiter singleLimiter = newSingleLimiter();
 
-    @Override
-    public boolean incrementEmojiCount () {
-      return false;
+  public static String cleanupEmoji (String emoji) {
+    if (StringUtils.isEmpty(emoji)) {
+      return emoji;
     }
-  };
+    StringBuilder b = new StringBuilder(emoji);
+    int end = b.length();
+    while (b.charAt(end - 1) == '\uFE0F') {
+      b.delete(end - 1, end);
+      end--;
+    }
+    return b.toString();
+  }
 
   public static boolean equals (String a, String b) {
     int end1 = a.length();
@@ -114,8 +123,6 @@ public class Emoji {
     emojiChangeListeners.remove(listener);
   }
 
-  public final int emojiOriginalSize;
-
   private Emoji () {
     this.bitmaps = new EmojiBitmaps(Settings.instance().getEmojiPackIdentifier());
     this.emojiText = new LocalVar<>();
@@ -126,9 +133,6 @@ public class Emoji {
 
     this.defaultTone = Settings.instance().getEmojiDefaultTone();
 
-    final int sampleSize = EmojiBitmaps.calculateSampleSize();
-    emojiOriginalSize = (int) (30 * EmojiCode.SCALE) / sampleSize;
-
     int totalCount = EmojiData.getTotalDataCount();
     this.rects = new HashMap<>(totalCount);
     for (int sectionIndex = 0; sectionIndex < EmojiData.data.length; sectionIndex++) {
@@ -136,19 +140,7 @@ public class Emoji {
       for (int emojiIndex = 0; emojiIndex < EmojiData.data[sectionIndex].length; emojiIndex++) {
         int page = emojiIndex / count2;
         int position = emojiIndex - page * count2;
-        int row = position % EmojiCode.COLUMNS[sectionIndex][page];
-        int col = position / EmojiCode.COLUMNS[sectionIndex][page];
-
-        int margin = (int) (EmojiCode.MARGINS[sectionIndex][page] * (EmojiCode.SCALE / sampleSize));
-
-        int marginLeft = margin * row;
-        int marginTop = margin * col;
-
-        int left = row * emojiOriginalSize + marginLeft;
-        int top = col * emojiOriginalSize + marginTop;
-
-        Rect rect = new Rect(left, top, left + emojiOriginalSize, top + emojiOriginalSize);
-        rects.put(EmojiData.data[sectionIndex][emojiIndex], new EmojiInfo(rect, sectionIndex, page));
+        rects.put(EmojiData.data[sectionIndex][emojiIndex], new EmojiInfo(sectionIndex, page, position));
       }
     }
   }
@@ -158,7 +150,7 @@ public class Emoji {
     if (!emojiPack.identifier.equals(bitmaps.identifier)) {
       bitmaps.recycle();
       bitmaps = new EmojiBitmaps(emojiPack.identifier);
-      UI.emojiLoaded(true);
+      TGLegacyManager.instance().notifyEmojiChanged(true);
     }
   }
 
@@ -181,7 +173,7 @@ public class Emoji {
       return false;
     }
     File targetDir = new File(getEmojiPackDirectory(), identifier);
-    if (!targetDir.exists() && !targetDir.mkdirs()) {
+    if (!FileUtils.createDirectory(targetDir)) {
       Log.i("Cannot create emoji dir:%s", identifier);
       return false;
     }
@@ -227,26 +219,49 @@ public class Emoji {
   public interface EmojiChangeListener {
     void moveEmoji (int oldIndex, int newIndex);
     void addEmoji (int newIndex, RecentEmoji emoji);
+    void removeEmoji (int oldIndex, RecentEmoji emoji);
     void replaceEmoji (int newIndex, RecentEmoji emoji);
     void onToneChanged (@Nullable String newDefaultTone);
     void onCustomToneApplied (String emoji, @Nullable String newTone, @Nullable String[] newOtherTones);
   }
 
+  public void saveRecentCustomEmoji (long id) {
+    saveRecentEmoji(Emoji.CUSTOM_EMOJI_CACHE + id);
+  }
+
+  public boolean removeRecentCustomEmoji (long id) {
+    return removeRecentEmoji(Emoji.CUSTOM_EMOJI_CACHE + id);
+  }
+
+  public boolean removeRecentEmoji (String emoji) {
+    int oldIndex = indexOfRecentEmoji(emoji);
+    if (oldIndex == -1 || recents.size() == 1) {
+      return false;
+    }
+    RecentEmoji recentEmoji = recents.remove(oldIndex);
+    for (EmojiChangeListener listener : emojiChangeListeners) {
+      listener.removeEmoji(oldIndex, recentEmoji);
+    }
+    saveRecents(true);
+    return true;
+  }
+
+  private int indexOfRecentEmoji (String emoji) {
+    getRecents();
+    int index = 0;
+    for (RecentEmoji recentEmoji : recents) {
+      if (recentEmoji.emoji.equals(emoji)) {
+        return index;
+      }
+      index++;
+    }
+    return -1;
+  }
+
   public void saveRecentEmoji (String emoji) {
     int time = (int) (System.currentTimeMillis() / 1000l);
-    getRecents();
 
-    // emoji = fixEmoji(emoji);
-
-    int oldIndex = -1;
-    int i = 0;
-    for (RecentEmoji oldEmoji : recents) {
-      if (oldEmoji.emoji.equals(emoji)) {
-        oldIndex = i;
-        break;
-      }
-      i++;
-    }
+    int oldIndex = indexOfRecentEmoji(emoji);
 
     boolean changed;
 
@@ -494,29 +509,115 @@ public class Emoji {
 
   // emoji
 
-  @Nullable
-  public static String extractSingleEmoji (String str) {
-    CharSequence emoji = Emoji.instance().replaceEmoji(str);
-    if (emoji instanceof Spanned) {
-      EmojiSpan[] emojis = ((Spanned) emoji).getSpans(0, emoji.length(), EmojiSpan.class);
-      if (emojis != null && emojis.length > 0) {
-        int start = ((Spanned) emoji).getSpanStart(emojis[0]);
-        int end = ((Spanned) emoji).getSpanEnd(emojis[0]);
-        return start == 0 && end == emoji.length() ? emoji.toString() : emoji.subSequence(start, end).toString();
+  public static EmojiSpan findPrecedingEmojiSpan (Spanned spanned, int end) {
+    int next;
+    for (int i = Math.max(0, end - Emojis.MAX_EMOJI_LENGTH); i < end; i = next) {
+      next = spanned.nextSpanTransition(i, end, EmojiSpan.class);
+      if (next != end) {
+        continue;
+      }
+      EmojiSpan[] emojiSpans = spanned.getSpans(i, next, EmojiSpan.class);
+      if (emojiSpans != null) {
+        for (EmojiSpan emojiSpan : emojiSpans) {
+          int emojiEnd = spanned.getSpanEnd(emojiSpan);
+          if (emojiEnd == end) {
+            return emojiSpan;
+          }
+        }
       }
     }
     return null;
   }
 
   @Nullable
-  public boolean isSingleEmoji (String str) {
-    CharSequence emoji = Emoji.instance().replaceEmoji(str, 0, str.length(), singleLimiter);
+  public static String extractSingleEmoji (String str) {
+    CharSequence emoji = Emoji.instance().replaceEmoji(str, 0, str.length(), newSingleLimiter());
     if (emoji instanceof Spanned) {
+      Spanned spanned = (Spanned) emoji;
+      int end = spanned.length();
+      int next;
+      for (int i = 0; i < end; i = next) {
+        next = spanned.nextSpanTransition(i, end, EmojiSpan.class);
+        EmojiSpan[] emojis = spanned.getSpans(i, next, EmojiSpan.class);
+        if (emojis != null && emojis.length > 0) {
+          int emojiStart = ((Spanned) emoji).getSpanStart(emojis[0]);
+          int emojiEnd = ((Spanned) emoji).getSpanEnd(emojis[0]);
+          return emojiStart == 0 && emojiEnd == emoji.length() ? emoji.toString() : emoji.subSequence(emojiStart, emojiEnd).toString();
+        }
+      }
+    }
+    return null;
+  }
+
+  @Nullable
+  public static String extractPrecedingEmoji (Spanned spanned, int beforeIndex, boolean allowCustom) {
+    EmojiSpan span = Emoji.findPrecedingEmojiSpan(spanned, beforeIndex);
+    if (span != null && (allowCustom || !span.isCustomEmoji())) {
+      int start = spanned.getSpanStart(span);
+      int end = spanned.getSpanEnd(span);
+      return spanned.subSequence(start, end).toString();
+    }
+    return null;
+  }
+
+  public boolean isSingleEmoji (TdApi.FormattedText text) {
+    boolean hasEntities = false;
+    if (text.entities != null) {
+      for (TdApi.TextEntity entity : text.entities) {
+        if (entity.offset != 0 || entity.length < text.text.length()) {
+          return false;
+        }
+        //noinspection SwitchIntDef
+        switch (entity.type.getConstructor()) {
+          case TdApi.TextEntityTypeCustomEmoji.CONSTRUCTOR:
+            return true;
+          case TdApi.TextEntityTypeTextUrl.CONSTRUCTOR:
+            return false;
+          default:
+            hasEntities = true;
+            break;
+        }
+      }
+    }
+    if (hasEntities) {
+      return false;
+    }
+    return isSingleEmoji(text.text);
+  }
+
+  public boolean isSingleEmoji (CharSequence cs) {
+    return isSingleEmoji(cs, true);
+  }
+
+  public boolean isSingleEmoji (CharSequence cs, boolean allowCustom) {
+    if (StringUtils.isEmpty(cs)) {
+      return false;
+    }
+    if (cs instanceof Spanned) {
+      Spanned spanned = (Spanned) cs;
+      EmojiSpan[] spans = spanned.getSpans(0, cs.length(), EmojiSpan.class);
+      if (spans != null) {
+        if (spans.length > 1) {
+          return false;
+        }
+        if (spans.length == 1) {
+          EmojiSpan span = spans[0];
+          int spanStart = spanned.getSpanStart(span);
+          int spanEnd = spanned.getSpanEnd(span);
+          return spanStart == 0 && spanEnd == cs.length() && (allowCustom || !span.isCustomEmoji());
+        }
+      }
+    }
+    String str = cs.toString();
+    CharSequence emoji = replaceEmoji(str, 0, str.length(), singleLimiter);
+    if (emoji instanceof Spanned) {
+      Spanned spanned = (Spanned) emoji;
       EmojiSpan[] emojis = ((Spanned) emoji).getSpans(0, emoji.length(), EmojiSpan.class);
       if (emojis != null && emojis.length == 1) {
-        int start = ((Spanned) emoji).getSpanStart(emojis[0]);
-        int end = ((Spanned) emoji).getSpanEnd(emojis[0]);
-        return start == 0 && end == emoji.length();
+        EmojiSpan span = emojis[0];
+        int start = spanned.getSpanStart(span);
+        int end = spanned.getSpanEnd(span);
+        return start == 0 && end == emoji.length() && (allowCustom || !span.isCustomEmoji());
       }
     }
     return false;
@@ -534,13 +635,14 @@ public class Emoji {
     return getEmojiInfo(code, true);
   }
 
-  public EmojiInfo getEmojiInfo (CharSequence code, boolean allowRetry) {
-    if (code == null) {
+  public EmojiInfo getEmojiInfo (CharSequence codeCs, boolean allowRetry) {
+    if (StringUtils.isEmpty(codeCs)) {
       return null;
     }
+    String code = codeCs.toString();
     EmojiInfo info = rects.get(code);
     if (info == null) {
-      CharSequence newCode = EmojiData.instance().getEmojiAlias(code);
+      String newCode = EmojiData.instance().getEmojiAlias(code);
       if (newCode != null) {
         code = newCode;
         info = rects.get(code);
@@ -551,6 +653,9 @@ public class Emoji {
       if (lastChar == '\u200D' || lastChar == '\uFE0F') {
         return getEmojiInfo(code.subSequence(0, code.length() - 1), true);
       }
+      if (code.length() == 3 && code.charAt(1) == '\uFE0F') {
+        return getEmojiInfo(Character.toString(code.charAt(0)) + code.charAt(2));
+      }
     }
     /*if (info == null) {
       CharSequence fixedEmoji = fixEmoji(code);
@@ -559,11 +664,7 @@ public class Emoji {
       }
     }*/
     if (info == null) {
-      StringBuilder b = new StringBuilder(code.length());
-      for (int i = 0; i < code.length(); i++) {
-        b.append("\\u").append(Integer.toString(code.charAt(i), 16));
-      }
-      Log.i("Warning. No drawable for emoji: %s", b.toString());
+      Log.i("Warning. No drawable for emoji: %s", StringUtils.toUtfString(code));
       return null;
     }
 
@@ -579,7 +680,23 @@ public class Emoji {
       if (info == null)
         return null;
     }
-    return EmojiSpanImpl2.newSpan(code, info);
+    return EmojiSpanImpl.newSpan(info);
+  }
+
+  @Nullable
+  public EmojiSpan newCustomSpan (CharSequence code, @Nullable EmojiInfo info,
+                                  CustomEmojiSurfaceProvider customEmojiSurfaceProvider,
+                                  Tdlib tdlib, long customEmojiId) {
+    if (StringUtils.isEmpty(code))
+      return null;
+    if (info == null) {
+      info = getEmojiInfo(code);
+      if (info == null) {
+        Log.i("Invalid or unknown server emoji: %s", StringUtils.toUtfString(code));
+        // Ignore that we don't know this emoji to preserve custom emoji entity
+      }
+    }
+    return CustomEmojiSpanImpl.newCustomEmojiSpan(info, customEmojiSurfaceProvider, tdlib, customEmojiId);
   }
 
   public CharSequence replaceEmoji (CharSequence cs) {
@@ -592,6 +709,20 @@ public class Emoji {
 
   public CountLimiter singleLimiter () {
     return singleLimiter;
+  }
+
+  public static CountLimiter newSingleLimiter () {
+    return new org.thunderdog.challegram.emoji.Emoji.CountLimiter() {
+      @Override
+      public int getEmojiCount () {
+        return 0;
+      }
+
+      @Override
+      public boolean incrementEmojiCount () {
+        return false;
+      }
+    };
   }
 
   public interface CountLimiter {
@@ -904,11 +1035,11 @@ public class Emoji {
       return false;
     if (alpha == 255)
       return draw(c, info, outRect);
-    Bitmap bitmap = bitmaps.getBitmap(info.page1, info.page2);
-    if (bitmap != null) {
+    EmojiBitmaps.Entry bitmap = bitmaps.getBitmap(info.section, info.page);
+    if (bitmap != null && bitmap.isLoaded()) {
       Paint paint = Paints.getBitmapPaint();
       paint.setAlpha(alpha);
-      c.drawBitmap(bitmap, info.rect, outRect, paint);
+      bitmap.draw(c, info, outRect, paint);
       paint.setAlpha(255);
       return true;
     } else {
@@ -916,14 +1047,13 @@ public class Emoji {
     }
   }
 
-  public boolean draw (@NonNull Canvas c, EmojiInfo info, Rect outRect) {
+  public boolean draw (@NonNull Canvas c, @Nullable EmojiInfo info, Rect outRect) {
     if (info == null) {
       return false;
     }
-    Bitmap bitmap = bitmaps.getBitmap(info.page1, info.page2);
+    EmojiBitmaps.Entry bitmap = bitmaps.getBitmap(info.section, info.page);
     if (bitmap != null) {
-      c.drawBitmap(bitmap, info.rect, outRect, Paints.getBitmapPaint());
-      return true;
+      return bitmap.draw(c, info, outRect, Paints.getBitmapPaint());
     } else {
       return false;
     }
@@ -986,5 +1116,13 @@ public class Emoji {
     if (code.endsWith("\uFE0F"))
       return code.substring(0, code.length() - 1);
     return code;
+  }
+
+  public static String getEmojiFlagFromCountry (String countryCode) {
+    try {
+      return Client.execute(new TdApi.GetCountryFlagEmoji(countryCode)).text;
+    } catch (Client.ExecutionException e) {
+      return null;
+    }
   }
 }

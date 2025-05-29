@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@ package org.thunderdog.challegram.component.attach;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,10 +31,14 @@ import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
 import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.PorterDuffPaint;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
+import org.thunderdog.challegram.widget.BaseView;
 import org.thunderdog.challegram.widget.SimplestCheckBox;
 
 import me.vkryl.android.AnimatorUtils;
@@ -42,7 +47,7 @@ import me.vkryl.android.util.ClickHelper;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class MediaGalleryImageView extends View implements Destroyable, FactorAnimator.Target, ClickHelper.Delegate, ImageFile.ChangeListener {
+public class MediaGalleryImageView extends BaseView implements Destroyable, FactorAnimator.Target, ClickHelper.Delegate, ImageFile.ChangeListener {
   private static final float SCALE = .24f;
 
   public interface ClickListener {
@@ -60,7 +65,7 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
   private ClickListener listener;
 
   public MediaGalleryImageView (Context context) {
-    super(context);
+    super(context, null);
 
     helper = new ClickHelper(this);
 
@@ -76,6 +81,12 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
   }
 
   private boolean isInvisible;
+  private boolean isAlwaysInvisible;
+
+  public void setAlwaysInvisible (boolean alwaysInvisible) {
+    isAlwaysInvisible = alwaysInvisible;
+    invalidate();
+  }
 
   public void setInvisible (boolean isInvisible, boolean needInvalidate) {
     if (this.isInvisible != isInvisible) {
@@ -141,6 +152,8 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
   private int selectionIndex = -1;
   private String selectionIndexStr;
 
+  private boolean showFavorite;
+
   @Override
   public void onImageChanged (ImageFile file) {
     if (this.image == file) {
@@ -177,6 +190,7 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
     setChecked(selectionIndex, false);
     setInvisible(!isCheckable, false);
     setSelectionIndex(selectionIndex);
+    setShowFavorite(image instanceof ImageGalleryFile && ((ImageGalleryFile) image).isFavorite());
     invalidate();
   }
 
@@ -184,6 +198,13 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
     if (this.selectionIndex != index && index >= 0) {
       this.selectionIndex = index;
       this.selectionIndexStr = String.valueOf(index + 1);
+      invalidate();
+    }
+  }
+
+  public void setShowFavorite (boolean showFavorite) {
+    if (this.showFavorite != showFavorite) {
+      this.showFavorite = showFavorite;
       invalidate();
     }
   }
@@ -290,6 +311,10 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
     }
 
     receiver.draw(c);
+    if (showFavorite) {
+      Drawable drawable = getSparseDrawable(R.drawable.baseline_favorite_12, ColorId.white);
+      Drawables.draw(c, drawable, receiver.getLeft() + Screen.dp(6f), receiver.getBottom() - drawable.getMinimumHeight() - Screen.dp(6f), PorterDuffPaint.get(ColorId.white, .95f));
+    }
     if (duration != null && !duration.isEmpty()) {
       int textLeft = receiver.getLeft() + Screen.dp(7f);
       int textTop = receiver.getTop() + Screen.dp(5f);
@@ -303,7 +328,7 @@ public class MediaGalleryImageView extends View implements Destroyable, FactorAn
       c.restore();
     }
 
-    if (!isInvisible) {
+    if (!isInvisible && !isAlwaysInvisible) {
       final int centerX = receiver.centerX() + (int) ((float) receiver.getWidth() * (1f - SCALE)) / 2;
       final int centerY = receiver.centerY() - (int) ((float) receiver.getHeight() * (1f - SCALE)) / 2;
       final int radius = Screen.dp(9f + 2f * factor);

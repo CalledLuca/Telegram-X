@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,10 +33,13 @@ public class TGMessageReceiver extends BroadcastReceiver {
     int externalActionId;
     switch (action) {
       case Intents.ACTION_MESSAGE_READ:
-        externalActionId = TdlibManager.EXTERNAL_ACTION_MARK_AS_READ;
+        externalActionId = TdlibManager.ExternalAction.MARK_AS_READ;
         break;
       case Intents.ACTION_MESSAGE_MUTE:
-        externalActionId = TdlibManager.EXTERNAL_ACTION_MUTE;
+        externalActionId = TdlibManager.ExternalAction.MUTE;
+        break;
+      case Intents.ACTION_MESSAGE_UNMUTE:
+        externalActionId = TdlibManager.ExternalAction.UNMUTE;
         break;
       default:
         return;

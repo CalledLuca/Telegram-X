@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ package org.thunderdog.challegram.telegram;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.unsorted.Settings;
 
@@ -28,11 +28,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
-import me.vkryl.core.collection.LongList;
 import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.collection.LongList;
 import me.vkryl.core.util.FilteredIterator;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class TdlibNotificationGroup implements Iterable<TdlibNotification> {
   private static final int FLAG_HIDDEN_GLOBALLY = 1;

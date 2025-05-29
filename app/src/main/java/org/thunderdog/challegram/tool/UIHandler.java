@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 package org.thunderdog.challegram.tool;
 
 import android.content.Context;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 import android.view.Gravity;
@@ -26,16 +25,15 @@ import androidx.annotation.NonNull;
 import androidx.annotation.StringRes;
 
 import org.thunderdog.challegram.BaseActivity;
-import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.MainActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.config.Device;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TGAudio;
 import org.thunderdog.challegram.navigation.NavigationController;
 import org.thunderdog.challegram.navigation.ViewController;
-import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.TdlibDelegate;
 import org.thunderdog.challegram.util.Unlockable;
 import org.thunderdog.challegram.widget.ToastView;
@@ -53,7 +51,6 @@ public class UIHandler extends Handler {
   private static final int UNLOCK = 6;
   private static final int OPEN_FILE = 7;
   private static final int SET_CONTROLLER = 8;
-  private static final int EMOJI_LOADED = 9;
   private static final int OPEN_LINK = 13;
   private static final int OPEN_GALLERY = 14;
   private static final int OPEN_CAMERA = 15;
@@ -192,10 +189,6 @@ public class UIHandler extends Handler {
     sendMessage(Message.obtain(this, OPEN_LINK, url));
   }
 
-  public void emojiLoaded (boolean isChange) {
-    sendMessage(Message.obtain(this, EMOJI_LOADED, isChange ? 1 : 0, 0));
-  }
-
   public void unlock (Unlockable unlockable, long delay) {
     if (delay <= 0) {
       unlock(unlockable);
@@ -225,7 +218,7 @@ public class UIHandler extends Handler {
   }*/
 
   @Deprecated
-  public void openCamera (Context context, long delay, boolean isPrivate, boolean isVideo) {
+  public void openCamera (BaseActivity context, long delay, boolean isPrivate, boolean isVideo) {
     if (delay <= 0l) {
       sendMessage(Message.obtain(this, OPEN_CAMERA, isPrivate ? 1 : 0, isVideo ? 1 : 0, context));
     } else {
@@ -233,11 +226,11 @@ public class UIHandler extends Handler {
     }
   }
 
-  public void openGallery (long delay, boolean sendAsFile) {
+  public void openGallery (BaseActivity context, long delay, boolean sendAsFile) {
     if (delay <= 0l) {
-      sendMessage(Message.obtain(this, OPEN_GALLERY, sendAsFile ? 1 : 0, 0));
+      sendMessage(Message.obtain(this, OPEN_GALLERY, sendAsFile ? 1 : 0, 0, context));
     } else {
-      sendMessageDelayed(Message.obtain(this, OPEN_GALLERY, sendAsFile ? 1 : 0, 0), delay);
+      sendMessageDelayed(Message.obtain(this, OPEN_GALLERY, sendAsFile ? 1 : 0, 0, context), delay);
     }
   }
 
@@ -362,29 +355,10 @@ public class UIHandler extends Handler {
 
         break;
       }
-      case EMOJI_LOADED: {
-        TGLegacyManager.instance().onEmojiLoaded(msg.arg1 == 1);
-        break;
-      }
       case COPY_TEXT: {
         try {
-          CharSequence text = (CharSequence) msg.obj;
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-            android.content.ClipboardManager clipboard = (android.content.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-              android.content.ClipData clip = android.content.ClipData.newPlainText(BuildConfig.PROJECT_NAME, text);
-              clipboard.setPrimaryClip(clip);
-            }
-          } else {
-            //noinspection deprecation
-            android.text.ClipboardManager clipboard = (android.text.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-              //noinspection deprecation
-              clipboard.setText(text);
-            }
-          }
-
-          if (msg.arg1 != 0) {
+          U.copyText((CharSequence) msg.obj);
+          if (!Device.HAS_BUILTIN_CLIPBOARD_TOASTS && msg.arg1 != 0) {
             showCustomToast(msg.arg1, Toast.LENGTH_SHORT, 0);
           }
         } catch (Throwable t) {
@@ -394,15 +368,15 @@ public class UIHandler extends Handler {
         break;
       }
       case OPEN_GALLERY: {
-        Intents.openGallery(msg.arg1 == 1);
+        Intents.openGallery((BaseActivity) msg.obj, msg.arg1 == 1);
         break;
       }
       case OPEN_AUDIO: {
-        Intents.openAudio();
+        Intents.openAudio((BaseActivity) msg.obj);
         break;
       }
       case OPEN_CAMERA: {
-        Intents.openCamera((Context) msg.obj, msg.arg1 == 1, msg.arg2 == 1);
+        Intents.openCamera((BaseActivity) msg.obj, msg.arg1 == 1, msg.arg2 == 1);
         break;
       }
       case OPEN_NUMBER: {

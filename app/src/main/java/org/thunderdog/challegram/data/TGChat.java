@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,55 +14,70 @@
  */
 package org.thunderdog.challegram.data;
 
-import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.telegram.ReactionLoadListener;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibChatList;
 import org.thunderdog.challegram.telegram.TdlibCounter;
 import org.thunderdog.challegram.telegram.TdlibStatusManager;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
+import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Icons;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Settings;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
+import org.thunderdog.challegram.util.ReactionsCounterDrawable;
+import org.thunderdog.challegram.util.ReactionsListAnimator;
 import org.thunderdog.challegram.util.text.Counter;
 import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextColorSetOverride;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.util.text.TextEntityCustom;
+import org.thunderdog.challegram.util.text.TextMedia;
 import org.thunderdog.challegram.util.text.TextStyleProvider;
+import org.thunderdog.challegram.v.MessagesRecyclerView;
 
-import java.lang.ref.Reference;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.BounceAnimator;
 import me.vkryl.android.util.MultipleViewProvider;
 import me.vkryl.core.ArrayUtils;
-import me.vkryl.core.MathUtils;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.ChatPosition;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.ChatPosition;
+import tgx.td.Td;
+import tgx.td.TdExt;
 
-public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPreview.RefreshCallback, Counter.Callback, Destroyable {
+public class TGChat implements TdlibStatusManager.HelperTarget, ContentPreview.RefreshCallback, Counter.Callback, ReactionLoadListener, Destroyable, TdlibUi.MessageProvider {
   private static final int FLAG_HAS_PREFIX = 1;
   private static final int FLAG_TEXT_DRAFT = 1 << 4;
   private static final int FLAG_SHOW_VERIFY = 1 << 5;
@@ -74,6 +89,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
   private static final int FLAG_ARCHIVE = 1 << 14;
   private static final int FLAG_SHOW_SCAM = 1 << 15;
   private static final int FLAG_SHOW_FAKE = 1 << 16;
+  private static final int FLAG_MESSAGE = 1 << 17;
 
   private int flags, listMode;
 
@@ -89,13 +105,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
   private int currentWidth;
 
-  private long viewedMessageId;
-
-  private ImageFile avatar;
-  private AvatarPlaceholder avatarPlaceholder;
+  private AvatarPlaceholder.Metadata avatarPlaceholder;
 
   private String title;
   private Text trimmedTitle;
+
+  private @Nullable EmojiStatusHelper.EmojiStatusDrawable emojiStatusDrawable;
 
   private String time;
   private int timeWidth;
@@ -106,15 +121,16 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
   private TextEntity[] entities;
   private Text trimmedText;
 
-  private TD.ContentPreview currentPreview;
+  private ContentPreview currentPreview;
   private IntList textIconIds;
-  private @ThemeColorId
-  int textIconColorId;
+  private @PorterDuffColorId int textIconColorId;
 
   private int textLeft;
   private int timeLeft;
   private int muteLeft, verifyLeft;
+  private int emojiStatusLeft;
   private int checkRight;
+  private int reactionsRight;
 
   private Text chatMark;
 
@@ -122,6 +138,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
   private final BounceAnimator scheduleAnimator;
   private final Counter counter, mentionCounter, reactionsCounter, viewCounter;
+
+  private final ReactionsCounterDrawable reactionsCounterDrawable;
+  private final HashMap<String, TGReactions.MessageReactionEntry> reactionsMapEntry = new HashMap<>();
+  private final ReactionsListAnimator reactionsAnimator;
+  private final ArrayList<TGReactions.MessageReactionEntry> reactionsListEntry = new ArrayList<>();
+  private Set<String> awaitingReactions;
 
   public TGChat (ViewController<?> context, TdApi.ChatList chatList, TdApi.Chat chat, boolean makeMeasures) {
     this.context = context;
@@ -154,6 +176,11 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
       }
     }
     this.scheduleAnimator = new BounceAnimator(currentViews);
+    this.reactionsAnimator = new ReactionsListAnimator(
+      (a) -> currentViews.invalidate(),
+      AnimatorUtils.DECELERATE_INTERPOLATOR,
+      MessagesRecyclerView.ITEM_ANIMATOR_DURATION + 50L);
+    this.reactionsCounterDrawable = new ReactionsCounterDrawable(reactionsAnimator);
     this.counter = new Counter.Builder().callback(this).build();
     this.mentionCounter = new Counter.Builder()
       .drawable(R.drawable.baseline_at_16, 16f, 0f, Gravity.CENTER)
@@ -168,11 +195,13 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
       .callback(this)
       .noBackground()
       .allBold(false)
-      .textColor(R.id.theme_color_ticksRead)
+      .textColor(ColorId.ticksRead)
       .drawable(R.drawable.baseline_visibility_14, 14f, 3f, Gravity.RIGHT)
       .build();
     setCounter(false);
+    setReactions(false);
     setViews();
+    this.tdlib.singleUnreadReactionsManager().checkChat(chat);
     this.scheduleAnimator.setValue(hasScheduledMessages(), false);
     checkOnline();
     if (makeMeasures) {
@@ -189,6 +218,11 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     this.archive = list;
     this.listMode = Settings.instance().getChatListMode();
     this.scheduleAnimator = new BounceAnimator(currentViews);
+    this.reactionsAnimator = new ReactionsListAnimator(
+      (a) -> currentViews.invalidate(),
+      AnimatorUtils.DECELERATE_INTERPOLATOR,
+      MessagesRecyclerView.ITEM_ANIMATOR_DURATION + 50L);
+    this.reactionsCounterDrawable = new ReactionsCounterDrawable(reactionsAnimator);
     this.counter = new Counter.Builder().callback(this).build();
     this.mentionCounter = new Counter.Builder()
       .drawable(R.drawable.baseline_at_16, 16f, 0f, Gravity.CENTER)
@@ -214,6 +248,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
       layoutText();
     } else {
       setPrefix();
+    }
+  }
+
+  public void onAttachToView () {
+    if (emojiStatusDrawable != null) {
+      emojiStatusDrawable.onAppear();
     }
   }
 
@@ -269,17 +309,8 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     }
   }
 
-  private long lastSyncTime;
-
-  public void syncCounter () {
-    if (chat != null && chat.lastMessage != null && isChannel() && showViews()) {
-      long time = SystemClock.uptimeMillis();
-      if (viewedMessageId != chat.lastMessage.id || time - lastSyncTime > 60000 * 5 + (1f - MathUtils.clamp((float) TD.getViewCount(chat.lastMessage.interactionInfo) / 1000.0f)) * 1800000 ) {
-        lastSyncTime = time;
-        viewedMessageId = chat.lastMessage.id;
-        tdlib.client().send(new TdApi.ViewMessages(chat.id, 0, new long[] {viewedMessageId}, false), tdlib.okHandler());
-      }
-    }
+  public boolean needRefreshInteractionInfo () {
+    return chat != null && chat.lastMessage != null && isChannel() && showViews();
   }
 
   public boolean checkOnline () {
@@ -491,7 +522,8 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     if (getChatId() == chatId && checkLastMessageId(messageId)) {
       chat.lastMessage.interactionInfo = interactionInfo;
       setViews();
-      return showViews();
+      boolean r = setReactions(true);
+      return showViews() || r;
     }
     return false;
   }
@@ -510,9 +542,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
             }
           }
           if (updatedAlbum) {
-            setContentPreview(TD.getAlbumPreview(tdlib, chat.lastMessage, album, true));
+            setContentPreview(ContentPreview.getAlbumPreview(tdlib, chat.lastMessage, album, true));
             return true;
           }
+        }
+        if (currentPreview.updateRelatedMessage(chatId, messageId, newContent, this)) {
+          return true;
         }
       }
       if (chat.lastMessage.id == messageId) {
@@ -526,7 +561,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
   public boolean updateMessagesDeleted (long chatId, long[] messageIds) {
     if (chat.id == chatId && chat.lastMessage != null) {
-      if (ArrayUtils.indexOf(messageIds, chat.lastMessage.id) >= 0) {
+      if (ArrayUtils.contains(messageIds, chat.lastMessage.id)) {
         chat.lastMessage = null;
         setText();
         return true;
@@ -537,7 +572,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
         if (album != null) {
           boolean albumChanged = false;
           for (int index = album.messages.size() - 1; index >= 0; index--) {
-            if (ArrayUtils.indexOf(messageIds, album.messages.get(index).id) >= 0) {
+            if (ArrayUtils.contains(messageIds, album.messages.get(index).id)) {
               album.messages.remove(index);
               albumChanged = true;
             }
@@ -547,8 +582,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
             return true;
           }
           if (albumChanged) {
-            setContentPreview(TD.getAlbumPreview(tdlib, chat.lastMessage, album, true));
+            setContentPreview(ContentPreview.getAlbumPreview(tdlib, chat.lastMessage, album, true));
           }
+        }
+        if (currentPreview.belongsToRelatedMessage(chatId, messageIds)) {
+          setText();
+          return true;
         }
       }
       return true;
@@ -687,31 +726,13 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
   private void setAvatar () {
     if (isArchive()) {
-      avatar = null;
-      avatarPlaceholder = new AvatarPlaceholder(ChatView.getAvatarSizeDp(listMode) / 2f, new AvatarPlaceholder.Metadata(R.id.theme_color_avatarArchive, R.drawable.baseline_archive_24), null);
-      return;
-    }
-    boolean isSelfChat = (flags & FLAG_SELF_CHAT) != 0;
-    TdApi.File file = isSelfChat ? null : TD.getPhotoSmall(chat);
-    if (file == null) {
-      avatar = null;
-      avatarPlaceholder = tdlib.chatPlaceholder(chat, true, ChatView.getAvatarSizeDp(listMode) / 2f, null);
+      avatarPlaceholder = new AvatarPlaceholder.Metadata(tdlib.accentColor(TdlibAccentColor.InternalId.ARCHIVE), R.drawable.baseline_archive_24);
     } else {
-      avatar = new ImageFile(tdlib, file);
-      avatar.setSize(ChatView.getDefaultAvatarCacheSize());
       avatarPlaceholder = null;
     }
   }
 
-  public boolean hasAvatar () {
-    return avatar != null;
-  }
-
-  public ImageFile getAvatar () {
-    return avatar;
-  }
-
-  public AvatarPlaceholder getAvatarPlaceholder () {
+  public AvatarPlaceholder.Metadata getAvatarPlaceholder () {
     return avatarPlaceholder;
   }
 
@@ -897,6 +918,22 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     if (isSecret) {
       avail = avail - Screen.dp(14f);
     }
+
+    if (!tdlib.isSelfChat(chat)) {
+      emojiStatusDrawable = EmojiStatusHelper.makeDrawable(null, tdlib, chat != null ? tdlib.chatUser(chat) : null, new TextColorSetOverride(TextColorSets.Regular.NORMAL) {
+        @Override
+        public long mediaTextComplexColor () {
+          return Theme.newComplexColor(true, ColorId.iconActive);
+        }
+      }, this::invalidateEmojiStatusReceiver);
+      emojiStatusDrawable.invalidateTextMedia();
+      avail -= emojiStatusDrawable.getWidth(Screen.dp(6));
+    }
+    if (needDrawReactionsPreview()) {
+      int reactionsWidth = reactionsCounterDrawable.getTargetWidth();
+      avail -= reactionsWidth + (reactionsWidth > 0 ? Screen.dp(3) : 0);
+    }
+
     if (changed || lastAvailWidth != avail) {
       lastAvailWidth = avail;
       if (StringUtils.isEmpty(title)) {
@@ -912,6 +949,11 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     int titleWidth = getTitleWidth();
     verifyLeft = ChatView.getLeftPadding(listMode) + titleWidth;
     muteLeft = ChatView.getLeftPadding(listMode) + titleWidth + ChatView.getMutePadding();
+    emojiStatusLeft = ChatView.getLeftPadding(listMode) + titleWidth + Screen.dp(3);
+    if (emojiStatusDrawable != null) {
+      muteLeft += emojiStatusDrawable.getWidth(Screen.dp(6));
+      verifyLeft += emojiStatusDrawable.getWidth(Screen.dp(6));
+    }
     if (showVerify) {
       muteLeft += Screen.dp(20f);
     }
@@ -924,6 +966,38 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     }
     if (changed && avatarPlaceholder != null) {
       setAvatar();
+    }
+  }
+
+  public boolean needDrawReactionsPreview () {
+    return isPrivate() && !isSelfChat() && !showDraft();
+  }
+
+  public @Nullable EmojiStatusHelper.EmojiStatusDrawable getEmojiStatus () {
+    return emojiStatusDrawable;
+  }
+
+  public void invalidateEmojiStatusReceiver (Text text, @Nullable TextMedia specificMedia) {
+    currentViews.performWithViews(view -> {
+      if (view instanceof EmojiStatusHelper.EmojiStatusReceiverInvalidateDelegate) {
+        ((EmojiStatusHelper.EmojiStatusReceiverInvalidateDelegate) view).invalidateEmojiStatusReceiver(text, specificMedia);
+      }
+    });
+  }
+
+  public void invalidateReactionsReceiver () {
+    currentViews.performWithViews(view -> {
+      if (view instanceof ChatView) {
+        requestReactionFiles(((ChatView) view).getReactionsReceiver());
+      }
+    });
+    currentViews.invalidate();
+  }
+
+  public void requestReactionFiles (ComplexReceiver complexReceiver) {
+    for (Map.Entry<String, TGReactions.MessageReactionEntry> pair : reactionsMapEntry.entrySet()) {
+      TGReactions.MessageReactionEntry entry = pair.getValue();
+      entry.requestReactionFiles(complexReceiver);
     }
   }
 
@@ -940,7 +1014,8 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     return trimmedTitle;
   }
 
-  public void setTime () {
+  public boolean setTime () {
+    String time;
     if (isArchive()) {
       int maxDate = archive.maxDate();
       time = maxDate != 0 ? Lang.timeOrDateShort(maxDate, TimeUnit.SECONDS) : "";
@@ -955,15 +1030,25 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
             time = Lang.getPsaType(((TdApi.ChatSourcePublicServiceAnnouncement) source));
             break;
           }
+          default: {
+            Td.assertChatSource_12b21238();
+            throw Td.unsupported(source);
+          }
         }
       } else {
-        int date = chat.draftMessage != null ? chat.draftMessage.date : chat.lastMessage != null ? chat.lastMessage.date : 0;
+        int date = chat.draftMessage != null && showDraft() ? chat.draftMessage.date : chat.lastMessage != null ? chat.lastMessage.date : 0;
         time = date != 0 ? Lang.timeOrDateShort(date, TimeUnit.SECONDS) : "";
       }
     }
-    timeWidth = (int) U.measureText(time, ChatView.getTimePaint());
+    boolean changed = !time.equals(this.time);
+    if (changed) {
+      this.time = time;
+      this.timeWidth = (int) U.measureText(time, ChatView.getTimePaint());
+    }
     layoutTime();
+    setReactions(UI.inUiThread());
     setViews();
+    return changed;
   }
 
   private int getViewCount () {
@@ -974,6 +1059,12 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     if (viewCounter != null) {
       int count = getViewCount();
       viewCounter.setCount(count, needAnimateChanges());
+    }
+  }
+
+  public void updateDate () {
+    if (setTime()) {
+      layoutTitle(false);
     }
   }
 
@@ -993,6 +1084,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
   private void layoutTime () {
     timeLeft = currentWidth - ChatView.getTimePaddingRight() - timeWidth;
     checkRight = timeLeft - ChatView.getTimePaddingLeft();
+    reactionsRight = checkRight - ChatView.getTimePaddingLeft();
   }
 
   public String getTime () {
@@ -1027,8 +1119,16 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     return verifyLeft;
   }
 
+  public int getEmojiStatusLeft () {
+    return emojiStatusLeft + (isSecretChat() ? Screen.dp(12) : 0);
+  }
+
   public int getChecksRight () {
     return checkRight;
+  }
+
+  public int getReactionsWidth () {
+    return reactionsCounterDrawable.getMinimumWidth();
   }
 
   private int getCounterAddWidth () {
@@ -1073,9 +1173,20 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
         .ignoreContinuousNewLines()
         .ignoreNewLines(isSingleLine())
         .lineMarginProvider((lineIndex, y, defaultMaxWidth, lineHeight) -> lineIndex == 0 ? textIconsPadding : 0)
-        .entities(entities)
+        .viewProvider(currentViews)
+        .entities(entities, (text, specificMedia) -> {
+          if (this.trimmedText == text) {
+            for (View view : currentViews) {
+              ComplexReceiver receiver = ((ChatView) view).getTextMediaReceiver();
+              if (!text.invalidateMediaContent(receiver, specificMedia)) {
+                text.requestMedia(receiver);
+              }
+            }
+          }
+        })
         .noClickable()
         .build();
+      currentViews.invalidateContent(this);
     } else {
       trimmedText = null;
     }
@@ -1097,7 +1208,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     return textIconIds;
   }
 
-  public @ThemeColorId int getTextIconColorId () {
+  public @PorterDuffColorId int getTextIconColorId () {
     return textIconColorId;
   }
 
@@ -1113,7 +1224,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
       } else if (isOutgoing()) {
         prefix = Lang.getString(listMode != Settings.CHAT_MODE_2LINE && tdlib.isMultiChat(chat) && Td.getSenderId(chat.lastMessage) == chat.id ? R.string.FromYouAnonymous : R.string.FromYou);
         flags |= FLAG_CONTENT_STRING;
-      } else if (chat.lastMessage != null && chat.lastMessage.content.getConstructor() != TdApi.MessageProximityAlertTriggered.CONSTRUCTOR) {
+      } else if (chat.lastMessage != null && !Td.isProximityAlertTriggered(chat.lastMessage.content)) {
         prefix = listMode == Settings.CHAT_MODE_2LINE && Td.getMessageAuthorId(chat.lastMessage) == chat.lastMessage.chatId && StringUtils.isEmpty(chat.lastMessage.authorSignature) ?
           Lang.getString(R.string.FromAnonymous) :
           tdlib.senderName(chat.lastMessage, false, listMode == Settings.CHAT_MODE_2LINE);
@@ -1129,7 +1240,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
           avail = Screen.dp(120f);
         }
         if (avail > 0) {
-          Text.Builder b = new Text.Builder(prefix, avail, getTextStyleProvider(listMode), BitwiseUtils.getFlag(flags, FLAG_TEXT_DRAFT) ? TextColorSets.Regular.NEGATIVE : TextColorSets.Regular.NORMAL)
+          Text.Builder b = new Text.Builder(prefix, avail, getTextStyleProvider(listMode), BitwiseUtils.hasFlag(flags, FLAG_TEXT_DRAFT) ? TextColorSets.Regular.NEGATIVE : TextColorSets.Regular.NORMAL)
             .singleLine()
             .textFlags(Text.FLAG_ELLIPSIZE_NO_FILL);
           if (needSuffix && listMode == Settings.CHAT_MODE_2LINE) {
@@ -1175,20 +1286,22 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     flags &= ~FLAG_TEXT_DRAFT;
     flags &= ~FLAG_CONTENT_HIDDEN;
     flags &= ~FLAG_CONTENT_STRING;
+    flags &= ~FLAG_MESSAGE;
     if (textIconIds != null) {
       textIconIds.clear();
     }
+    visibleMessage = null;
     currentPreview = null;
 
     if (tdlib.hasPasscode(chat)) {
       flags |= FLAG_CONTENT_HIDDEN;
-      setContentPreview(new TD.ContentPreview(TD.EMOJI_LOCK, R.string.ChatContentProtected));
+      setContentPreview(new ContentPreview(ContentPreview.EMOJI_LOCK, R.string.ChatContentProtected));
       return;
     }
 
     String restrictionReason = tdlib.chatRestrictionReason(chat);
     if (restrictionReason != null) {
-      setContentPreview(new TD.ContentPreview(TD.EMOJI_ERROR, 0, restrictionReason, false));
+      setContentPreview(new ContentPreview(ContentPreview.EMOJI_ERROR, 0, restrictionReason, false));
       return;
     }
 
@@ -1226,7 +1339,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     TdApi.ChatSource source = getSource();
     String psaText = source instanceof TdApi.ChatSourcePublicServiceAnnouncement ? ((TdApi.ChatSourcePublicServiceAnnouncement) source).text : null;
     if (!StringUtils.isEmpty(psaText)) {
-      setContentPreview(new TD.ContentPreview(TD.EMOJI_INFO, 0, psaText, false));
+      setContentPreview(new ContentPreview(ContentPreview.EMOJI_INFO, 0, psaText, false));
       return;
     }
 
@@ -1265,12 +1378,33 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
     TdApi.Message msg = chat.lastMessage;
     if (msg != null) {
-      TD.ContentPreview preview = TD.getChatListPreview(tdlib, msg.chatId, msg);
+      flags |= FLAG_MESSAGE;
+      // No need to check tdlib.chatRestrictionReason, because it's already handled above
+      ContentPreview preview = ContentPreview.getChatListPreview(tdlib, msg.chatId, msg, false);
       setContentPreview(preview);
+      visibleMessage = msg;
     } else {
       setTextValue(R.string.DeletedMessage);
       setPrefix();
     }
+  }
+
+  private TdApi.Message visibleMessage;
+
+  @Override
+  public boolean isMediaGroup () {
+    return currentPreview != null && currentPreview.getAlbum() != null;
+  }
+
+  @Override
+  public List<TdApi.Message> getVisibleMediaGroup () {
+    Tdlib.Album album = currentPreview != null ? currentPreview.getAlbum() : null;
+    return album != null ? album.messages : null;
+  }
+
+  @Override
+  public TdApi.Message getVisibleMessage () {
+    return visibleMessage;
   }
 
   private void addIcon (int icon) {
@@ -1281,45 +1415,55 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     }
   }
 
-  private void setContentPreview (TD.ContentPreview preview) {
+  private void setContentPreview (ContentPreview preview) {
     if (textIconIds != null)
       textIconIds.clear();
     setTextValue(preview.buildText(true), preview.formattedText != null ? preview.formattedText.entities : null, preview.isTranslatable);
     this.currentPreview = preview;
+    TdApi.Message lastMessage = chat != null ? chat.lastMessage : null;
     if (preview.parentEmoji != null) {
       addIcon(preview.parentEmoji.iconRepresentation);
-    } else if (chat.lastMessage != null && chat.lastMessage.forwardInfo != null && (chat.lastMessage.isChannelPost || getPrefixIconCount() == 0)) {
-      TdApi.MessageForwardInfo forwardInfo = chat.lastMessage.forwardInfo;
-      switch (forwardInfo.origin.getConstructor()) {
-        case TdApi.MessageForwardOriginChannel.CONSTRUCTOR:
-          if (chat.id != ((TdApi.MessageForwardOriginChannel) forwardInfo.origin).chatId) {
-            addIcon(R.drawable.baseline_share_arrow_16);
-          }
-          break;
-        case TdApi.MessageForwardOriginHiddenUser.CONSTRUCTOR:
-          addIcon(R.drawable.baseline_share_arrow_16);
-          break;
-        case TdApi.MessageForwardOriginUser.CONSTRUCTOR:
-          if (Td.getSenderUserId(chat.lastMessage) != ((TdApi.MessageForwardOriginUser) forwardInfo.origin).senderUserId)
-            addIcon(R.drawable.baseline_share_arrow_16);
-          break;
-        case TdApi.MessageForwardOriginChat.CONSTRUCTOR:
-          if (Td.getSenderId(chat.lastMessage) != ((TdApi.MessageForwardOriginChat) forwardInfo.origin).senderChatId)
-            addIcon(R.drawable.baseline_share_arrow_16);
-          break;
-        case TdApi.MessageForwardOriginMessageImport.CONSTRUCTOR:
-          addIcon(R.drawable.templarian_baseline_import_16);
-          break;
+    } else if (lastMessage != null && (lastMessage.isChannelPost || getPrefixIconCount() == 0)) {
+      boolean needShareIcon = false;
+      if (lastMessage.forwardInfo != null) {
+        TdApi.MessageOrigin origin = lastMessage.forwardInfo.origin;
+        switch (origin.getConstructor()) {
+          case TdApi.MessageOriginChannel.CONSTRUCTOR:
+            needShareIcon = chat.id != ((TdApi.MessageOriginChannel) origin).chatId;
+            break;
+          case TdApi.MessageOriginHiddenUser.CONSTRUCTOR:
+            needShareIcon = true;
+            break;
+          case TdApi.MessageOriginUser.CONSTRUCTOR:
+            needShareIcon = Td.getSenderUserId(chat.lastMessage) != ((TdApi.MessageOriginUser) origin).senderUserId;
+            break;
+          case TdApi.MessageOriginChat.CONSTRUCTOR:
+            needShareIcon = Td.getSenderId(chat.lastMessage) != ((TdApi.MessageOriginChat) origin).senderChatId;
+            break;
+          default:
+            Td.assertMessageOrigin_f2224a59();
+            throw Td.unsupported(origin);
+        }
+      }
+      if (needShareIcon) {
+        addIcon(R.drawable.baseline_share_arrow_16);
+      } else if (lastMessage.importInfo != null) {
+        addIcon(R.drawable.templarian_baseline_import_16);
+      } else if (lastMessage.replyTo != null && lastMessage.replyTo.getConstructor() == TdApi.MessageReplyToMessage.CONSTRUCTOR) {
+        TdApi.MessageReplyToMessage replyToMessage = (TdApi.MessageReplyToMessage) lastMessage.replyTo;
+        if (replyToMessage.chatId != lastMessage.chatId) {
+          addIcon(R.drawable.baseline_reply_16);
+        }
       }
     }
     if (preview.emoji != null) {
       addIcon(preview.emoji.iconRepresentation);
     }
-    this.textIconColorId = R.id.theme_color_chatListIcon;
+    this.textIconColorId = ColorId.chatListIcon;
 
     if ((isGroup() || isSupergroup()) && !preview.hideAuthor) {
       flags |= FLAG_HAS_PREFIX;
-    } else if (chat.lastMessage != null && chat.lastMessage.content.getConstructor() == TdApi.MessageCall.CONSTRUCTOR) {
+    } else if (chat.lastMessage != null && Td.isCall(chat.lastMessage.content)) {
       if (textIconIds != null)
         textIconIds.clear();
       addIcon(CallItem.getSubtitleIcon((TdApi.MessageCall) chat.lastMessage.content, TD.isOut(chat.lastMessage)));
@@ -1334,7 +1478,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
   }
 
   @Override
-  public void onContentPreviewChanged (long chatId, long messageId, TD.ContentPreview newPreview, TD.ContentPreview oldPreview) {
+  public void onContentPreviewChanged (long chatId, long messageId, ContentPreview newPreview, ContentPreview oldPreview) {
     tdlib.ui().post(() -> {
       if (currentPreview == oldPreview) {
         setContentPreview(newPreview);
@@ -1427,7 +1571,7 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
 
   @Override
   public boolean canLoop () {
-    return BitwiseUtils.getFlag(flags, FLAG_ATTACHED);
+    return BitwiseUtils.hasFlag(flags, FLAG_ATTACHED);
   }
 
   @Override
@@ -1443,9 +1587,99 @@ public class TGChat implements TdlibStatusManager.HelperTarget, TD.ContentPrevie
     return ((flags & FLAG_ATTACHED) != 0) && currentViews.hasAnyTargetToInvalidate() && context.getParentOrSelf().getAttachState();
   }
 
+  private boolean isDestroyed;
+
   @Override
   public void performDestroy () {
     currentViews.detachFromAllViews();
     setViewAttached(false);
+    isDestroyed = true;
+    if (awaitingReactions != null) {
+      for (String reactionKey : awaitingReactions) {
+        tdlib.listeners().removeReactionLoadListener(reactionKey, this);
+      }
+      awaitingReactions.clear();
+    }
+  }
+
+  public ReactionsCounterDrawable getReactionsCounterDrawable () {
+    return reactionsCounterDrawable;
+  }
+
+  private boolean setReactions (boolean animated) {
+    return setReactions(chat != null && chat.lastMessage != null && chat.lastMessage.interactionInfo != null ?
+      chat.lastMessage.interactionInfo.reactions : null, animated);
+  }
+
+  private boolean setReactions (@Nullable TdApi.MessageReactions reactions, boolean animated) {
+    this.reactionsListEntry.clear();
+
+    if (!Td.isEmpty(reactions) && !isDestroyed) {
+      for (TdApi.MessageReaction reaction : reactions.reactions) {
+        if (TdExt.isUnsupported(reaction.type))
+          continue;
+        String reactionKey = TD.makeReactionKey(reaction.type);
+
+        TGReaction reactionObj = tdlib.getReaction(reaction.type);
+        if (reactionObj == null) {
+          if (awaitingReactions == null) {
+            awaitingReactions = new LinkedHashSet<>();
+          }
+          if (awaitingReactions.add(reactionKey)) {
+            tdlib.listeners().addReactionLoadListener(reactionKey, this);
+          }
+          continue;
+        }
+        TGReactions.MessageReactionEntry entry = getMessageReactionEntry(reactionObj);
+        entry.setMessageReaction(reaction);
+        reactionsListEntry.add(entry);
+        if (awaitingReactions != null && awaitingReactions.remove(reactionKey)) {
+          tdlib.listeners().removeReactionLoadListener(reactionKey, this);
+        }
+      }
+    }
+
+    boolean r = !reactionsAnimator.compareContents(reactionsListEntry);
+    reactionsAnimator.reset(reactionsListEntry, animated);
+    layoutTitle(false);
+    currentViews.invalidate();
+    invalidateReactionsReceiver();
+    return r;
+  }
+
+  private TGReactions.MessageReactionEntry getMessageReactionEntry (TGReaction reactionObj) {
+    final TGReactions.MessageReactionEntry entry;
+    if (!reactionsMapEntry.containsKey(reactionObj.key)) {
+      entry = new TGReactions.MessageReactionEntry(tdlib, null, null, reactionObj, null) {
+        @Override
+        public int getBubbleTargetWidth () {
+          return 0;
+        }
+
+        @Override
+        public int getBubbleWidth () {
+          return 0;
+        }
+
+        @Override
+        public void invalidate () {
+          currentViews.invalidate();
+        }
+      };
+      reactionsMapEntry.put(reactionObj.key, entry);
+    } else {
+      entry = reactionsMapEntry.get(reactionObj.key);
+    }
+    return entry;
+  }
+
+  @Override
+  public void onReactionLoaded (String reactionKey) {
+    if (awaitingReactions != null && awaitingReactions.remove(reactionKey)) {
+      UI.post(() -> {
+        setReactions(true);
+        invalidateReactionsReceiver();
+      });
+    }
   }
 }

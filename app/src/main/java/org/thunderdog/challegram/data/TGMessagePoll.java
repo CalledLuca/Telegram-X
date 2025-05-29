@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,16 +24,15 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.chat.MessageView;
 import org.thunderdog.challegram.component.chat.MessagesManager;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ComplexReceiver;
-import org.thunderdog.challegram.loader.ImageFile;
-import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.telegram.Tdlib;
@@ -45,7 +44,6 @@ import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.ui.PollResultsController;
 import org.thunderdog.challegram.util.text.Text;
-import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.util.text.TextWrapper;
 import org.thunderdog.challegram.widget.ProgressComponent;
 import org.thunderdog.challegram.widget.SimplestCheckBox;
@@ -64,10 +62,9 @@ import me.vkryl.android.util.ClickHelper;
 import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
-import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, ComplexReceiver.KeyFilter, TooltipOverlayView.VisibilityListener {
   private static int ftoi (float f) { // Utility method to change conversion in all places, if needed
@@ -89,9 +86,9 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     private final float resultsVisibility, timerVisibility, hintVisibility;
     private final boolean resultsVisible, timerVisible, hintVisible;
 
-    public PollState (Tdlib tdlib, TdApi.Poll poll) {
+    public PollState (Tdlib tdlib, TdApi.Poll poll, boolean resultsVisible) {
       this.poll = poll;
-      this.resultsVisible = TD.needShowResults(poll);
+      this.resultsVisible = resultsVisible;
       this.resultsVisibility = resultsVisible ? 1f : 0f;
       this.timerVisible = !poll.isClosed && poll.openPeriod != 0;
       this.timerVisibility = timerVisible ? 1f : 0f;
@@ -129,7 +126,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
           fromTo(fromState.options[i].progress, toState.options[i].progress, factor)
         );
       }
-      this.poll = new TdApi.Poll(toState.poll.id, toState.poll.question, options, toState.poll.totalVoterCount, toState.poll.recentVoterUserIds, toState.poll.isAnonymous, toState.poll.type, toState.poll.openPeriod, toState.poll.closeDate, toState.poll.isClosed);
+      this.poll = new TdApi.Poll(toState.poll.id, toState.poll.question, options, toState.poll.totalVoterCount, toState.poll.recentVoterIds, toState.poll.isAnonymous, toState.poll.type, toState.poll.openPeriod, toState.poll.closeDate, toState.poll.isClosed);
     }
 
     public int size () {
@@ -176,6 +173,8 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     private int percentageStrWidth;
     private float selectionFactor;
     private SimplestCheckBox checkBox;
+    private TdApi.FormattedText textSource;
+    @Nullable
     private TextWrapper text;
     private ProgressComponent progress;
     private BoolAnimator isSelected;
@@ -233,7 +232,8 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   private final BoolAnimator isButtonActive;
   private final ReplaceAnimator<Button> button;
 
-  private TextWrapper questionText;
+  private TdApi.FormattedText questionTextSource;
+  private @Nullable TextWrapper questionText;
 
   // Animation
 
@@ -252,37 +252,35 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   private static final float VOTER_OUTLINE = 1f;
   private static final float VOTER_SPACING = 4f;
 
-  private static class UserEntry {
-    private final long userId;
-    private final ImageFile avatarFile;
-    private final AvatarPlaceholder avatarPlaceholder;
+  private static class SenderEntry {
+    private final TdApi.MessageSender senderId;
 
-    public UserEntry (Tdlib tdlib, long userId) {
-      this.userId = userId;
-      this.avatarFile = tdlib.cache().userAvatar(userId);
-      if (this.avatarFile != null) {
-        this.avatarFile.setSize(Screen.dp(VOTER_RADIUS) * 2);
-      }
-      this.avatarPlaceholder = tdlib.cache().userPlaceholder(userId, false, VOTER_RADIUS, null);
+    public SenderEntry (Tdlib tdlib, TdApi.MessageSender senderId) {
+      this.senderId = senderId;
     }
 
     @Override
     public boolean equals (@Nullable Object obj) {
-      return obj instanceof UserEntry && ((UserEntry) obj).userId == this.userId;
+      return obj instanceof SenderEntry && Td.equalsTo(((SenderEntry) obj).senderId, this.senderId);
     }
 
     @Override
     public int hashCode() {
-      return (int) (userId ^ (userId >>> 32));
+      long senderId = Td.getSenderId(this.senderId);
+      return (int) (senderId ^ (senderId >>> 32));
     }
 
     public void draw (Canvas c, TGMessage context, ComplexReceiver complexReceiver, float cx, float cy, final float alpha) {
       if (alpha == 0f)
         return;
 
-      ImageReceiver receiver = avatarFile != null ? complexReceiver.getImageReceiver(userId) : null;
-      int radius = Screen.dp(VOTER_RADIUS);
       int replaceColor = context.getContentReplaceColor();
+      int radius = Screen.dp(VOTER_RADIUS);
+
+      AvatarReceiver receiver = complexReceiver.getAvatarReceiver(Td.getSenderId(senderId));
+      if (alpha != 1f)
+        receiver.setPaintAlpha(receiver.getPaintAlpha() * alpha);
+      receiver.setBounds((int) (cx - radius), (int) (cy - radius), (int) (cx + radius), (int) (cy + radius));
 
       boolean needRestore = alpha != 1f;
       int restoreToCount;
@@ -294,20 +292,13 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
         restoreToCount = -1;
       }
 
-      c.drawCircle(cx, cy, radius + Screen.dp(VOTER_OUTLINE) * alpha * .5f, Paints.getProgressPaint(replaceColor, Screen.dp(VOTER_OUTLINE) * alpha));
-
-      if (receiver != null) {
-        if (alpha != 1f)
-          receiver.setPaintAlpha(receiver.getPaintAlpha() * alpha);
-        receiver.setBounds((int) (cx - radius), (int) (cy - radius), (int) (cx + radius), (int) (cy + radius));
-        if (receiver.needPlaceholder())
-          receiver.drawPlaceholderRounded(c, radius, ColorUtils.alphaColor(alpha, Theme.placeholderColor()));
-        receiver.draw(c);
-        if (alpha != 1f)
-          receiver.restorePaintAlpha();
-      } else if (avatarPlaceholder != null) {
-        avatarPlaceholder.draw(c, cx, cy, alpha);
-      }
+      float displayRadius = receiver.getDisplayRadius();
+      receiver.drawPlaceholderRounded(c, displayRadius, Screen.dp(VOTER_OUTLINE) * alpha * .5f, Paints.getProgressPaint(replaceColor, Screen.dp(VOTER_OUTLINE) * alpha));
+      if (receiver.needPlaceholder())
+        receiver.drawPlaceholder(c);
+      receiver.draw(c);
+      if (alpha != 1f)
+        receiver.restorePaintAlpha();
 
       if (needRestore) {
         Views.restore(c, restoreToCount);
@@ -315,7 +306,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     }
   }
 
-  private ListAnimator<UserEntry> recentVoters;
+  private ListAnimator<SenderEntry> recentVoters;
 
   // Impl
 
@@ -355,7 +346,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     }*/
 
     this.clickHelper = new ClickHelper(this);
-    this.state = new PollState(tdlib, poll);
+    this.state = new PollState(tdlib, poll, needShowResults(poll));
     if (!poll.isAnonymous || isMultiChoicePoll()) {
       this.isButtonActive = new BoolAnimator(ANIMATOR_BUTTON, this, AnimatorUtils.DECELERATE_INTERPOLATOR, 120l);
       this.button = new ReplaceAnimator<>(animator -> this.invalidate());
@@ -365,9 +356,15 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     }
   }
 
-  private void setQuestion (String question) {
-    if (this.questionText == null || !StringUtils.equalsOrBothEmpty(this.questionText.getText(), question)) {
-      this.questionText = new TextWrapper(state.poll.question, getBiggerTextStyleProvider(), getTextColorSet(), new TextEntity[] {TextEntity.valueOf(tdlib, state.poll.question, new TdApi.TextEntity(0, state.poll.question.length(), new TdApi.TextEntityTypeBold()), null)}).setViewProvider(currentViews);
+  private void setQuestion (@NonNull TdApi.FormattedText question) {
+    TdApi.FormattedText questionToSet = (translatedTexts != null ? Td.trim(translatedTexts[0]) : question);
+    if (questionToSet == null)
+      throw new IllegalStateException();
+    if (!Td.equalsTo(this.questionTextSource, questionToSet)) {
+      this.questionTextSource = questionToSet;
+      this.questionText = new TextWrapper(tdlib, questionToSet, getBiggerTextStyleProvider(), getTextColorSet(), openParameters(), (wrapper, text, specificMedia) -> TGMessagePoll.this.invalidateTextMediaReceiver(text, specificMedia))
+        .addTextFlags(Text.FLAG_ALL_BOLD)
+        .setViewProvider(currentViews);
     }
   }
 
@@ -375,10 +372,35 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     prepareOptions(options);
     int optionId = 0;
     for (TdApi.PollOption option : options) {
-      if (this.options[optionId].text == null || !StringUtils.equalsOrBothEmpty(this.options[optionId].text.getText(), option.text)) {
-        this.options[optionId].text = new TextWrapper(option.text, getTextStyleProvider(), getTextColorSet(), null).setViewProvider(currentViews);
+      TdApi.FormattedText optionToSet = (translatedTexts != null ? Td.trim(translatedTexts[optionId + 1]) : option.text);
+      if (optionToSet == null) {
+        optionToSet = Td.emptyFormattedText();
+      }
+      if (!Td.equalsTo(this.options[optionId].textSource, optionToSet)) {
+        this.options[optionId].textSource = optionToSet;
+        this.options[optionId].text = new TextWrapper(tdlib, optionToSet, getTextStyleProvider(), getTextColorSet(), openParameters(), (wrapper, text, specificMedia) -> TGMessagePoll.this.invalidateTextMediaReceiver(text, specificMedia))
+          .setViewProvider(currentViews);
       }
       optionId++;
+    }
+  }
+
+  @Override
+  public void requestTextMedia (ComplexReceiver textMediaReceiver) {
+    int idOffset = Integer.MAX_VALUE / (options.length + 1);
+    if (questionText != null) {
+      questionText.requestMedia(textMediaReceiver, 0, idOffset);
+    } else {
+      textMediaReceiver.clearReceiversRange(0, idOffset);
+    }
+    int key = 0;
+    for (OptionEntry entry : options) {
+      key += idOffset;
+      if (entry.text != null) {
+        entry.text.requestMedia(textMediaReceiver, key, idOffset);
+      } else {
+        textMediaReceiver.clearReceiversRange(key, key + idOffset);
+      }
     }
   }
 
@@ -407,23 +429,27 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   @Override
   protected void buildContent (int maxWidth) {
     if (questionText == null) {
-      setRecentVoters(state.poll.recentVoterUserIds, false);
+      setRecentVoters(state.poll.recentVoterIds, false);
       setQuestion(state.poll.question);
       setOptions(state.poll.options);
       prepareProgress(state.poll.options);
       setTexts();
       setButton(false);
     }
-    questionText.prepare(maxWidth);
+    if (questionText != null) {
+      questionText.prepare(maxWidth);
+    }
     int optionWidth = maxWidth - Screen.dp(34f);
     for (OptionEntry option : this.options) {
-      option.text.prepare(optionWidth);
+      if (option.text != null) {
+        option.text.prepare(optionWidth);
+      }
     }
   }
 
   @Override
   protected int getContentHeight () {
-    int height = (questionText != null ? questionText.getHeight() : 0) + Screen.dp(5f);
+    int height = getQuestionTitleHeight();
     height += Screen.dp(18f); // poll status
     if (options != null) {
       for (OptionEntry option : options) {
@@ -443,8 +469,8 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   @Override
   public boolean filterKey (int receiverType, Receiver receiver, long key) {
     if (recentVoters != null) {
-      for (ListAnimator.Entry<UserEntry> recentVoter : recentVoters) {
-        if (recentVoter.item.userId == key) {
+      for (ListAnimator.Entry<SenderEntry> recentVoter : recentVoters) {
+        if (Td.getSenderId(recentVoter.item.senderId) == key) {
           return true;
         }
       }
@@ -460,10 +486,10 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   @Override
   public void requestMediaContent (ComplexReceiver complexReceiver, boolean invalidate, int invalidateArg) {
     if (recentVoters != null) {
-      for (ListAnimator.Entry<UserEntry> entry : recentVoters) {
-        ImageReceiver receiver = complexReceiver.getImageReceiver(entry.item.userId);
-        receiver.setRadius(Screen.dp(VOTER_RADIUS));
-        receiver.requestFile(entry.item.avatarFile);
+      for (ListAnimator.Entry<SenderEntry> entry : recentVoters) {
+        long senderId = Td.getSenderId(entry.item.senderId);
+        AvatarReceiver receiver = complexReceiver.getAvatarReceiver(senderId);
+        receiver.requestMessageSender(tdlib, entry.item.senderId, AvatarReceiver.Options.NONE);
       }
     }
     complexReceiver.clearReceivers(this);
@@ -474,7 +500,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     drawContent(view, c, startX, startY, maxWidth);
 
     // First, draw question
-    startY += questionText.getHeight() + Screen.dp(5f);
+    startY += getQuestionTitleHeight();
     // Second, draw status
     startY += Screen.dp(18f);
 
@@ -484,7 +510,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       int cx = startX + pollStatusText.getWidth() + Screen.dp(VOTER_RADIUS) + Screen.dp(6f);
       int spacing = Screen.dp(VOTER_RADIUS) * 2 - Screen.dp(VOTER_SPACING);
       for (int index = recentVoters.size() - 1; index >= 0; index--) {
-        ListAnimator.Entry<UserEntry> item = recentVoters.getEntry(index);
+        ListAnimator.Entry<SenderEntry> item = recentVoters.getEntry(index);
         int x = cx + item.getIndex() * spacing;
         if (x + Screen.dp(VOTER_RADIUS) + Screen.dp(2f) <= startX + maxWidth) {
           item.item.draw(c, this, receiver, cx + item.getPosition() * spacing, startY, item.getVisibility());
@@ -501,9 +527,13 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     return getContentX() + Screen.dp(12f);
   }
 
+  private int getQuestionTitleHeight () {
+    return questionText != null ? questionText.getHeight() + Screen.dp(5f) : 0;
+  }
+
   private int getConfettiCenterY (int optionId) {
     int startY = getContentY();
-    startY += questionText.getHeight() + Screen.dp(5f);
+    startY += getQuestionTitleHeight();
     startY += Screen.dp(18f);
     int currentOptionId = 0;
     for (OptionEntry option : options) {
@@ -549,13 +579,17 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
 
   @Override
   protected void drawContent (MessageView view, Canvas c, final int startX, int startY, int maxWidth) {
+    float alpha = getTranslationLoadingAlphaValue();
+
     int textColor = getTextColor();
     int decentColor = getDecentColor();
     int textOffset = Screen.dp(12f);
 
     // First, draw question
-    questionText.draw(c, startX, startX + maxWidth, 0, startY, null, 1f);
-    startY += questionText.getHeight() + Screen.dp(5f);
+    if (questionText != null) {
+      questionText.draw(c, startX, startX + maxWidth, 0, startY, null, alpha, view.getTextMediaReceiver());
+      startY += getQuestionTitleHeight();
+    }
 
     // Second, draw status
     pollStatusText.draw(c, startX, startY);
@@ -656,8 +690,10 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
         c.drawRect(startX - (useBubbles() ? getBubbleContentPadding() : 0), startY, rightX, startY + optionHeight, Paints.fillingPaint(Theme.getColor(getPressColorId())));
       }
 
-      int optionTextY = startY + Math.max(Screen.dp(8f), Screen.dp(46f) / 2 - option.text.getLineHeight() / 2);
-      option.text.draw(c, startX + Screen.dp(34f), startX + maxWidth, 0, optionTextY, null, 1f);
+      int optionTextY = startY + Math.max(Screen.dp(8f), Screen.dp(46f) / 2 - (option.text != null ? option.text.getLineHeight() / 2 : 0));
+      if (option.text != null) {
+        option.text.draw(c, startX + Screen.dp(34f), startX + maxWidth, 0, optionTextY, null, alpha, view.getTextMediaReceiver());
+      }
 
       float progress = getResultProgress(optionId);
       float stateVisibility = visibility >= .5f ? 0f : 1f - visibility / .5f;
@@ -718,13 +754,17 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
           cy = (int) (cy + (progressCy - cy) * moveFactor);
           scale = scale + (1f - scale) * moveFactor;
         }
-        if (scale != 1f) {
-          c.save();
+        final boolean needScale = scale != 1f;
+        final int restoreToCount;
+        if (needScale) {
+          restoreToCount = Views.save(c);
           c.scale(scale, scale, cx, lineY);
+        } else {
+          restoreToCount = -1;
         }
         SimplestCheckBox.draw(c, cx, cy, selectionFactor, null, option.checkBox, lineColor, contentColor, isQuiz && optionId != correctOptionId, squareFactor);
-        if (scale != 1f) {
-          c.restore();
+        if (needScale) {
+          Views.restore(c, restoreToCount);
         }
       }
 
@@ -734,10 +774,10 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
 
     if (highlightOptionId == HIGHLIGHT_BUTTON) {
       if (useBubble() && !useForward()) {
-        c.save();
+        final int restoreToCount = Views.save(c);
         c.clipRect(getActualLeftContentEdge(), startY, getActualRightContentEdge(), getBottomContentEdge());
         c.drawPath(getBubblePath(), Paints.fillingPaint(Theme.getColor(getPressColorId())));
-        c.restore();
+        Views.restore(c, restoreToCount);
       } else {
         int rightX = startX + maxWidth + (useBubbles() ? getBubblePaddingRight() : 0);
         c.drawRect(startX - (useBubbles() ? getBubbleContentPadding() : 0), startY, rightX, startY + Screen.dp(46f), Paints.fillingPaint(Theme.getColor(getPressColorId())));
@@ -886,7 +926,27 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   }
 
   private boolean canVote (boolean checkSelected) {
-    return TD.canVote(getPoll()) && (!checkSelected || (!isMultiChoicePoll() || !(!hasAnswer() && TD.hasSelectedOption(getPoll()))));
+    return canVote(getPoll()) && (!checkSelected || (!isMultiChoicePoll() || !(!hasAnswer() && TD.hasSelectedOption(getPoll()))));
+  }
+
+  private boolean canVote (TdApi.Poll poll) {
+    return !needShowResults(poll);
+  }
+
+  private boolean needShowResults (TdApi.Poll poll) {
+    if (poll.isClosed)
+      return true;
+    boolean haveVoters = false;
+    for (TdApi.PollOption option : poll.options) {
+      if (option.isChosen)
+        return true;
+      if (option.voterCount > 0) {
+        haveVoters = true;
+      }
+    }
+    // show results for anonymous admin
+    // FIXME TDLib/server: poll information never returned to anonymous admin
+    return haveVoters && tdlib.isAnonymousAdminNonCreator(msg.chatId);
   }
 
   @Override
@@ -897,11 +957,11 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     return true;
   }
 
-  private void setRecentVoters (long[] recentVoterUserIds, boolean animated) {
-    if (recentVoterUserIds != null && recentVoterUserIds.length > 0) {
-      List<UserEntry> entries = new ArrayList<>(recentVoterUserIds.length);
-      for (long userId : recentVoterUserIds) {
-        entries.add(new UserEntry(tdlib, userId));
+  private void setRecentVoters (TdApi.MessageSender[] recentVoterIds, boolean animated) {
+    if (recentVoterIds != null && recentVoterIds.length > 0) {
+      List<SenderEntry> entries = new ArrayList<>(recentVoterIds.length);
+      for (TdApi.MessageSender senderId : recentVoterIds) {
+        entries.add(new SenderEntry(tdlib, senderId));
       }
       if (this.recentVoters == null)
         this.recentVoters = new ListAnimator<>(currentViews);
@@ -923,14 +983,17 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     return false;
   }
 
-  private void applyPoll (TdApi.Poll updatedPoll) {
+  private void applyPoll (TdApi.Poll updatedPoll, boolean force) {
     TdApi.Poll oldPoll = getPoll();
-    boolean changed = !TD.compareContents(oldPoll, updatedPoll) || questionText == null;
+    boolean changed = !Td.equalsTo(oldPoll, updatedPoll, true) || force;
+    if (!changed && Td.equalsTo(oldPoll, updatedPoll, false)) {
+      return;
+    }
     boolean animated = !changed && needAnimateChanges();
     if (animated) {
       resetPollAnimation(true);
-      futureState = new PollState(tdlib, updatedPoll);
-      setRecentVoters(updatedPoll.recentVoterUserIds, true);
+      futureState = new PollState(tdlib, updatedPoll, needShowResults(updatedPoll));
+      setRecentVoters(updatedPoll.recentVoterIds, true);
       setButton(true);
       if (recentVoters != null) {
         invalidateContentReceiver();
@@ -995,8 +1058,8 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       animator.animateTo(1f);
     } else {
       resetPollAnimation(false);
-      this.state = new PollState(tdlib, updatedPoll);
-      setRecentVoters(updatedPoll.recentVoterUserIds, false);
+      this.state = new PollState(tdlib, updatedPoll, needShowResults(updatedPoll));
+      setRecentVoters(updatedPoll.recentVoterIds, false);
       if (recentVoters != null) {
         invalidateContentReceiver();
       }
@@ -1015,9 +1078,9 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
 
   @Override
   protected boolean onMessageContentChanged (TdApi.Message message, TdApi.MessageContent oldContent, TdApi.MessageContent newContent, boolean isBottomMessage) {
-    if (newContent.getConstructor() == TdApi.MessagePoll.CONSTRUCTOR) {
+    if (Td.isPoll(newContent)) {
       TdApi.Poll updatedPoll = ((TdApi.MessagePoll) newContent).poll;
-      applyPoll(updatedPoll);
+      applyPoll(updatedPoll, false);
       return true;
     }
     return false;
@@ -1026,7 +1089,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
   @Override
   protected boolean updateMessageContent (TdApi.Message message, TdApi.MessageContent newContent, boolean isBottomMessage) {
     TdApi.Poll updatedPoll = ((TdApi.MessagePoll) newContent).poll;
-    applyPoll(updatedPoll);
+    applyPoll(updatedPoll, false);
     return true;
   }
 
@@ -1100,7 +1163,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
     if (futureState == null) {
       setTotalVoterCount(state.poll);
       setPollStatus(state.poll.isClosed ? POLL_STATUS_CLOSED : POLL_STATUS_ANONYMOUS);
-      setPercentages(TD.needShowResults(state.poll), state.poll.options);
+      setPercentages(needShowResults(state.poll), state.poll.options);
       int correctOptionId = state.poll.type.getConstructor() == TdApi.PollTypeQuiz.CONSTRUCTOR ? ((TdApi.PollTypeQuiz) state.poll.type).correctOptionId : -1;
       for (int optionId = 0; optionId < state.poll.options.length; optionId++) {
         options[optionId].selectionFactor = optionId == correctOptionId || state.poll.options[optionId].isChosen ? 1f : 0f;
@@ -1340,7 +1403,7 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       return false;
     }
 
-    int startY = questionText.getHeight() + Screen.dp(5f);
+    int startY = getQuestionTitleHeight();
     if (explanationDrawable != null && getHintVisibility() > 0f) {
       float cx = maxWidth - explanationDrawable.getMinimumWidth() / 2f - Screen.dp(2f);
       float cy = startY + pollStatusText.getHeight() / 2f;
@@ -1411,8 +1474,12 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
         explanationPopup.removeListener(this);
       }
       explanationPopup = buildContentHint(view, (targetView, outRect) -> {
-        outRect.set(0, 0, questionText.getWidth(), questionText.getHeight());
-      }).icon(R.drawable.baseline_info_24).needBlink(true).chatTextSize(-2f).interceptTouchEvents(true).handleBackPress(true).show(tdlib, formattedText).addListener(this);
+        if (questionText != null) {
+          outRect.set(0, 0, questionText.getWidth(), questionText.getHeight());
+        } else {
+          outRect.setEmpty();
+        }
+      }, true).icon(R.drawable.baseline_info_24).needBlink(true).chatTextSize(-2f).interceptTouchEvents(true).handleBackPress(true).show(tdlib, formattedText).addListener(this);
     }
   }
 
@@ -1425,50 +1492,55 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
         if (button.singleton() != null) {
           if (isScheduled()) {
             showContentHint(view, (targetView, outRect) -> {
-              int startY = questionText.getHeight() + Screen.dp(5f);
+              int startY = getQuestionTitleHeight();
               startY += Screen.dp(18f);
               for (OptionEntry options : options) {
-                startY += Math.max(Screen.dp(46f), options.text.getHeight()) + Screen.separatorSize();
+                startY += Math.max(Screen.dp(46f), options.text != null ? options.text.getHeight() : 0) + Screen.separatorSize();
               }
               outRect.set(0, startY, getContentWidth(), getContentHeight());
             }, R.string.ErrorScheduled);
           } else {
-            switch (button.singleton().item.id) {
-              case R.id.btn_vote: {
-                IntList selectedOptions = new IntList(this.options.length);
-                IntList currentOptions = new IntList(selectedOptions.size());
-                int optionId = 0;
-                for (OptionEntry entry : options) {
-                  if (entry.isSelected()) {
-                    selectedOptions.append(optionId);
-                  }
-                  if (getPoll().options[optionId].isBeingChosen) {
-                    currentOptions.append(optionId);
-                  }
-                  optionId++;
+            final int itemId = button.singleton().item.id;
+            if (itemId == R.id.btn_vote) {
+              IntList selectedOptions = new IntList(this.options.length);
+              IntList currentOptions = new IntList(selectedOptions.size());
+              int optionId = 0;
+              for (OptionEntry entry : options) {
+                if (entry.isSelected()) {
+                  selectedOptions.append(optionId);
                 }
-                int[] selectedOptionIds = selectedOptions.get();
-                int[] currentOptionIds = currentOptions.get();
+                if (getPoll().options[optionId].isBeingChosen) {
+                  currentOptions.append(optionId);
+                }
+                optionId++;
+              }
+              int[] selectedOptionIds = selectedOptions.get();
+              int[] currentOptionIds = currentOptions.get();
+              if (!Config.PROTECT_ANONYMOUS_VOTING || isAnonymous() || messagesController().callNonAnonymousProtection(msg.id + R.id.btn_vote, this, makeVoteButtonLocationProvider(true))) {
+                Tdlib.ResultHandler<TdApi.Ok> handler = (ok, error) -> {
+                  if (error != null) {
+                    runOnUiThreadOptional(() -> {
+                      showContentHint(view, makeVoteButtonLocationProvider(false), TD.toFormattedText(TD.toErrorString(error), false));
+                    });
+                  }
+                };
                 if (Arrays.equals(selectedOptionIds, currentOptionIds)) {
-                  tdlib.client().send(new TdApi.SetPollAnswer(msg.chatId, msg.id, null), tdlib.okHandler());
+                  tdlib.send(new TdApi.SetPollAnswer(msg.chatId, msg.id, null), handler);
                 } else {
-                  tdlib.client().send(new TdApi.SetPollAnswer(msg.chatId, msg.id, selectedOptionIds), tdlib.okHandler());
+                  tdlib.send(new TdApi.SetPollAnswer(msg.chatId, msg.id, selectedOptionIds), handler);
                 }
-                break;
               }
-              case R.id.btn_viewResults: {
-                PollResultsController c = new PollResultsController(context(), tdlib());
-                c.setArguments(new PollResultsController.Args(getPoll(), msg.chatId, msg.id));
-                navigateTo(c);
-                break;
-              }
+            } else if (itemId == R.id.btn_viewResults) {
+              PollResultsController c = new PollResultsController(context(), tdlib());
+              c.setArguments(new PollResultsController.Args(getPoll(), msg.chatId, msg.id));
+              navigateTo(c);
             }
           }
         }
       } else if (isScheduled()) {
         final int selectedOptionId = clickOptionId;
         showContentHint(view, (targetView, outRect) -> {
-          int startY = questionText.getHeight() + Screen.dp(5f);
+          int startY = getQuestionTitleHeight();
           startY += Screen.dp(18f);
           int optionId = 0;
           for (OptionEntry option : options) {
@@ -1488,14 +1560,14 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       } else if (!canVote(true)) {
         final int selectedOptionId = clickOptionId;
         showContentHint(view, (targetView, outRect) -> {
-          int startY = questionText.getHeight() + Screen.dp(5f);
+          int startY = getQuestionTitleHeight();
           startY += Screen.dp(18f);
           int optionId = 0;
           for (OptionEntry option : options) {
             int optionHeight = getOptionHeight(option.text);
             if (selectedOptionId == optionId) {
               startY += Screen.dp(15f);
-              outRect.set(Screen.dp(34f), startY, Screen.dp(34f) + option.text.getLineWidth(0), startY + option.text.getLineHeight());
+              outRect.set(Screen.dp(34f), startY, Screen.dp(34f) + (option.text != null ? option.text.getLineWidth(0) : 0), startY + (option.text != null ? option.text.getLineHeight() : 0));
               return;
             }
             startY += optionHeight;
@@ -1506,21 +1578,39 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       } else if (isMultiChoicePoll()) {
         selectUnselect(clickOptionId);
       } else {
-        chooseOption(clickOptionId);
+        chooseOption(view, clickOptionId);
       }
       clickOptionId = HIGHLIGHT_NONE;
     }
   }
 
-  private int getOptionHeight (TextWrapper text) {
-    return Math.max(Screen.dp(46f), Math.max(Screen.dp(8f), (Screen.dp(46f) / 2 - text.getLineHeight() / 2)) + text.getHeight() + Screen.dp(12f)) + Screen.separatorSize();
+  private int getOptionHeight (@Nullable TextWrapper text) {
+    if (text == null) {
+      return Screen.dp(46f);
+    }
+    return Math.max(
+      Screen.dp(46f),
+      Math.max(
+        Screen.dp(8f),
+        (Screen.dp(46f) / 2 - text.getLineHeight() / 2)
+      ) + text.getHeight() + Screen.dp(12f)
+    ) + Screen.separatorSize();
   }
 
-  private void chooseOption (final int optionId) {
-    if (getPoll().options[optionId].isBeingChosen) {
-      tdlib.client().send(new TdApi.SetPollAnswer(msg.chatId, msg.id, null), tdlib.okHandler());
-    } else {
-      tdlib.client().send(new TdApi.SetPollAnswer(msg.chatId, msg.id, new int[] {optionId}), tdlib.okHandler());
+  private void chooseOption (final View view, final int optionId) {
+    if (!Config.PROTECT_ANONYMOUS_VOTING || isAnonymous() || messagesController().callNonAnonymousProtection(msg.id + optionId, this, makeButtonLocationProvider(optionId, true))) {
+      Tdlib.ResultHandler<TdApi.Ok> handler = (ok, error) -> {
+        if (error != null) {
+          runOnUiThreadOptional(() -> {
+            showContentHint(view, makeButtonLocationProvider(optionId, false), TD.toFormattedText(TD.toErrorString(error), false));
+          });
+        }
+      };
+      if (getPoll().options[optionId].isBeingChosen) {
+        tdlib.send(new TdApi.SetPollAnswer(msg.chatId, msg.id, null), handler);
+      } else {
+        tdlib.send(new TdApi.SetPollAnswer(msg.chatId, msg.id, new int[] {optionId}), handler);
+      }
     }
   }
 
@@ -1542,5 +1632,82 @@ public class TGMessagePoll extends TGMessage implements ClickHelper.Delegate, Co
       this.highlightOptionId = optionId;
       invalidate();
     }
+  }
+
+  private TooltipOverlayView.LocationProvider makeVoteButtonLocationProvider (boolean needOffset) {
+    return (targetView, outRect) -> {
+      int startY = getQuestionTitleHeight() + Screen.dp(23f);
+      for (OptionEntry option : options) {
+        int optionHeight = getOptionHeight(option.text);
+        startY += optionHeight;
+      }
+      outRect.set(0, startY, getContentMaxWidth(), startY + Screen.dp(50));
+      if (needOffset) {
+        outRect.offset(getContentX(), getContentY());
+      }
+    };
+  }
+
+  private TooltipOverlayView.LocationProvider makeButtonLocationProvider (int selectedOptionId, boolean needOffset) {
+    return (targetView, outRect) -> {
+      int startY = getQuestionTitleHeight();
+      int optionId = 0;
+      for (OptionEntry option : options) {
+        int optionHeight = getOptionHeight(option.text);
+        if (selectedOptionId == optionId) {
+          startY += Screen.dp(15f + 12f);
+          outRect.set(Screen.dp(0f), startY, Screen.dp(24f), startY + option.text.getLineHeight());
+          if (needOffset) {
+            outRect.offset(getContentX(), getContentY());
+          }
+          return;
+        }
+        startY += optionHeight;
+        optionId++;
+      }
+      outRect.set(0, 0, 0, 0);
+    };
+  }
+
+  private TdApi.FormattedText[] translatedTexts;
+
+  @Nullable
+  @Override
+  public TdApi.FormattedText getTextToTranslateImpl () {
+    if (state == null || state.poll == null) {
+      return null;
+    }
+    // FIXME: proper workaround for "•"
+    TdApi.FormattedText concatenatedText = Td.isEmpty(state.poll.question) ? state.poll.question : new TdApi.FormattedText(
+      state.poll.question.text.replaceAll("•", " "),
+      state.poll.question.entities
+    );
+    for (TdApi.PollOption option : state.poll.options) {
+      concatenatedText = Td.concat(
+        concatenatedText,
+        new TdApi.FormattedText("\n\n• ", new TdApi.TextEntity[0]),
+        Td.isEmpty(option.text) ? option.text : new TdApi.FormattedText(
+          option.text.text.replaceAll("•", " "),
+          option.text.entities
+        )
+      );
+    }
+    return concatenatedText;
+  }
+
+  @Override
+  protected void setTranslationResult (@Nullable TdApi.FormattedText text) {
+    if (text != null) {
+      translatedTexts = Td.split(text, "•");
+      if (translatedTexts.length != state.options.length + 1) {
+        translatedTexts = null;
+      }
+    } else {
+      translatedTexts = null;
+    }
+    applyPoll(getPoll(), true);
+    rebuildAndUpdateContent();
+    invalidateTextMediaReceiver();
+    super.setTranslationResult(text);
   }
 }

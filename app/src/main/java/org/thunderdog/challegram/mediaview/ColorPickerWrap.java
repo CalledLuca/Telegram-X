@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,9 +21,8 @@ import android.widget.LinearLayout;
 
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.mediaview.data.FiltersState;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Screen;
 
 import me.vkryl.android.widget.FrameLayoutFix;
@@ -66,7 +65,7 @@ public class ColorPickerWrap extends FrameLayoutFix implements View.OnClickListe
   }
 
   public interface Listener {
-    void onColorChanged (ColorPickerWrap wrap, @ThemeColorId int newColorId);
+    void onColorChanged (ColorPickerWrap wrap, @ColorId int newColorId);
     boolean allowColorChanges ();
   }
 
@@ -78,7 +77,7 @@ public class ColorPickerWrap extends FrameLayoutFix implements View.OnClickListe
 
   private int[] colorIds;
 
-  public void setData (String name, @ThemeColorId int[] colorIds, int selectedColor) {
+  public void setData (String name, @ColorId int[] colorIds, int selectedColor) {
     nameView.setName(name);
     this.colorIds = colorIds;
 
@@ -86,7 +85,7 @@ public class ColorPickerWrap extends FrameLayoutFix implements View.OnClickListe
     int foundActiveIndex = -1;
     for (int colorId : colorIds) {
       CheckCircle circle = (CheckCircle) colorsWrap.getChildAt(i);
-      circle.setColorId(colorId == 0 ? R.id.theme_color_white : colorId);
+      circle.setColorId(colorId == 0 ? ColorId.white : colorId);
       boolean isChecked = colorId == selectedColor;
       circle.setChecked(isChecked, false);
       if (isChecked) {

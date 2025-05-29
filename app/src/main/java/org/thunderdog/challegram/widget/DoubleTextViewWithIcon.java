@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,8 @@ import android.widget.ImageView;
 
 import androidx.annotation.Nullable;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
@@ -39,7 +39,7 @@ public class DoubleTextViewWithIcon extends FrameLayoutFix {
     textView.setLayoutParams(FrameLayoutFix.newParams(LayoutParams.MATCH_PARENT, Screen.dp(72), 0, iconWidth, 0, 0, 0));
     iconView.setLayoutParams(FrameLayoutFix.newParams(iconWidth, Screen.dp(72)));
     iconView.setScaleType(ImageView.ScaleType.CENTER);
-    iconView.setColorFilter(Theme.getColor(R.id.theme_color_icon));
+    iconView.setColorFilter(Theme.getColor(ColorId.icon));
     addView(iconView);
     addView(textView);
     setBackgroundColor(Theme.fillingColor());
@@ -76,8 +76,8 @@ public class DoubleTextViewWithIcon extends FrameLayoutFix {
   public void addThemeListeners (@Nullable ViewController<?> themeProvider) {
     if (themeProvider != null) {
       textView.addThemeListeners(themeProvider);
-      themeProvider.addThemeBackgroundColorListener(this, R.id.theme_color_filling);
-      themeProvider.addThemeFilterListener(iconView, R.id.theme_color_icon);
+      themeProvider.addThemeBackgroundColorListener(this, ColorId.filling);
+      themeProvider.addThemeFilterListener(iconView, ColorId.icon);
     }
   }
 

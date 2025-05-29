@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,10 +22,9 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Paints;
 
 import java.util.ArrayList;
@@ -33,7 +32,7 @@ import java.util.ArrayList;
 public class FillingDecoration extends RecyclerView.ItemDecoration {
   private final ArrayList<int[]> ranges = new ArrayList<>();
 
-  private @ThemeColorId int fillingColorId = R.id.theme_color_filling;
+  private @ColorId int fillingColorId = ColorId.filling;
 
   public FillingDecoration (RecyclerView view, @Nullable ViewController<?> themeProvider) {
     if (themeProvider != null) {
@@ -59,8 +58,16 @@ public class FillingDecoration extends RecyclerView.ItemDecoration {
     return ranges.get(index);
   }
 
+  public int[] firstRange () {
+    return ranges.get(0);
+  }
+
   public int[] lastRange () {
     return ranges.get(ranges.size() - 1);
+  }
+
+  public int rangesCount () {
+    return ranges.size();
   }
 
   private int bottomId = View.NO_ID;
@@ -160,6 +167,9 @@ public class FillingDecoration extends RecyclerView.ItemDecoration {
       if (i >= range[0] && i < range[1]) {
         return Theme.getColor(fillingColorId);
       }
+    }
+    if (bottomId != 0 && i < maxIndex) {
+      return Theme.getColor(fillingColorId);
     }
     return 0;
   }

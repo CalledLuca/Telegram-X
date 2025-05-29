@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,27 +20,24 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
-import org.thunderdog.challegram.loader.ImageFile;
-import org.thunderdog.challegram.loader.ImageFileLocal;
-import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibContext;
 import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.tool.Intents;
-import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.util.StringList;
 
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
-import me.vkryl.core.BitwiseUtils;
 
+// TODO merge with TextEntityMessage into one type
 public class TextEntityCustom extends TextEntity {
   public static final int FLAG_BOLD = 1;
   public static final int FLAG_ITALIC = 1 << 1;
@@ -62,7 +59,7 @@ public class TextEntityCustom extends TextEntity {
 
   private final ViewController<?> context; // TODO move to TextEntity
 
-  private final int flags;
+  private int flags;
 
   private int linkOffset = -1;
   private int[] linkLength;
@@ -70,50 +67,24 @@ public class TextEntityCustom extends TextEntity {
   private String link;
   private boolean linkCached;
 
-  private TextColorSet customColorSet;
-
   private ClickableSpan onClickListener;
   private String anchorName;
   private String referenceAnchorName;
-  private TextIcon icon;
+  private TdApi.RichTextIcon icon;
   private String copyLink;
 
   public TextEntityCustom (@Nullable ViewController<?> context, @Nullable Tdlib tdlib, String in, int offset, int end, int flags, @Nullable TdlibUi.UrlOpenParameters openParameters) {
-    super(tdlib, offset, end, (flags & FLAG_BOLD) != 0 && Text.needFakeBold(in), openParameters);
+    this(context, tdlib, (flags & FLAG_BOLD) != 0 && Text.needFakeBold(in), offset, end, flags, openParameters);
+  }
+
+  private TextEntityCustom (@Nullable ViewController<?> context, @Nullable Tdlib tdlib, boolean needFakeBold, int offset, int end, int flags, @Nullable TdlibUi.UrlOpenParameters openParameters) {
+    super(tdlib, offset, end, needFakeBold, openParameters);
     this.context = context;
     this.flags = flags;
   }
 
   public TextEntityCustom setIcon (TdApi.RichTextIcon icon) {
-    ImageFile miniThumbnail;
-    if (icon.document.minithumbnail != null) {
-      miniThumbnail = new ImageFileLocal(icon.document.minithumbnail);
-      miniThumbnail.setScaleType(ImageFile.FIT_CENTER);
-    } else {
-      miniThumbnail = null;
-    }
-
-    ImageFile thumbnail = TD.toImageFile(tdlib, icon.document.thumbnail);
-    if (thumbnail != null) {
-      thumbnail.setSize(Screen.dp(Math.max(icon.width, icon.height)));
-      thumbnail.setScaleType(ImageFile.FIT_CENTER);
-    }
-    GifFile gifFile = null;
-    ImageFile imageFile = null;
-
-    if ("video/mp4".equals(icon.document.mimeType)) {
-      gifFile = new GifFile(tdlib, icon.document.document, GifFile.TYPE_MPEG4);
-      gifFile.setScaleType(GifFile.FIT_CENTER);
-    } else if ("image/gif".equals(icon.document.mimeType)) {
-      gifFile = new GifFile(tdlib, icon.document.document, GifFile.TYPE_GIF);
-      gifFile.setScaleType(GifFile.FIT_CENTER);
-    } else {
-      imageFile = new ImageFile(tdlib, icon.document.document);
-      imageFile.setSize(Screen.dp(Math.max(icon.width, icon.height)));
-    }
-
-    this.icon = gifFile != null ? new TextIcon(icon.width, icon.height, miniThumbnail, thumbnail, gifFile) : new TextIcon(icon.width, icon.height, miniThumbnail, thumbnail, imageFile);
-
+    this.icon = icon;
     return this;
   }
 
@@ -132,14 +103,51 @@ public class TextEntityCustom extends TextEntity {
     return this;
   }
 
-  public TextEntityCustom setCustomColorSet (TextColorSet colorSet) {
-    this.customColorSet = colorSet;
+  public String getLinkIfUrl () {
+    return linkType == LINK_TYPE_URL ? link : null;
+  }
+
+  @Override
+  public TextEntity setOnClickListener (ClickableSpan span) {
+    this.onClickListener = span;
+    this.flags |= FLAG_CLICKABLE;
     return this;
   }
 
-  public TextEntityCustom setOnClickListener (ClickableSpan span) {
-    this.onClickListener = span;
+  @Override
+  public ClickableSpan getOnClickListener () {
+    return onClickListener;
+  }
+
+  @Override
+  public TextEntity makeBold (boolean needFakeBold) {
+    this.flags |= FLAG_BOLD;
+    this.needFakeBold = needFakeBold;
     return this;
+  }
+
+  @Override
+  public TextEntity createCopy () {
+    TextEntityCustom copy = new TextEntityCustom(context, tdlib, needFakeBold, start, end, flags, openParameters);
+    if (customColorSet != null) {
+      copy.setCustomColorSet(customColorSet);
+    }
+    if (onClickListener != null) {
+      copy.setOnClickListener(onClickListener);
+    }
+    if (copyLink != null) {
+      copy.setCopyLink(copyLink);
+    }
+    if (referenceAnchorName != null) {
+      copy.setReferenceAnchorName(referenceAnchorName);
+    }
+    if (anchorName != null) {
+      copy.setAnchorName(anchorName);
+    }
+    if (icon != null) {
+      copy.setIcon(icon);
+    }
+    return copy;
   }
 
   private TextColorSetOverride cachedLinkSet;
@@ -151,9 +159,9 @@ public class TextEntityCustom extends TextEntity {
       colorSet = customColorSet;
     } else if (linkType == LINK_TYPE_REFERENCE) {
       colorSet = TextColorSets.InstantView.REFERENCE;
-    } else if (BitwiseUtils.getFlag(flags, FLAG_MARKED)) {
+    } else if (BitwiseUtils.hasFlag(flags, FLAG_MARKED)) {
       colorSet = TextColorSets.InstantView.Marked.NORMAL;
-    } else if (BitwiseUtils.getFlag(flags, FLAG_MONOSPACE)) {
+    } else if (BitwiseUtils.hasFlag(flags, FLAG_MONOSPACE)) {
       colorSet = TextColorSets.InstantView.Monospace.NORMAL;
     } else {
       colorSet = null;
@@ -182,7 +190,7 @@ public class TextEntityCustom extends TextEntity {
 
   @Override
   public boolean isSmall () {
-    return BitwiseUtils.getFlag(flags, FLAG_SUPERSCRIPT) || BitwiseUtils.getFlag(flags, FLAG_SUBSCRIPT);
+    return BitwiseUtils.hasFlag(flags, FLAG_SUPERSCRIPT) || BitwiseUtils.hasFlag(flags, FLAG_SUBSCRIPT);
   }
 
   @Override
@@ -191,18 +199,38 @@ public class TextEntityCustom extends TextEntity {
   }
 
   @Override
-  public TextIcon getIcon () {
+  public boolean isCustomEmoji () {
+    return false;
+  }
+
+  @Override
+  public long getCustomEmojiId () {
+    return 0;
+  }
+
+  @Override
+  public boolean forceDisableAnimations () {
+    return false;
+  }
+
+  @Override
+  public boolean hasMedia () {
+    return isIcon();
+  }
+
+  @Override
+  public TdApi.RichTextIcon getIcon () {
     return icon;
   }
 
   @Override
   public float getBaselineShift () {
     float baselineShift;
-    if (BitwiseUtils.getFlag(flags, FLAG_SUPERSCRIPT) && BitwiseUtils.getFlag(flags, FLAG_SUBSCRIPT)) {
+    if (BitwiseUtils.hasFlag(flags, FLAG_SUPERSCRIPT) && BitwiseUtils.hasFlag(flags, FLAG_SUBSCRIPT)) {
       baselineShift = 0f;
-    } else if (BitwiseUtils.getFlag(flags, FLAG_SUPERSCRIPT)) {
+    } else if (BitwiseUtils.hasFlag(flags, FLAG_SUPERSCRIPT)) {
       baselineShift = .4f;
-    } else if (BitwiseUtils.getFlag(flags, FLAG_SUBSCRIPT)) {
+    } else if (BitwiseUtils.hasFlag(flags, FLAG_SUBSCRIPT)) {
       baselineShift = -.4f;
     } else {
       baselineShift = 0f;
@@ -240,6 +268,11 @@ public class TextEntityCustom extends TextEntity {
   }
 
   @Override
+  public TdApi.TextEntity getQuote () {
+    return null;
+  }
+
+  @Override
   public boolean isEssential () {
     return true;
   }
@@ -251,22 +284,22 @@ public class TextEntityCustom extends TextEntity {
 
   @Override
   public boolean isBold () {
-    return BitwiseUtils.getFlag(flags, FLAG_BOLD);
+    return BitwiseUtils.hasFlag(flags, FLAG_BOLD);
   }
 
   @Override
   public boolean isItalic () {
-    return BitwiseUtils.getFlag(flags, FLAG_ITALIC);
+    return BitwiseUtils.hasFlag(flags, FLAG_ITALIC);
   }
 
   @Override
   public boolean isUnderline () {
-    return BitwiseUtils.getFlag(flags, FLAG_UNDERLINE);
+    return BitwiseUtils.hasFlag(flags, FLAG_UNDERLINE);
   }
 
   @Override
   public boolean isStrikethrough () {
-    return BitwiseUtils.getFlag(flags, FLAG_STRIKETHROUGH);
+    return BitwiseUtils.hasFlag(flags, FLAG_STRIKETHROUGH);
   }
 
   @Override
@@ -280,7 +313,17 @@ public class TextEntityCustom extends TextEntity {
   }
 
   @Override
-  public void performClick (View view, Text text, TextPart part, @Nullable Text.ClickCallback callback) {
+  public int getQuoteId () {
+    return -1;
+  }
+
+  @Override
+  public boolean isQuote () {
+    return false;
+  }
+
+  @Override
+  public void performClick (View view, Text text, TextPart part, @Nullable Text.ClickCallback callback, boolean isFromLongPressMenu) {
     switch (linkType) {
       case LINK_TYPE_EMAIL: {
         if (callback == null || !callback.onEmailClick(link)) {
@@ -295,7 +338,7 @@ public class TextEntityCustom extends TextEntity {
         break;
       }
       case LINK_TYPE_URL: {
-        TdlibUi.UrlOpenParameters openParameters = this.openParameters(view, text, part);
+        TdlibUi.UrlOpenParameters openParameters = this.openParameters(view, text, part, isFromLongPressMenu);
         if (callback == null || !callback.onUrlClick(view, link, !StringUtils.equalsOrBothEmpty(text.getText(), link), openParameters)) {
           if (context != null) {
             context.openLinkAlert(link, modifyUrlOpenParameters(openParameters, callback, link));
@@ -316,7 +359,7 @@ public class TextEntityCustom extends TextEntity {
         break;
       }
       case LINK_TYPE_REFERENCE: {
-        if (callback == null || !(callback.onReferenceClick(view, link, referenceAnchorName, this.openParameters(view, text, part))) || callback.onAnchorClick(view, link)) {
+        if (callback == null || !(callback.onReferenceClick(view, link, referenceAnchorName, this.openParameters(view, text, part, isFromLongPressMenu))) || callback.onAnchorClick(view, link)) {
           // TODO open pop-up with ${referenceText}?
         }
         break;
@@ -383,22 +426,15 @@ public class TextEntityCustom extends TextEntity {
     final int[] shareState = {0};
 
     context.showOptions(copyText, ids.get(), strings.get(), null, icons.get(), (itemView, id) -> {
-      switch (id) {
-        case R.id.btn_copyLink: {
-          UI.copyText(copyText, R.string.CopiedLink);
-          break;
+      if (id == R.id.btn_copyLink) {
+        UI.copyText(copyText, R.string.CopiedLink);
+      } else if (id == R.id.btn_shareLink) {
+        if (shareState[0] == 0) {
+          shareState[0] = 1;
+          TD.shareLink(new TdlibContext(context.context(), tdlib), copyText);
         }
-        case R.id.btn_shareLink: {
-          if (shareState[0] == 0) {
-            shareState[0] = 1;
-            TD.shareLink(new TdlibContext(context.context(), tdlib), copyText);
-          }
-          break;
-        }
-        case R.id.btn_openLink: {
-          performClick(view, text, part, clickCallback);
-          break;
-        }
+      } else if (id == R.id.btn_openLink) {
+        performClick(view, text, part, clickCallback, true);
       }
       return true;
     }, clickCallback != null ? clickCallback.getForcedTheme(view, text) : null);
@@ -409,10 +445,25 @@ public class TextEntityCustom extends TextEntity {
   @Override
   public boolean equals (TextEntity bRaw, int compareMode, @Nullable String originalText) {
     TextEntityCustom b = (TextEntityCustom) bRaw;
-    return
-      b.isClickable() == isClickable() &&
-      (!isClickable() || (b.linkType == linkType && b.linkLength == linkLength && b.linkOffset == linkOffset && StringUtils.equalsOrBothEmpty(b.link, link))) &&
-      (compareMode == COMPARE_MODE_CLICK_HIGHLIGHT || (this.flags == b.flags && this.customColorSet == b.customColorSet));
+    if (isClickable() != b.isClickable()) {
+      return false;
+    }
+    if (isClickable() && !(
+      b.linkType == linkType &&
+      b.linkLength == linkLength &&
+      b.linkOffset == linkOffset &&
+      StringUtils.equalsOrBothEmpty(b.link, link) &&
+      b.onClickListener == onClickListener
+    )) {
+      return false;
+    }
+    if (compareMode != COMPARE_MODE_CLICK_HIGHLIGHT && !(
+      this.flags == b.flags &&
+      this.customColorSet == b.customColorSet
+    )) {
+      return false;
+    }
+    return true;
   }
 
 }

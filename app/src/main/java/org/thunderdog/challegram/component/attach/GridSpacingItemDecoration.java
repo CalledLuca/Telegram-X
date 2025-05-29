@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,8 +24,8 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Paints;
 
 import me.vkryl.core.ColorUtils;
@@ -59,7 +59,7 @@ public class GridSpacingItemDecoration extends RecyclerView.ItemDecoration {
     this.viewType = viewType;
   }
 
-  public void setDrawColorId (@ThemeColorId int colorId) {
+  public void setDrawColorId (@ColorId int colorId) {
     this.colorId = colorId;
   }
 

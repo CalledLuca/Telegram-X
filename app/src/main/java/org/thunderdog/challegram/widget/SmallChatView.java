@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,15 +20,30 @@ import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import org.drinkless.tdlib.TdApi;
+import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.component.user.RemoveHelper;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.DoubleTextWrapper;
-import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
+import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextMedia;
 
-public class SmallChatView extends BaseView implements AttachDelegate, TooltipOverlayView.LocationProvider {
-  private final ImageReceiver receiver;
+import me.vkryl.android.util.InvalidateContentProvider;
+import me.vkryl.core.lambda.Destroyable;
+
+public class SmallChatView extends BaseView implements AttachDelegate, TooltipOverlayView.LocationProvider, InvalidateContentProvider, Destroyable, EmojiStatusHelper.EmojiStatusReceiverInvalidateDelegate, RemoveHelper.RemoveDelegate {
+  private final AvatarReceiver avatarReceiver;
+  private final EmojiStatusHelper emojiStatusHelper;
 
   private DoubleTextWrapper chat;
 
@@ -36,8 +51,8 @@ public class SmallChatView extends BaseView implements AttachDelegate, TooltipOv
     super(context, tdlib);
 
     int viewHeight = Screen.dp(62f);
-    int radius = Screen.dp(50f) / 2;
-    this.receiver = new ImageReceiver(this, radius);
+    this.avatarReceiver = new AvatarReceiver(this);
+    this.emojiStatusHelper = new EmojiStatusHelper(tdlib, this, null);
     layoutReceiver();
     setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, viewHeight));
   }
@@ -47,22 +62,32 @@ public class SmallChatView extends BaseView implements AttachDelegate, TooltipOv
     int radius = Screen.dp(50f) / 2;
     int left = Screen.dp(11f);
     int right = Screen.dp(11f) + radius * 2;
+    int viewWidth = getMeasuredWidth();
+    if (viewWidth == 0)
+      return;
     if (Lang.rtl()) {
-      int viewWidth = getMeasuredWidth();
-      this.receiver.setBounds(viewWidth - right, viewHeight / 2 - radius, viewWidth - left, viewHeight / 2 + radius);
+      this.avatarReceiver.setBounds(viewWidth - right, viewHeight / 2 - radius, viewWidth - left, viewHeight / 2 + radius);
     } else {
-      this.receiver.setBounds(left, viewHeight / 2 - radius, right, viewHeight / 2 + radius);
+      this.avatarReceiver.setBounds(left, viewHeight / 2 - radius, right, viewHeight / 2 + radius);
     }
   }
 
   @Override
   public void attach () {
-    receiver.attach();
+    avatarReceiver.attach();
+    emojiStatusHelper.attach();
   }
 
   @Override
   public void detach () {
-    receiver.detach();
+    avatarReceiver.detach();
+    emojiStatusHelper.detach();
+  }
+
+  @Override
+  public void performDestroy () {
+    emojiStatusHelper.performDestroy();
+    setChat(null);
   }
 
   @Override
@@ -99,18 +124,29 @@ public class SmallChatView extends BaseView implements AttachDelegate, TooltipOv
       chat.getViewProvider().attachToView(this);
     }
 
+    invalidateEmojiStatusReceiver(null, null);
     requestFile();
     invalidate();
+    if (chat != null) {
+      chat.onAttachToView();
+    }
   }
 
   private void requestFile () {
-    receiver.requestFile(chat != null ? chat.getAvatarFile() : null);
+    if (chat != null) {
+      chat.requestAvatar(avatarReceiver);
+    } else {
+      avatarReceiver.clear();
+    }
   }
 
-  public void invalidateContent (DoubleTextWrapper chat) {
-    if (this.chat == chat) {
+  @Override
+  public boolean invalidateContent (Object cause) {
+    if (this.chat == cause) {
       requestFile();
+      return true;
     }
+    return false;
   }
 
   @Override
@@ -121,22 +157,86 @@ public class SmallChatView extends BaseView implements AttachDelegate, TooltipOv
   }
 
   @Override
-  protected void onDraw (Canvas c) {
+  protected void onDraw (@NonNull Canvas c) {
     if (chat == null) {
       return;
     }
 
-    layoutReceiver();
-
-    if (chat.getAvatarFile() != null) {
-      if (receiver.needPlaceholder()) {
-        receiver.drawPlaceholderRounded(c, receiver.getRadius());
-      }
-      receiver.draw(c);
-    } else if (chat.getAvatarPlaceholder() != null) {
-      chat.getAvatarPlaceholder().draw(c, receiver.centerX(), receiver.centerY());
+    if (removeHelper != null) {
+      removeHelper.save(c);
     }
 
-    chat.draw(this, receiver, c);
+    layoutReceiver();
+    if (avatarReceiver.needPlaceholder()) {
+      avatarReceiver.drawPlaceholder(c);
+    }
+    avatarReceiver.draw(c);
+
+    chat.draw(this, avatarReceiver, c, emojiStatusHelper.emojiStatusReceiver);
+
+    if (checkboxVisible) {
+      c.save();
+      final float lineSize = Screen.dp(2f);
+      float cx = getWidth() - Screen.dp(26);
+      float cy = getHeight() / 2f;
+      float r2 = Screen.dp(10f);
+      c.drawCircle(cx, cy, r2, Paints.fillingPaint(Theme.radioFillingColor()));
+
+      float x1 = cx - Screen.dp(2);
+      float y1 = cy + Screen.dp(5f);
+      float w2 = Screen.dp(11);// * checkedFactor.getFloatValue();
+      float h1 = Screen.dp(5.5f);// * checkedFactor.getFloatValue();
+
+      c.rotate(-45f, x1, y1);
+      c.drawRect(x1, y1 - h1, x1 + lineSize, y1, Paints.fillingPaint(Theme.radioCheckColor()));
+      c.drawRect(x1, y1 - lineSize, x1 + w2, y1, Paints.fillingPaint(Theme.radioCheckColor()));
+      c.restore();
+    }
+
+    if (removeHelper != null) {
+      removeHelper.restore(c);
+      removeHelper.draw(c);
+    }
+  }
+
+  private boolean checkboxVisible = false;
+
+  public TdApi.MessageSender getSenderId () {
+    if (chat == null) return null;
+    return chat.getSenderId();
+  }
+
+  public void setCheckboxIconVisible (boolean checkboxVisible) {
+    if (chat == null) return;
+    this.checkboxVisible = checkboxVisible;
+    chat.setAdminSignVisible(!checkboxVisible, true);
+    invalidate();
+  }
+
+  @Override
+  public void invalidateEmojiStatusReceiver (Text text, @Nullable TextMedia specificMedia) {
+    if (emojiStatusHelper != null && chat != null) {
+      chat.requestEmojiStatusReceiver(emojiStatusHelper.emojiStatusReceiver);
+    }
+  }
+
+  // Remove delegate
+
+  private @Nullable RemoveHelper removeHelper;
+
+  @Override
+  public void setRemoveDx (float dx) {
+    if (removeHelper == null) {
+      removeHelper = new RemoveHelper(this, R.drawable.baseline_delete_24);
+    }
+    removeHelper.setDx(dx);
+  }
+
+  @Override
+  public void onRemoveSwipe () {
+    if (removeHelper == null) {
+      removeHelper = new RemoveHelper(this, R.drawable.baseline_delete_24);
+    }
+    removeHelper.onSwipe();
   }
 }

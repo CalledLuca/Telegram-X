@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,12 +20,12 @@ import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringDef;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.telegram.TdlibAccount;
+import org.thunderdog.challegram.telegram.TdlibManager;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.AppState;
 
@@ -38,7 +38,8 @@ import java.util.concurrent.TimeUnit;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.leveldb.LevelDB;
-import me.vkryl.td.JSON;
+import tgx.td.JSON;
+import tgx.td.Td;
 
 public class Crash {
   @Retention(RetentionPolicy.SOURCE)
@@ -148,15 +149,15 @@ public class Crash {
   }
 
   public boolean isTdlibLogicError () {
-    return BitwiseUtils.getFlag(flags, Flags.SOURCE_TDLIB | Flags.SOURCE_TDLIB_PARAMETERS);
+    return BitwiseUtils.hasFlag(flags, Flags.SOURCE_TDLIB | Flags.SOURCE_TDLIB_PARAMETERS);
   }
 
   public boolean shouldShowAtApplicationStart () {
-    if (appVersionCode != BuildConfig.VERSION_CODE || BitwiseUtils.getFlag(flags, Flags.RESOLVED)) {
+    if (appVersionCode != BuildConfig.ORIGINAL_VERSION_CODE || BitwiseUtils.hasFlag(flags, Flags.RESOLVED)) {
       // User has installed a new APK or pressed "Launch App". Forgetting the last error.
       return false;
     }
-    if (BitwiseUtils.getFlag(flags, Flags.INTERACTED)) {
+    if (BitwiseUtils.hasFlag(flags, Flags.INTERACTED)) {
       // User has seen the "Aw, snap!" screen, but didn't press "Launch App" afterwards.
       return true;
     }
@@ -174,22 +175,22 @@ public class Crash {
   }
 
   public @Type int getType () {
-    if (BitwiseUtils.getFlag(flags, Flags.SOURCE_TDLIB)) {
-      if (Client.isDiskFullError(message)) {
+    if (BitwiseUtils.hasFlag(flags, Flags.SOURCE_TDLIB)) {
+      if (Td.isDiskFullError(message)) {
         return Type.DISK_FULL;
-      } else if (Client.isDatabaseBrokenError(message)) {
+      } else if (Td.isDatabaseBrokenError(message)) {
         return Type.TDLIB_DATABASE_BROKEN;
       }
-      if (Client.isExternalError(message)) {
+      if (Td.isExternalError(message)) {
         return Type.TDLIB_EXTERNAL_ERROR;
       } else {
         return Type.TDLIB;
       }
     }
-    if (BitwiseUtils.getFlag(flags, Flags.SOURCE_TDLIB_PARAMETERS)) {
+    if (BitwiseUtils.hasFlag(flags, Flags.SOURCE_TDLIB_PARAMETERS)) {
       return Type.TDLIB_INITIALIZATION_FAILURE;
     }
-    if (BitwiseUtils.getFlag(flags, Flags.SOURCE_UNCAUGHT_EXCEPTION)) {
+    if (BitwiseUtils.hasFlag(flags, Flags.SOURCE_UNCAUGHT_EXCEPTION)) {
       return Type.UNCAUGHT_EXCEPTION;
     }
     return Type.UNKNOWN;
@@ -239,7 +240,9 @@ public class Crash {
   public Map<String, Object> toMap (final String crashDeviceId) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("message", message);
-    result.put("running_tdlib_count", runningTdlibCount);
+    if (runningTdlibCount != RUNNING_TDLIB_COUNT_UNKNOWN) {
+      result.put("running_tdlib_count", runningTdlibCount);
+    }
     result.put("date", date);
     result.put("uptime", uptime);
     result.put("sdk", sdkVersion);
@@ -249,6 +252,8 @@ public class Crash {
     result.put("cpu", U.getCpuArchitecture());
     result.put("crash_id", id);
     result.put("package_id", UI.getAppContext().getPackageName());
+    result.put("device", TdlibManager.deviceInformation());
+    result.put("fingerprint", U.getApkFingerprint("SHA1"));
     result.put("device_id", crashDeviceId);
     return result;
   }
@@ -264,7 +269,11 @@ public class Crash {
     pmc.putLong(keyPrefix + CacheKey.UPTIME, uptime);
     pmc.putString(keyPrefix + CacheKey.MESSAGE, message);
     pmc.putInt(keyPrefix + CacheKey.ACCOUNT_ID, accountId);
-    pmc.putInt(keyPrefix + CacheKey.RUNNING_TDLIB_COUNT, runningTdlibCount);
+    if (runningTdlibCount != RUNNING_TDLIB_COUNT_UNKNOWN) {
+      pmc.putInt(keyPrefix + CacheKey.RUNNING_TDLIB_COUNT, runningTdlibCount);
+    } else {
+      pmc.remove(keyPrefix + CacheKey.RUNNING_TDLIB_COUNT);
+    }
   }
 
   public void saveFlags (LevelDB pmc, String prefix) {
@@ -283,6 +292,8 @@ public class Crash {
     @Nullable AppBuildInfo restoreBuildInformation (long installationId);
   }
 
+  public static final int RUNNING_TDLIB_COUNT_UNKNOWN = -1;
+
   public static class Builder {
     private String message = "empty";
     private long uptime = AppState.uptime();
@@ -292,7 +303,7 @@ public class Crash {
     private long date = System.currentTimeMillis();
     private int appVersionCode = BuildConfig.ORIGINAL_VERSION_CODE;
     private int sdkVersion = Build.VERSION.SDK_INT;
-    private int runningTdlibCount = (int) Math.min(Integer.MAX_VALUE, Client.getClientCount());
+    private int runningTdlibCount = RUNNING_TDLIB_COUNT_UNKNOWN;
     private @Nullable AppBuildInfo appBuildInfo;
 
     public Builder () {}

@@ -4,10 +4,17 @@
 
 This is the complete source code and the build instructions for the official alternative Android client for the Telegram messenger, based on the [Telegram API](https://core.telegram.org/api) and the [MTProto](https://core.telegram.org/mtproto) secure protocol via [TDLib](https://github.com/TGX-Android/tdlib).
 
-* [**Telegram X** on Google Play](http://play.google.com/store/apps/details?id=org.thunderdog.challegram)
-* [Subscribe to Beta](https://play.google.com/apps/testing/org.thunderdog.challegram)
+* [**Telegram X** on Google Play](http://play.google.com/store/apps/details?id=org.thunderdog.challegram) ([subscribe to beta](https://play.google.com/apps/testing/org.thunderdog.challegram))
 * [APKs and Build Info](https://t.me/tgx_log)
 * [Bot to verify APK hash](https://t.me/tgx_bot)
+
+<details>
+<summary>Other sources</summary>
+
+* [**Telegram X** on Huawei AppGallery](https://appgallery.huawei.com/app/C101754199)
+* [**GitHub Releases**](https://github.com/TGX-Android/Telegram-X/releases)
+
+</details>
 
 ## Build instructions
 
@@ -15,7 +22,7 @@ This is the complete source code and the build instructions for the official alt
 
 * At least **5,34GB** of free disk space: **487,10MB** for source codes and around **4,85GB** for files generated after building all variants
 * **4GB** of RAM
-* **macOS** or **Linux**-based operating system. **Windows** platform is not yet supported in [scripts](/scripts) that build native dependencies, however, it might be easy to patch them in order to make it work.
+* **macOS** or **Linux**-based operating system. **Windows** platform is supported by using [MSYS](https://www.msys2.org/) (e.g., [Git Bash](https://gitforwindows.org/)).
 
 #### macOS
 
@@ -26,6 +33,15 @@ This is the complete source code and the build instructions for the official alt
 
 * git with LFS: `# apt install git git-lfs`
 * Run `$ git lfs install` for the current user, if you didn't have `git-lfs` previously installed
+
+#### Windows
+
+* Shell with `git`, `wget`, and `make` utilities:
+    * **MSYS**: `$ pacman -S make git mingw-w64-x86_64-git-lfs`
+    * **Git Bash**: 
+        1. Download [wget](https://eternallybored.org/misc/wget/), unzip `wget.exe` and move to your `Git\mingw64\bin\`
+        2. Download [make](https://sourceforge.net/projects/ezwinports/files/make-4.3-without-guile-w32-bin.zip), unzip and copy the contents to your `Git\mingw64\` merging the folders, but do **NOT** overwrite any existing files
+* Run `$ git lfs install` for the current user, if you didn't have `git lfs` previously initialized
 
 ### Building
 
@@ -45,9 +61,26 @@ This is the complete source code and the build instructions for the official alt
 * `x86`: **x86** build
 * `universal`: universal build that includes native bundles for all platforms.
 
+### Quick setup for development
+
+If you are developing a [contribution](https://github.com/TGX-Android/Telegram-X/blob/main/docs/PULL_REQUEST_TEMPLATE.md) to the project, you may follow the simpler building steps:
+
+1. `$ git clone --recursive https://github.com/TGX-Android/Telegram-X tgx`
+2. `$ cd tgx`
+3. [Obtain Telegram API credentials](https://core.telegram.org/api/obtaining_api_id)
+4. Create `local.properties` file in the root project folder using any text editor:<br/><pre># Location where you have Android SDK installed
+sdk.dir=YOUR_ANDROID_SDK_FOLDER
+\# Telegram API credentials obtained at previous step
+telegram.api_id=YOUR_TELEGRAM_API_ID
+telegram.api_hash=YOUR_TELEGRAM_API_HASH</pre>
+5. Run `$ scripts/./setup.sh` — this will download required Android SDK packages and build native dependencies that aren't part of project's [CMakeLists.txt](/app/jni/CMakeLists.txt)
+6. Open and build project via [Android Studio](https://developer.android.com/studio) or by using one of `./gradlew assemble` commands in terminal
+
+After submitting a pull request and its initial review, special build including your contribution will be published in [@tgx_prs](https://t.me/tgx_prs) channel, where it can be tested by the community. In case any issues or bugs found, you may push more commits to an existing PR that address them and request to publish a newer build by using comments section of pull request or in [@tgx_dev](https://t.me/tgx_dev) chat.
+
 ## Reproducing public builds
 
-In order to verify that there is no additional source code injected inside official APKs, you must use **Ubuntu 21.04** and comply with the following requirements:
+In order to verify that there is no additional source code injected inside official APKs, you must use **Ubuntu 21.04** for builds published before [26th May 2023](https://github.com/TGX-Android/Telegram-X/commit/e9a054a0f469a98a13f7e0d751539687fef8759b) or **Ubuntu 22.04.2 LTS** for any newer releases, and comply with the following requirements:
 
 1. Create user called `vk` with the home directory located at `/home/vk`
 2. Clone `tgx` repository to `/home/vk/tgx`
@@ -62,7 +95,6 @@ In future build reproduction might become easier. Here's a list of related PR-we
 
 * Project path must not affect the resulting `.so` files, so user & project location requirement could be removed
 * When building native binaries on **macOS**, `.comment` ELF section differs from the one built with **Linux** version of NDK. It must be removed or made deterministic without any side-effects like breaking `native-debug-symbols.zip` (or should be reported to NDK team?)
-* It might be a good idea to use `--build-id=0x<commit>` instead of `--build-id=none`
 * Checksums of cold APK builds always differ, even though the same keystore applied and generated inner APK contents do not differ. Real cause must be investigated and fixed, if possible.<br/>To generate cold build, invoke `$ scripts/./reset.sh` and `$ scripts/./setup.sh --skip-sdk-setup`.<br/>**Warning**: this will also reset changes inside some of the submodules ([ffmpeg](/app/jni/thirdparty/ffmpeg), [libvpx](/app/jni/thirdparty/libvpx), [webp](/app/jni/thirdparty/webp), [opus](/app/jni/thirdparty/opus) and [ExoPlayer](/app/jni/thirdparty/exoplayer))
 * Move local pull requests squash-merging from [Publisher](https://github.com/TGX-Android/Publisher) to some script inside this repository to make reproduction of builds that include them easier.
 
@@ -76,6 +108,7 @@ In order to obtain **SHA-256** of the APK:
 
 * `$ sha256sum <path-to-apk>` on **Ubuntu**
 * `$ shasum -a 256 <path-to-apk>` on **macOS**
+* `$ certutil -hashfile <path-to-apk> SHA256` on **Windows**
 
 Once obtained, there are three ways to find out the commit for the specific checksum:
 

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,38 +15,63 @@
 package org.thunderdog.challegram.mediaview;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Path;
+import android.graphics.PointF;
 import android.graphics.Rect;
+import android.graphics.RectF;
+import android.net.Uri;
+import android.os.Build;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.os.CancellationSignal;
+import androidx.core.view.GestureDetectorCompat;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import com.davemorrissey.labs.subscaleview.ImageSource;
+import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView;
+
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
+import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.ImageFileLocal;
+import org.thunderdog.challegram.loader.ImageFileRemote;
 import org.thunderdog.challegram.loader.ImageLoader;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.loader.gif.GifActor;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.mediaview.crop.CropState;
+import org.thunderdog.challegram.mediaview.crop.CroppedLayout;
 import org.thunderdog.challegram.mediaview.data.MediaItem;
 import org.thunderdog.challegram.mediaview.gl.EGLEditorView;
 import org.thunderdog.challegram.player.TGPlayerController;
+import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.telegram.TdlibManager;
+import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.widget.FileProgressComponent;
 import org.thunderdog.challegram.widget.ForceTouchView;
 import org.thunderdog.challegram.widget.SparseDrawableView;
+
+import java.io.File;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
@@ -55,6 +80,7 @@ import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.Destroyable;
+import tgx.td.Td;
 
 public class MediaCellView extends ViewGroup implements
   MediaCellViewDetector.Callback,
@@ -66,12 +92,14 @@ public class MediaCellView extends ViewGroup implements
   ForceTouchView.StateListener,
   FactorAnimator.Target {
   private static final float SCALE_FACTOR = .25f;
+  public static final int ZOOM_DURATION = 140;
 
   private @Nullable MediaItem media;
   private float factor; // 0f - normal, 1f - out of screen, -1f - fade out
 
   private final ImageReceiver imageReceiver;
   private final GifReceiver gifReceiver;
+  private final AvatarReceiver avatarReceiver;
   private final ImageReceiver imagePreviewReceiver;
   private final ImageReceiver miniThumbnail;
   private Receiver preview;
@@ -85,6 +113,8 @@ public class MediaCellView extends ViewGroup implements
   private CellButtonView buttonView;
   private CellVideoView videoParentView;
   private BufferingProgressBarWrap bufferingProgressView;
+
+  private final ClippingSubsamplingImageView subsamplingImageView;
 
   private class ForegroundView extends View {
     public ForegroundView (Context context) {
@@ -101,12 +131,14 @@ public class MediaCellView extends ViewGroup implements
     }
 
     @Override
-    protected void onDraw (Canvas c) {
+    protected void onDraw (@NonNull Canvas c) {
       if (receiver != null && imageAlpha != 0f && revealFactor != 0f) {
         c.drawRect(receiver.getLeft(), receiver.getTop(), receiver.getRight(), receiver.getBottom(), Paints.fillingPaint(ColorUtils.color((int) (255f * backgroundAlpha), forceTouchMode ? 0xffffffff : 0)));
       }
     }
   }
+
+  private Runnable resetZoomRunnable;
 
   public MediaCellView (Context context) {
     super(context);
@@ -115,9 +147,100 @@ public class MediaCellView extends ViewGroup implements
 
     this.imageView = new CellImageView(context);
     this.imageView.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Config.USE_HARDWARE_PHOTO_VIEWER_CONFIG) {
+      SubsamplingScaleImageView.setPreferredBitmapConfig(Bitmap.Config.HARDWARE);
+    } else {
+      SubsamplingScaleImageView.setPreferredBitmapConfig(Bitmap.Config.ARGB_8888);
+    }
+    this.subsamplingImageView = new ClippingSubsamplingImageView(context) {
+      @SuppressWarnings("ClickableViewAccessibility")
+      @Override
+      public boolean onTouchEvent (@NonNull MotionEvent event) {
+        if (!subsamplingModeEnabled || !isReady()) {
+          return false;
+        }
+        ViewParent parent = MediaCellView.this.getParent();
+        if (!(parent instanceof MediaView)) {
+          return false;
+        }
+        MediaView mediaView = (MediaView) parent;
+        mediaView.setIgnoreDisallowInterceptTouchEvent(true);
+        boolean res = super.onTouchEvent(event);
+        mediaView.setIgnoreDisallowInterceptTouchEvent(false);
+        return res;
+      }
+    };
+    this.subsamplingImageView.setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE);
+    this.subsamplingImageView.setMinimumScaleType(SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE);
+    this.subsamplingImageView.setOrientation(SubsamplingScaleImageView.ORIENTATION_USE_EXIF);
+    this.subsamplingImageView.setMaxScale(Float.MAX_VALUE);
+    this.subsamplingImageView.setEagerLoadingEnabled(false);
+    this.subsamplingImageView.setDoubleTapZoomScale(1f);
+    this.subsamplingImageView.setDoubleTapZoomDuration(subsamplingZoomDuration());
+    final GestureDetectorCompat gestureDetector = new GestureDetectorCompat(context, new GestureDetector.SimpleOnGestureListener() {
+      @Override
+      public boolean onSingleTapConfirmed(MotionEvent e) {
+        if (subsamplingModeEnabled && subsamplingImageView.isReady() && canTouch(false)) {
+          subsamplingImageView.performClick();
+          ViewParent parent = getParent();
+          if (parent instanceof MediaView) {
+            ((MediaView) parent).onMediaClick(e.getX(), e.getY());
+            return true;
+          }
+        }
+        return false;
+      }
+    });
+    //noinspection ClickableViewAccessibility
+    this.subsamplingImageView.setOnTouchListener((view, event) -> gestureDetector.onTouchEvent(event));
+    this.subsamplingImageView.setOnStateChangedListener(new SubsamplingScaleImageView.DefaultOnStateChangedListener() {
+      @Override
+      public void onScaleChanged (float newScale, int origin) {
+        if (origin == SubsamplingScaleImageView.ORIGIN_DOUBLE_TAP_ZOOM || origin == SubsamplingScaleImageView.ORIGIN_ANIM) {
+          if (resetZoomRunnable != null) {
+            UI.removePendingRunnable(resetZoomRunnable);
+          } else {
+            resetZoomRunnable = () -> {
+              if (subsamplingImageView.isReady() && subsamplingImageView.getScale() != subsamplingImageView.getMinScale()) {
+                float difference = subsamplingImageView.getScale() - subsamplingImageView.getMinScale();
+                int widthDiff = (int) (subsamplingImageView.getSWidth() * difference);
+                int heightDiff = (int) (subsamplingImageView.getSHeight() * difference);
+                if (widthDiff == 0 && heightDiff == 0) {
+                  subsamplingImageView.resetScaleAndCenter();
+                }
+              }
+            };
+          }
+          UI.post(resetZoomRunnable, 280l);
+        } else {
+          if (resetZoomRunnable != null) {
+            UI.removePendingRunnable(resetZoomRunnable);
+          }
+        }
+      }
+    });
+    this.subsamplingImageView.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+    this.subsamplingImageView.setAlpha(0f);
+    this.subsamplingImageView.setOnImageEventListener(new SubsamplingScaleImageView.DefaultOnImageEventListener() {
+      @Override
+      public void onReady () {
+        float maxScale = Math.max(subsamplingImageView.getMinScale() * 2f, Math.max(1f, Screen.density()) * 3f);
+        subsamplingImageView.setMaxScale(maxScale);
+        subsamplingImageView.setDoubleTapZoomScale(Math.min(maxScale, Math.max(1f, subsamplingImageView.getMinScale() * 2.5f)));
+        if (subsamplingModeEnabled) {
+          setSubsamplingImageLoaded(true);
+        }
+      }
+    });
+
     this.imageReceiver = new ImageReceiver(imageView, 0);
     this.imageReceiver.prepareToBeCropped();
     this.gifReceiver = new GifReceiver(imageView);
+    this.avatarReceiver = new AvatarReceiver(imageView);
+    this.avatarReceiver.setDisplayFullSizeOnlyInFullScreen(true);
+    this.avatarReceiver.setScaleMode(AvatarReceiver.ScaleMode.FIT_CENTER);
+    this.avatarReceiver.setFullScreen(true, false);
     this.imagePreviewReceiver = new ImageReceiver(imageView, 0);
     this.imagePreviewReceiver.prepareToBeCropped();
     this.miniThumbnail = new ImageReceiver(imageView, 0);
@@ -126,6 +249,7 @@ public class MediaCellView extends ViewGroup implements
     FrameLayoutFix imageViewParent = new FrameLayoutFix(context);
     imageViewParent.setLayoutParams(FrameLayoutFix.newParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
     imageViewParent.addView(imageView);
+    imageViewParent.addView(subsamplingImageView);
 
     this.receiver = imageReceiver;
     this.preview = imagePreviewReceiver;
@@ -145,6 +269,38 @@ public class MediaCellView extends ViewGroup implements
     addView(bufferingProgressView);
   }
 
+  private boolean subsamplingModeEnabled, subsamplingImageLoaded;
+
+  private static void recycle (SubsamplingScaleImageView imageView) {
+    imageView.recycle();
+    imageView.setMaxScale(Float.MAX_VALUE);
+    imageView.setDoubleTapZoomScale(1f);
+  }
+
+  private void setSubsamplingModeEnabled (boolean isEnabled) {
+    if (this.subsamplingModeEnabled != isEnabled) {
+      this.subsamplingModeEnabled = isEnabled;
+      if (!isEnabled) {
+        setSubsamplingImageLoaded(false);
+        recycle(subsamplingImageView);
+        if (subsamplingLoadSignal != null) {
+          subsamplingLoadSignal.cancel();
+          subsamplingLoadSignal = null;
+        }
+      }
+    }
+  }
+
+  private void setSubsamplingImageLoaded (boolean isLoaded) {
+    if (this.subsamplingImageLoaded != isLoaded) {
+      this.subsamplingImageLoaded = isLoaded;
+      subsamplingImageView.setAlpha(isLoaded || forceTouchMode ? 1f : 0f);
+      if (isLoaded) {
+        imageView.invalidate();
+      }
+    }
+  }
+
   @Override
   protected void onLayout (boolean changed, int left, int top, int right, int bottom) {
     final int childCount = getChildCount();
@@ -152,7 +308,7 @@ public class MediaCellView extends ViewGroup implements
     final int parentWidth = getMeasuredWidth();
     final int parentHeight = getMeasuredHeight();
 
-    final int availWidth = fullWidth - offsetHorizontal * 2;
+    final int availWidth = fullWidth - paddingHorizontal * 2;
     final int availHeight = fullHeight - offsetBottom;
     int imageWidth, imageHeight;
     int imageWidthCropped, imageHeightCropped;
@@ -177,10 +333,8 @@ public class MediaCellView extends ViewGroup implements
 
       CropState cropState = media.getCropState();
       if (cropState != null && !cropState.isRegionEmpty()) {
-        double width = cropState.getRight() - cropState.getLeft();
-        double height = cropState.getBottom() - cropState.getTop();
-        imageWidthCropped = (int) ((double) imageWidth * width);
-        imageHeightCropped = (int) ((double) imageHeight * height);
+        imageWidthCropped = (int) ((double) imageWidth * cropState.getRegionWidth());
+        imageHeightCropped = (int) ((double) imageHeight * cropState.getRegionHeight());
       } else {
         imageWidthCropped = imageWidth;
         imageHeightCropped = imageHeight;
@@ -196,7 +350,7 @@ public class MediaCellView extends ViewGroup implements
     }
 
 
-    int centerX = offsetHorizontal + availWidth / 2;
+    int centerX = paddingHorizontal + availWidth / 2;
     int centerY = availHeight / 2;
 
     int exactLeft = centerX - imageWidth / 2;
@@ -232,6 +386,7 @@ public class MediaCellView extends ViewGroup implements
   public void setBoundForceTouchContext (ForceTouchView.ForceTouchContext context) {
     this.forceTouchMode = true;
     this.forceTouchContext = context;
+    this.subsamplingImageView.setAlpha(1f);
   }
 
   private boolean enableEarlyLoad;
@@ -298,6 +453,7 @@ public class MediaCellView extends ViewGroup implements
       setMeasuredDimension(widthMeasureSpec, heightMeasureSpec);
       layoutReceivers();
       measureChildren(widthMeasureSpec, heightMeasureSpec);
+      checkRotationAndScale();
       return;
     }
 
@@ -305,12 +461,12 @@ public class MediaCellView extends ViewGroup implements
 
     final int childCount = getChildCount();
 
-    final int availWidth = fullWidth - offsetHorizontal * 2;
+    final int availWidth = fullWidth - paddingHorizontal * 2;
     final int availHeight = fullHeight - offsetBottom;
     int imageWidth, imageHeight;
     int imageWidthCropped, imageHeightCropped;
     if (media != null) {
-      if (media.isVideo() && media.isRotated()) {
+      if (media.isVideoRenderRotated(true)) {
         imageWidth = media.getHeight();
         imageHeight = media.getWidth();
       } else {
@@ -356,10 +512,10 @@ public class MediaCellView extends ViewGroup implements
       } else {
         LayoutParams params = view.getLayoutParams();
         if (params != null && params.width == LayoutParams.WRAP_CONTENT && params.height == LayoutParams.WRAP_CONTENT) {
-          int w, h;
-          w = imageWidth;
-          h = imageHeight;
-          measureChild(view, MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
+          measureChild(view,
+            MeasureSpec.makeMeasureSpec(imageWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(imageHeight, MeasureSpec.EXACTLY)
+          );
         } else {
           measureChild(view, widthMeasureSpec, heightMeasureSpec);
         }
@@ -381,39 +537,77 @@ public class MediaCellView extends ViewGroup implements
 
       final int childCount = getChildCount();
 
-      final int availWidth = fullWidth - offsetHorizontal * 2;
+      final int availWidth = fullWidth - paddingHorizontal * 2;
       final int availHeight = fullHeight - offsetBottom;
       int imageWidth, imageHeight;
+      int imageWidthOriginal, imageHeightOriginal;
       if (media != null) {
-        if (media.isVideo() && media.isRotated()) {
-          imageWidth = media.getHeight();
-          imageHeight = media.getWidth();
-        } else {
-          imageWidth = media.getWidth();
-          imageHeight = media.getHeight();
+        imageWidthOriginal = media.getWidth(false);
+        imageHeightOriginal = media.getHeight(false);
+
+        imageWidth = imageWidthOriginal;
+        imageHeight = imageHeightOriginal;
+        CropState cropState = media.getCropState();
+        if (cropState != null) {
+          if (U.isRotated(cropState.getRotateBy())) {
+            int temp = imageWidth;
+            imageWidth = imageHeight;
+            imageHeight = temp;
+          }
+          if (!cropState.isRegionEmpty()) {
+            imageWidth *= cropState.getRegionWidth();
+            imageHeight *= cropState.getRegionHeight();
+          }
         }
       } else {
         imageWidth = imageHeight = 0;
+        imageWidthOriginal = imageHeightOriginal = 0;
       }
       if (imageWidth == 0 || imageHeight == 0) {
         imageWidth = availWidth;
         imageHeight = availHeight;
+        imageWidthOriginal = availWidth;
+        imageHeightOriginal = availHeight;
       } else {
         float ratio;
 
-        ratio = Math.min((float) availWidth / (float) imageWidth, (float) availHeight / (float) imageHeight);
+        ratio = Math.min(
+          (float) availWidth / (float) imageWidth,
+          (float) availHeight / (float) imageHeight
+        );
         imageWidth *= ratio;
         imageHeight *= ratio;
+
+        ratio = Math.min(
+          (float) availWidth / (float) imageWidthOriginal,
+          (float) availHeight / (float) imageHeightOriginal
+        );
+        imageWidthOriginal *= ratio;
+        imageHeightOriginal *= ratio;
       }
 
       for (int i = 0; i < childCount; i++) {
         View view = getChildAt(i);
         LayoutParams params = view.getLayoutParams();
+        Log.i("videoCell #%d: %dx%d, original: %dx%d, crop: %s, rotated: %s", i + 1,
+          imageWidth, imageHeight,
+          imageWidthOriginal, imageHeightOriginal,
+          media.getCropState(),
+          media.isVideoRenderRotated(false)
+        );
         if (params != null && params.width == LayoutParams.WRAP_CONTENT && params.height == LayoutParams.WRAP_CONTENT) {
-          int w, h;
-          w = imageWidth;
-          h = imageHeight;
-          measureChild(view, MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
+          if (view instanceof CroppedLayout) {
+            ((CroppedLayout) view).onPreMeasure(
+              getMeasuredWidth(),
+              getMeasuredHeight(),
+              imageWidth, imageHeight,
+              imageWidthOriginal, imageHeightOriginal
+            );
+          }
+          view.measure(
+            MeasureSpec.makeMeasureSpec(imageWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(imageHeight, MeasureSpec.EXACTLY)
+          );
         } else {
           measureChild(view, widthMeasureSpec, heightMeasureSpec);
         }
@@ -427,37 +621,19 @@ public class MediaCellView extends ViewGroup implements
       final int parentWidth = getMeasuredWidth();
       final int parentHeight = getMeasuredHeight();
 
-      final int availWidth = fullWidth - offsetHorizontal * 2;
+      final int availWidth = fullWidth - paddingHorizontal * 2;
       final int availHeight = fullHeight - offsetBottom;
-      int imageWidth, imageHeight;
-      if (media != null) {
-        if (media.isVideo() && media.isRotated()) {
-          imageWidth = media.getHeight();
-          imageHeight = media.getWidth();
-        } else {
-          imageWidth = media.getWidth();
-          imageHeight = media.getHeight();
-        }
-      } else {
-        imageWidth = imageHeight = 0;
-      }
-      if (imageWidth == 0 || imageHeight == 0) {
-        imageWidth = availWidth;
-        imageHeight = availHeight;
-      } else {
-        final float ratio = Math.min((float) availWidth / (float) imageWidth, (float) availHeight / (float) imageHeight);
-        imageWidth *= ratio;
-        imageHeight *= ratio;
-      }
-      int centerX = offsetHorizontal + availWidth / 2;
-      int centerY = availHeight / 2;
-      int exactLeft = centerX - imageWidth / 2;
-      int exactRight = centerX + imageWidth / 2;
-      int exactTop = centerY - imageHeight / 2;
-      int exactBottom = centerY + imageHeight / 2;
+      final int centerX = paddingHorizontal + availWidth / 2;
+      final int centerY = availHeight / 2;
 
       for (int i = 0; i < childCount; i++) {
         View view = getChildAt(i);
+        int imageWidth = view.getMeasuredWidth();
+        int imageHeight = view.getMeasuredHeight();
+        int exactLeft = centerX - imageWidth / 2;
+        int exactRight = centerX + imageWidth / 2;
+        int exactTop = centerY - imageHeight / 2;
+        int exactBottom = centerY + imageHeight / 2;
         ViewGroup.LayoutParams params = view.getLayoutParams();
         if (params != null && params.width == LayoutParams.WRAP_CONTENT && params.height == LayoutParams.WRAP_CONTENT && !forceTouchMode) {
           view.layout(exactLeft, exactTop, exactRight, exactBottom);
@@ -477,28 +653,48 @@ public class MediaCellView extends ViewGroup implements
 
   public void destroy () {
     setMedia(null);
+    setSubsamplingModeEnabled(false);
+    recycle(subsamplingImageView);
+    clearImage();
     bufferingProgressView.performDestroy();
     imageReceiver.destroy();
     gifReceiver.destroy();
     imagePreviewReceiver.destroy();
     miniThumbnail.destroy();
+    avatarReceiver.destroy();
     if (playerView != null) {
       playerView.destroy();
     }
     destroyed = true;
   }
 
+  public void checkCrop () {
+    if (media != null && media.isVideo()) {
+      if (playerView != null) {
+        playerView.checkCrop();
+      }
+      requestLayout();
+      invalidate();
+    }
+  }
+
   public void checkTrim (boolean invalidateFrame) {
     if (playerView != null && playerView.checkTrim()) {
       timeNow = timeTotal = -1;
     }
-    if (invalidateFrame && media != null && media.isVideo() && !media.isGifType()) {
+    if (invalidateFrame) {
+      invalidateVideoFrame();
+    }
+  }
+
+  public void invalidateVideoFrame () {
+    if (media != null && media.isVideo() && !media.isGifType()) {
       final MediaItem mediaItem = media;
       ImageFile file = mediaItem.getTargetImageFile(true);
       ImageLoader.instance().loadFile(file, (success, result) -> UI.post(() -> {
         if (media == mediaItem) {
           imagePreviewReceiver.requestFile(media.getPreviewImageFile());
-          imageReceiver.requestFile(file);
+          requestImage(media, file);
         }
       }));
     }
@@ -649,31 +845,39 @@ public class MediaCellView extends ViewGroup implements
 
   // Other
 
-  private int offsetTop, offsetBottom, offsetHorizontal;
+  private int offsetLeft, offsetTop, offsetRight, offsetBottom, paddingHorizontal;
   private int fullWidth, fullHeight;
 
-  public void layoutCell (int offsetLeft, int offsetTop, int offsetBottom, int width, int height) {
+  public void layoutCell (int paddingHorizontal, int offsetLeft, int offsetTop, int offsetRight, int offsetBottom, int width, int height) {
     this.fullWidth = width;
     this.fullHeight = height;
 
-    this.offsetHorizontal = offsetLeft;
+    this.paddingHorizontal = paddingHorizontal;
+    this.offsetLeft = offsetLeft;
     this.offsetTop = offsetTop;
+    this.offsetRight = offsetRight;
     this.offsetBottom = offsetBottom;
 
     layoutReceivers();
   }
 
-  public void setOffsets (int offsetLeft, int offsetTop, int offsetBottom) {
-    if (this.offsetHorizontal != offsetLeft || this.offsetTop != offsetTop || this.offsetBottom != offsetBottom) {
-      this.offsetHorizontal = offsetLeft;
+  public void setOffsets (int paddingHorizontal, int offsetLeft, int offsetTop, int offsetRight, int offsetBottom) {
+    if (this.paddingHorizontal != paddingHorizontal || this.offsetLeft != offsetLeft || this.offsetTop != offsetTop || this.offsetRight != offsetRight || this.offsetBottom != offsetBottom) {
+      this.paddingHorizontal = paddingHorizontal;
+      this.offsetLeft = offsetLeft;
       this.offsetTop = offsetTop;
+      this.offsetRight = offsetRight;
       this.offsetBottom = offsetBottom;
 
       layoutReceivers();
       invalidateImage();
+      // FIXME: bug inside SubsamplingImageView.java:1435-1436
+      // subsamplingImageView.setPadding(0, 0, 0, offsetBottom);
 
-      if (media != null && media.isVideo() && hideStaticView && playerView != null) {
-        playerView.requestLayout();
+      if (media != null) {
+        if (media.isVideo() && hideStaticView && playerView != null) {
+          playerView.requestLayout();
+        }
       }
     }
   }
@@ -684,7 +888,7 @@ public class MediaCellView extends ViewGroup implements
     layoutReceivers(false);
   }
 
-  private void setImageRadius (int radius) {
+  private void setImageRadius (int radius, float revealFactor) {
     if (receiver instanceof ImageReceiver) {
       ((ImageReceiver) receiver).setRadius(radius);
     }
@@ -692,6 +896,11 @@ public class MediaCellView extends ViewGroup implements
       ((ImageReceiver) preview).setRadius(radius);
     }
     miniThumbnail.setRadius(radius);
+    if (radius == 0) {
+      avatarReceiver.forceFullScreen(true, 1f);
+    } else {
+      avatarReceiver.forceFullScreen(revealFactor != 0f, MathUtils.clamp(revealFactor));
+    }
   }
 
   private void layoutReceivers (boolean forceLayout) {
@@ -722,172 +931,157 @@ public class MediaCellView extends ViewGroup implements
         receiver.forceBoundsLayout();
       }
 
-      setPivotX((left + right) / 2);
-      setPivotY((top + bottom) / 2);
+      setPivotX((left + right) / 2f);
+      setPivotY((top + bottom) / 2f);
 
       return;
     }
 
     if (thumb == null || revealFactor == 1f || media == null) {
-      if (!receiver.setBounds(offsetHorizontal, offsetTop, fullWidth - offsetHorizontal, fullHeight - offsetBottom) && forceLayout) {
+      if (!receiver.setBounds(paddingHorizontal, offsetTop, fullWidth - paddingHorizontal, fullHeight - offsetBottom) && forceLayout) {
         receiver.forceBoundsLayout();
       }
-      if (!preview.setBounds(offsetHorizontal, offsetTop, fullWidth - offsetHorizontal, fullHeight - offsetBottom) && forceLayout) {
+      if (!preview.setBounds(paddingHorizontal, offsetTop, fullWidth - paddingHorizontal, fullHeight - offsetBottom) && forceLayout) {
         preview.forceBoundsLayout();
       }
-      if (!miniThumbnail.setBounds(offsetHorizontal, offsetTop, fullWidth - offsetHorizontal, fullHeight - offsetBottom) && forceLayout) {
+      if (!miniThumbnail.setBounds(paddingHorizontal, offsetTop, fullWidth - paddingHorizontal, fullHeight - offsetBottom) && forceLayout) {
         miniThumbnail.forceBoundsLayout();
       }
 
       setPivotX(receiver.centerX());
       setPivotY(receiver.centerY());
 
-      setImageRadius(0);
+      setImageRadius(0, 1.0f);
 
-      return;
-    }
-
-    int fromLeft = thumb.left; // + 1;
-    int fromTop = thumb.top; // + 1;
-    int fromRight = thumb.right;
-    int fromBottom = thumb.bottom;
-
-    int imageWidth, imageHeight;
-
-    if ((media.isVideo() && media.isFinallyRotated()) /*|| (!media.isVideo() && Utils.isRotated(media.getCropRotateBy()))*/) {
-      imageWidth = media.getHeight();
-      imageHeight = media.getWidth();
+      subsamplingImageView.setScaleX(1f);
+      subsamplingImageView.setScaleY(1f);
+      subsamplingImageView.setTranslationX(0f);
+      subsamplingImageView.setTranslationY(0f);
+      subsamplingImageView.resetClipping();
     } else {
-      imageWidth = media.getWidth();
-      imageHeight = media.getHeight();
-    }
+      int fromLeft = thumb.left; // + 1;
+      int fromTop = thumb.top; // + 1;
+      int fromRight = thumb.right;
+      int fromBottom = thumb.bottom;
 
-    clipHorizontal = clipVertical = 0;
+      int imageWidth, imageHeight;
 
-    int fromWidth = fromRight - fromLeft;
-    int fromHeight = fromBottom - fromTop;
+      if ((media.isVideo() && media.isFinallyRotated()) /*|| (!media.isVideo() && Utils.isRotated(media.getCropRotateBy()))*/) {
+        imageWidth = media.getHeight();
+        imageHeight = media.getWidth();
+      } else {
+        imageWidth = media.getWidth();
+        imageHeight = media.getHeight();
+      }
 
-    float ratio = Math.max((float) fromWidth / (float) imageWidth, (float) fromHeight / (float) imageHeight);
-    if (ratio != 1f) {
-      int actualFromWidth = (int) ((float) imageWidth * ratio);
-      int actualFromHeight = (int) ((float) imageHeight * ratio);
+      clipHorizontal = clipVertical = 0;
 
-      int diffWidth = (actualFromWidth - fromWidth) / 2;
-      int diffHeight = (actualFromHeight - fromHeight) / 2;
-
-      clipHorizontal = (int) ((float) diffWidth * Math.max(0f, Math.min(1f, (1f - revealFactor))));
-      clipVertical = (int) ((float) diffHeight * Math.max(0f, Math.min(1f, (1f - revealFactor))));
-    }
-
-    /*if (imageWidth != imageHeight) {
       int fromWidth = fromRight - fromLeft;
       int fromHeight = fromBottom - fromTop;
 
-      int centerX = thumb.centerX();
-      int centerY = thumb.centerY();
+      float ratio = Math.max((float) fromWidth / (float) imageWidth, (float) fromHeight / (float) imageHeight);
+      if (ratio != 1f) {
+        int actualFromWidth = (int) ((float) imageWidth * ratio);
+        int actualFromHeight = (int) ((float) imageHeight * ratio);
 
-      float ratio = Math.max((float) imageWidth / (float) imageHeight, (float) imageHeight / (float) imageWidth);
-      // float ratio = Math.max((float) fromWidth / (float) imageWidth, (float) fromHeight / (float) imageHeight);
+        int diffWidth = (actualFromWidth - fromWidth) / 2;
+        int diffHeight = (actualFromHeight - fromHeight) / 2;
 
-      int width = (int) ((float) fromWidth * ratio);
-      int height = (int) ((float) fromHeight * ratio);
-
-      int halfWidth = width / 2;
-      int halfHeight = height / 2;
-
-      fromLeft = centerX - halfWidth;
-      fromRight = centerX + halfWidth;
-      fromTop = centerY - halfHeight;
-      fromBottom = centerY + halfHeight;
-
-      clipHorizontal = (width - fromWidth) / 2;
-      clipVertical = (height - fromHeight) / 2;
-    } else {
-      clipVertical = clipHorizontal = 0;
-    }*/
-
-    int left, top, right, bottom;
-
-    if (revealFactor >= 0f) {
-      left = fromLeft + (int) ((float) (offsetHorizontal - fromLeft) * revealFactor) - clipHorizontal;
-      top = fromTop + (int) ((float) (offsetTop - fromTop) * revealFactor) - clipVertical;
-      right = fromRight + (int) ((float) (fullWidth - offsetHorizontal - fromRight) * revealFactor) + clipHorizontal;
-      bottom = fromBottom + (int) ((float) (fullHeight - offsetBottom - fromBottom) * revealFactor) + clipVertical;
-    }/* else if (true) {
-      left = fromLeft;
-      top = fromTop;
-      right = fromRight;
-      bottom = fromBottom;
-    }*/ else {
-      // TODO better
-
-      int centerX = thumb.centerX();
-      int centerY = thumb.centerY();
-
-      int width = (fromRight - fromLeft) + (int) ((float) (fromRight - fromLeft) * revealFactor);
-      int height = (fromBottom - fromTop) + (int) ((float) (fromBottom - fromTop) * revealFactor);
-
-      left = centerX - width / 2 - clipHorizontal;
-      top = centerY - height / 2 - clipVertical;
-      right = centerX + width / 2 + clipHorizontal;
-      bottom = centerY + height / 2 + clipVertical;
-    }
-
-    int radius = imageWidth != imageHeight ? 0 : (int) ((float) thumb.getRadius() * (1f - MathUtils.clamp(revealFactor)));
-    setImageRadius(radius);
-
-    if (!receiver.setBounds(left, top, right, bottom) && forceLayout) {
-      receiver.forceBoundsLayout();
-    }
-    if (!preview.setBounds(left, top, right, bottom) && forceLayout) {
-      preview.forceBoundsLayout();
-    }
-    if (!miniThumbnail.setBounds(left, top, right, bottom) && forceLayout) {
-      miniThumbnail.forceBoundsLayout();
-    }
-
-    setPivotX((left + right) / 2);
-    setPivotY((top + bottom) / 2);
-
-   /* if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && path != null && thumb != null && revealFactor > 0f && revealFactor < 1f) {
-      float factor = Math.max(0f, Math.min(1f, revealFactor));
-
-      int actualLeft = thumb.left - (int) ((float) thumb.left * revealFactor);
-      int actualRight = thumb.right + (int) ((float) (currentWidth - thumb.right) * revealFactor);
-      int actualTop = thumb.top - (int) ((float) thumb.top * revealFactor);
-      int actualBottom = thumb.bottom + (int) ((float) (currentHeight - thumb.bottom) * revealFactor);
-
-      int actualWidth = actualRight - actualLeft;
-      int actualHeight = actualBottom - actualTop;
-
-      float radius = Math.max(actualWidth, actualHeight) / 2;
-
-      int origWidth = thumb.right - thumb.left;
-      int origHeight = thumb.bottom - thumb.top;
-
-      float minRadius = (float) Math.sqrt(origWidth * origWidth + origHeight * origHeight) * .5f;
-
-      if (radius < minRadius) {
-        int diff = (int) (minRadius - radius);
-        actualLeft -= diff / 2;
-        actualRight += diff / 2;
-        actualBottom += diff / 2;
-        actualTop -= diff / 2;
+        clipHorizontal = (int) ((float) diffWidth * MathUtils.clamp(1f - revealFactor));
+        clipVertical = (int) ((float) diffHeight * MathUtils.clamp(1f - revealFactor));
       }
 
-      RectF rectF = Paints.getRectF();
-      rectF.set(actualLeft, actualTop, actualRight, actualBottom);
-      float resultRadius = radius * Anim.DECELERATE_INTERPOLATOR.getInterpolation(1f - factor);
-      path.reset();
-      path.addRoundRect(rectF, resultRadius, resultRadius, Path.Direction.CW);
-    }*/
+      int left, top, right, bottom;
+
+      if (revealFactor >= 0f) {
+        left = fromLeft + (int) ((float) (paddingHorizontal - fromLeft) * revealFactor) - clipHorizontal;
+        top = fromTop + (int) ((float) (offsetTop - fromTop) * revealFactor) - clipVertical;
+        right = fromRight + (int) ((float) (fullWidth - paddingHorizontal - fromRight) * revealFactor) + clipHorizontal;
+        bottom = fromBottom + (int) ((float) (fullHeight - offsetBottom - fromBottom) * revealFactor) + clipVertical;
+      }/* else if (true) {
+        left = fromLeft;
+        top = fromTop;
+        right = fromRight;
+        bottom = fromBottom;
+      }*/ else {
+        // TODO better
+
+        int centerX = thumb.centerX();
+        int centerY = thumb.centerY();
+
+        int width = (fromRight - fromLeft) + (int) ((float) (fromRight - fromLeft) * revealFactor);
+        int height = (fromBottom - fromTop) + (int) ((float) (fromBottom - fromTop) * revealFactor);
+
+        left = centerX - width / 2 - clipHorizontal;
+        top = centerY - height / 2 - clipVertical;
+        right = centerX + width / 2 + clipHorizontal;
+        bottom = centerY + height / 2 + clipVertical;
+      }
+
+      int radius = imageWidth != imageHeight ? 0 : (int) ((float) thumb.getRadius() * (1f - MathUtils.clamp(revealFactor)));
+      setImageRadius(radius, revealFactor);
+
+      if (!receiver.setBounds(left, top, right, bottom) && forceLayout) {
+        receiver.forceBoundsLayout();
+      }
+      if (!preview.setBounds(left, top, right, bottom) && forceLayout) {
+        preview.forceBoundsLayout();
+      }
+      if (!miniThumbnail.setBounds(left, top, right, bottom) && forceLayout) {
+        miniThumbnail.forceBoundsLayout();
+      }
+
+      float width = right - left;
+      float height = bottom - top;
+      float centerX = (left + right) / 2f;
+      float centerY = (top + bottom) / 2f;
+
+      setPivotX(centerX);
+      setPivotY(centerY);
+
+      int targetLeft = paddingHorizontal;
+      int targetTop = offsetTop;
+      int targetRight = fullWidth - paddingHorizontal;
+      int targetBottom = fullHeight - offsetBottom;
+
+      int targetWidth = targetRight - targetLeft;
+      int targetHeight = targetBottom - targetTop;
+
+      float targetCenterX = (targetLeft + targetRight) / 2f;
+      float targetCenterY = (targetTop + targetBottom) / 2f;
+
+      float scaleX = targetWidth != 0 ? width / targetWidth : 1f;
+      float scaleY = targetHeight != 0 ? height / targetHeight : 1f;
+      float scale = Math.max(scaleX, scaleY);
+
+      subsamplingImageView.setScaleX(scale);
+      subsamplingImageView.setScaleY(scale);
+
+      subsamplingImageView.setTranslationX(centerX - targetCenterX);
+      subsamplingImageView.setTranslationY(centerY - targetCenterY);
+
+      float clipHorizontal = Math.max(targetWidth * scale - width, 0) / 2f / scale;
+      float clipVertical = Math.max(targetHeight * scale - height, 0) / 2f / scale;
+
+      final float clipFactor = MathUtils.clamp(1f - revealFactor);
+      float clipTop = (float) (thumb.clipTop + this.clipVertical) * clipFactor;
+      float clipBottom = (float) (thumb.clipBottom + this.clipVertical) * clipFactor;
+      float clipLeft = (float) (thumb.clipLeft + this.clipHorizontal) * clipFactor;
+      float clipRight = (float) (thumb.clipRight + this.clipHorizontal) * clipFactor;
+
+      subsamplingImageView.setClipping(
+        targetWidth, targetHeight,
+        clipHorizontal + clipLeft / scale,
+        clipVertical + clipTop / scale,
+        clipHorizontal + clipRight / scale,
+        clipVertical + clipBottom / scale,
+        Math.max(radius, thumb.topLeftRadius * clipFactor) / scale,
+        Math.max(radius, thumb.topRightRadius * clipFactor) / scale,
+        Math.max(radius, thumb.bottomRightRadius * clipFactor) / scale,
+        Math.max(radius, thumb.bottomLeftRadius * clipFactor) / scale
+      );
+    }
   }
-
-  /*private Path path = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT ? new Path() : null;
-
-  public Path getPath () {
-    return path;
-  }*/
 
   public Receiver getReceiver () {
     return receiver;
@@ -916,6 +1110,71 @@ public class MediaCellView extends ViewGroup implements
     }
   }
 
+  private CancellationSignal subsamplingLoadSignal;
+
+  private ImageFile requestedImage;
+
+  private void clearImage () {
+    requestImage(null, null);
+  }
+
+  private void requestImage (MediaItem item, ImageFile imageFile) {
+    if (this.requestedImage == imageFile) {
+      return;
+    }
+    this.requestedImage = imageFile;
+    if (this.subsamplingLoadSignal != null) {
+      this.subsamplingLoadSignal.cancel();
+      this.subsamplingLoadSignal = null;
+    }
+    if (imageFile == null || (item != null && item.isVideo())) {
+      imageReceiver.requestFile(imageFile);
+      recycle(subsamplingImageView);
+      return;
+    }
+    boolean clearReceiver = true;
+    if (imageFile instanceof ImageFileLocal) {
+      setSubsamplingModeEnabled(true);
+      subsamplingImageView.setTileBackgroundColor(item != null && item.mayBeTransparent() ? Color.WHITE : Color.TRANSPARENT);
+      subsamplingImageView.setImage(ImageSource.uri(Uri.fromFile(new File(imageFile.getFilePath()))));
+    } else if (imageFile instanceof ImageFileRemote || imageFile.isRemote()) {
+      CancellationSignal signal = new CancellationSignal();
+      this.subsamplingLoadSignal = signal;
+      subsamplingImageView.setTileBackgroundColor(item != null && item.mayBeTransparent() ? Color.WHITE : Color.TRANSPARENT);
+      setSubsamplingModeEnabled(true);
+      Client.ResultHandler fileHandler = remoteFileObject -> {
+        if (remoteFileObject.getConstructor() == TdApi.File.CONSTRUCTOR) {
+          TdApi.File tdlibFile = (TdApi.File) remoteFileObject;
+          imageFile.tdlib().client().send(new TdApi.DownloadFile(tdlibFile.id, TdlibFilesManager.PRIORITY_IMAGE, 0, 0, true), result -> {
+            if (result.getConstructor() == TdApi.File.CONSTRUCTOR) {
+              TdApi.File downloadedFile = (TdApi.File) result;
+              Td.copyTo(downloadedFile, tdlibFile);
+              if (TD.isFileLoaded(downloadedFile)) {
+                imageFile.tdlib().runOnUiThread(() -> {
+                  if (!signal.isCanceled()) {
+                    subsamplingImageView.setImage(ImageSource.uri(Uri.fromFile(new File(downloadedFile.local.path))));
+                  }
+                });
+              }
+            }
+          });
+        }
+      };
+      if (imageFile instanceof ImageFileRemote) {
+        ((ImageFileRemote) imageFile).extractFile(fileHandler);
+      } else {
+        fileHandler.onResult(imageFile.getFile());
+      }
+    } else {
+      recycle(subsamplingImageView);
+      imageReceiver.requestFile(imageFile);
+      clearReceiver = false;
+    }
+    if (clearReceiver) {
+      imageReceiver.clear();
+    }
+  }
+
   public void loadMedia (boolean delayed, float strength) {
     boolean isAutoplay = media != null && (media.isLoaded() || Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE) && media.isAutoplay();
     if (isAutoplay)
@@ -924,7 +1183,8 @@ public class MediaCellView extends ViewGroup implements
       if (preview != gifReceiver) {
         gifReceiver.requestFile(null);
       }
-      imageReceiver.requestFile(null);
+      clearImage();
+      avatarReceiver.clear();
 
       delayedLoad = new CancellableRunnable() {
         @Override
@@ -947,22 +1207,31 @@ public class MediaCellView extends ViewGroup implements
     if (media != null && (media.isLoaded() || Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE)) {
       if (media.isGif()) {
         gifReceiver.requestFile(media.getTargetGifFile());
-        imageReceiver.requestFile(null);
+        clearImage();
+        avatarReceiver.clear();
       } else if (media.isVideo() && media.isGifType() && revealFactor == 1f && !disappearing && getParent() instanceof MediaView && ((MediaView) getParent()).isOpen()) {
-        imageReceiver.requestFile(null);
+        clearImage();
+        avatarReceiver.clear();
         setHideStaticView(true, false);
+      } else if (media.isAvatar()) {
+        clearImage();
+        gifReceiver.clear();
+        media.requestAvatar(avatarReceiver, true);
       } else {
-        imageReceiver.requestFile(media.getTargetImageFile(true));
+        avatarReceiver.clear();
         if (preview != gifReceiver) {
-          gifReceiver.requestFile(null);
+          gifReceiver.clear();
         }
+        ImageFile imageFile = media.getTargetImageFile(true);
+        requestImage(media, imageFile);
       }
       invalidateImage();
     } else {
       if (preview != gifReceiver) {
         gifReceiver.requestFile(null);
       }
-      imageReceiver.requestFile(null);
+      clearImage();
+      avatarReceiver.clear();
     }
   }
 
@@ -1062,11 +1331,13 @@ public class MediaCellView extends ViewGroup implements
     zoomComponents();
     checkPostRotation(false);
 
+    setSubsamplingModeEnabled(false);
     if (media == null) {
       imagePreviewReceiver.requestFile(null);
       miniThumbnail.requestFile(null);
       gifReceiver.requestFile(null);
-      imageReceiver.requestFile(null);
+      clearImage();
+      avatarReceiver.clear();
     } else {
       miniThumbnail.requestFile(media.getMiniThumbnail());
       if (media.isVideo() && media.isGifType() && media.isLoaded() && !delayed) {
@@ -1086,8 +1357,8 @@ public class MediaCellView extends ViewGroup implements
           imagePreviewReceiver.requestFile(revealFactor == 0f && media.isGif() ? null : media.getPreviewImageFile());
         }
       }
-      receiver = media.isGif() ? gifReceiver : imageReceiver;
-      if (!forceTouchMode || media.getPreviewImageFile() == null) {
+      receiver = media.isAvatar() ? avatarReceiver : media.isGif() ? gifReceiver : imageReceiver;
+      if (!forceTouchMode || media.getPreviewImageFile() == null || media.isAvatar()) {
         loadMedia(delayed, strength);
       }
       layoutReceivers();
@@ -1130,14 +1401,16 @@ public class MediaCellView extends ViewGroup implements
     if (this.media == item && item != null) {
       if (item.isGif()) {
         gifReceiver.requestFile(item.getTargetGifFile());
+      } else if (item.isAvatar()) {
+        media.requestAvatar(avatarReceiver, true);
       } else {
-        imageReceiver.requestFile(item.getTargetImageFile(true));
+        requestImage(item, item.getTargetImageFile(true));
       }
     }
   }
 
   public boolean hasVisibleContent () {
-    return !receiver.needPlaceholder() || !preview.needPlaceholder() || !gifReceiver.needPlaceholder() || !miniThumbnail.needPlaceholder() || hideStaticView;
+    return !receiver.needPlaceholder() || !preview.needPlaceholder() || !gifReceiver.needPlaceholder() || !miniThumbnail.needPlaceholder() || hideStaticView || (subsamplingModeEnabled && subsamplingImageView.isReady() && subsamplingImageView.getAlpha() > 0f);
   }
 
   // Post transformation
@@ -1208,7 +1481,7 @@ public class MediaCellView extends ViewGroup implements
     int viewWidth = getMeasuredWidth();
     int viewHeight = getMeasuredHeight();
     float scaleWidth, scaleHeight;
-    if (media.isVideo() && media.isRotated()) {
+    if (media.isVideoRenderRotated(true)) {
       if (viewWidth < viewHeight) {
         scaleWidth = imageHeight;
         scaleHeight = imageWidth;
@@ -1261,7 +1534,7 @@ public class MediaCellView extends ViewGroup implements
 
   public void checkPostRotation (boolean animated) {
     if (media != null) {
-      setPostRotation(media.isVideo() ? media.getPostRotation() : 0, animated);
+      setPostRotation(media.isVideo() ? media.getPostRotate() : 0, animated);
     }
   }
 
@@ -1321,11 +1594,12 @@ public class MediaCellView extends ViewGroup implements
     if (canTouch(isDown)) {
       detector.onTouchEvent(ev);
     }
-    return interceptAnyEvents || super.onInterceptTouchEvent(ev);
+    boolean res = super.onInterceptTouchEvent(ev);
+    return res || interceptAnyEvents;
   }
 
   public boolean canZoom () {
-    return canTouch(false) && getVisibility() == View.VISIBLE && media != null && getAlpha() == 1f && (media.isLoaded() || Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE) && revealFactor == 1f && factor == 0f && ((MediaView) getParent()).canZoom(this);
+    return canTouch(false) && getVisibility() == View.VISIBLE && media != null && getAlpha() == 1f && (media.isLoaded() || Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE) && revealFactor == 1f && factor == 0f && ((MediaView) getParent()).canZoom(this) && !subsamplingModeEnabled;
   }
 
   public boolean canTouch (boolean isTouchDown) {
@@ -1417,6 +1691,50 @@ public class MediaCellView extends ViewGroup implements
     rect.bottom = getMeasuredHeight(); // receiver.getBottom();
   }
 
+  public boolean isZoomed () {
+    if (subsamplingModeEnabled && subsamplingImageView.isReady()) {
+      float scale = subsamplingImageView.getScale();
+      float minScale = subsamplingImageView.getMinScale();
+      // Log.i("scale = %f min = %f diff = %f zoomed = %b", scale, minScale, scale - minScale, scale != minScale);
+      return scale != 0f && scale > minScale;
+    } else {
+      float factor = getZoomFactor();
+      // Log.i("factor zoom = %f zoomed = %b", factor, factor != 1f);
+      return factor != 1f;
+    }
+  }
+
+  public void normalizeZoom () {
+    if (subsamplingModeEnabled && subsamplingImageView.isReady()) {
+      float minScale = subsamplingImageView.getMinScale();
+      SubsamplingScaleImageView.AnimationBuilder b = subsamplingImageView
+        .animateScaleAndCenter(minScale, new PointF(
+          subsamplingImageView.getSWidth() / 2f,
+          subsamplingImageView.getHeight() / 2f
+        ));
+      if (b != null) {
+        b.withInterruptible(false)
+         .withDuration(subsamplingZoomDuration())
+         .withEasing(SubsamplingScaleImageView.EASE_IN_OUT_QUAD)
+         .withOnAnimationEventListener(new SubsamplingScaleImageView.DefaultOnAnimationEventListener() {
+           @Override
+           public void onComplete () {
+             if (subsamplingImageView.getScale() != subsamplingImageView.getMinScale()) {
+               subsamplingImageView.resetScaleAndCenter();
+             }
+           }
+         })
+         .start();
+      }
+    } else {
+      getDetector().normalizeZoom(true);
+    }
+  }
+
+  private int subsamplingZoomDuration () {
+    return Math.max(1, Math.round(ZOOM_DURATION * U.getAnimationScale(getContext())));
+  }
+
   public float getZoomFactor () {
     return detector.getZoom();
   }
@@ -1466,6 +1784,8 @@ public class MediaCellView extends ViewGroup implements
     }
   }
 
+  private final Path clipPath = new Path();
+
   public class CellImageView extends View {
     public CellImageView (Context context) {
       super(context);
@@ -1484,21 +1804,15 @@ public class MediaCellView extends ViewGroup implements
         return;
       }
 
-      // final float zoomFactor = this.zoomFactor + (1f - this.zoomFactor) * Math.min(1f, Math.max(0, (1f - revealFactor)));
-
       final boolean savedFactor = factor != 0f;
-      if (savedFactor/* || zoomFactor != 1f || translateX != 0 || translateY != 0*/) {
+      if (savedFactor) {
         c.save();
       }
-
-    /*if (zoomFactor != 1f || translateX != 0 || translateY != 0) {
-      c.translate(translateX, translateY);
-      c.scale(zoomFactor, zoomFactor, pivotX, pivotY);
-    }*/
 
       final float clipFactor = Math.max(0f, Math.min(1f, revealFactor));
 
       final boolean savedClip = thumb != null && clipFactor < 1f;
+      int savedRoundedClip = Integer.MIN_VALUE;
       if (savedClip) {
         int clipTop = (int) ((float) (thumb.clipTop + clipVertical) * (1f - clipFactor));
         int clipBottom = (int) ((float) (thumb.clipBottom + clipVertical) * (1f - clipFactor));
@@ -1506,19 +1820,41 @@ public class MediaCellView extends ViewGroup implements
         int clipRight = (int) ((float) (thumb.clipRight + clipHorizontal) * (1f - clipFactor));
 
         c.save();
-        // FIXME uncomment
         c.clipRect(receiver.getLeft() + clipLeft, receiver.getTop() + clipTop, receiver.getRight() - clipRight, receiver.getBottom() - clipBottom);
+
+        float topLeftRadius = Math.max(thumb.getRadius(), thumb.topLeftRadius) * (1f - clipFactor);
+        float topRightRadius = Math.max(thumb.getRadius(), thumb.topRightRadius) * (1f - clipFactor);
+        float bottomRightRadius = Math.max(thumb.getRadius(), thumb.bottomRightRadius) * (1f - clipFactor);
+        float bottomLeftRadius = Math.max(thumb.getRadius(), thumb.bottomLeftRadius) * (1f - clipFactor);
+
+        if (topLeftRadius != 0 || topRightRadius != 0 || bottomLeftRadius != 0 || bottomRightRadius != 0) {
+          clipPath.reset();
+          RectF rectF = Paints.getRectF();
+
+          int targetWidth = receiver.getTargetWidth();
+          int targetHeight = receiver.getTargetHeight();
+
+          if (targetWidth == 0 || targetHeight == 0) {
+            targetWidth = preview.getTargetWidth();
+            targetHeight = preview.getTargetHeight();
+          }
+
+          if (targetWidth == 0 || targetHeight == 0) {
+            targetWidth = miniThumbnail.getTargetWidth();
+            targetHeight = miniThumbnail.getTargetHeight();
+          }
+
+          float clipWidth = Math.min(targetWidth, receiver.getWidth());
+          float clipHeight = Math.min(targetHeight, receiver.getHeight());
+
+          rectF.set(receiver.centerX() - clipWidth / 2f, receiver.centerY() - clipHeight / 2f, receiver.centerX() + clipWidth / 2f, receiver.centerY() + clipHeight / 2f);
+          DrawAlgorithms.buildPath(clipPath, rectF, topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius);
+          savedRoundedClip = ViewSupport.clipPath(c, clipPath);
+        }
       }
 
-    /*if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && path != null && thumb != null && revealFactor > 0f && revealFactor < 1f) {
-      c.save();
-      try {
-        c.clipPath(path);
-      } catch (Throwable ignored) { }
-    }*/
-
       if (!hideStaticView || !videoReady) {
-        if (receiver.needPlaceholder()) {
+        if (receiver.needPlaceholder() || (subsamplingModeEnabled && !subsamplingImageView.isReady())) {
           if (preview.needPlaceholder()) {
             miniThumbnail.draw(c);
           }
@@ -1536,13 +1872,11 @@ public class MediaCellView extends ViewGroup implements
           targetAnimator = null;
         }
       }
-      // FIXME remove
-      // c.drawRect(receiver.getLeft(), receiver.getTop(), receiver.getRight(), receiver.getBottom(), Paints.fillingPaint(0x99ff0000));
 
-    /*if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && path != null && thumb != null && revealFactor > 0f && revealFactor < 1f) {
-      c.restore();
-    }*/
       if (savedClip) {
+        if (savedRoundedClip != Integer.MIN_VALUE) {
+          c.restoreToCount(savedRoundedClip);
+        }
         c.restore();
       }
 
@@ -1557,6 +1891,7 @@ public class MediaCellView extends ViewGroup implements
     imageReceiver.attach();
     imagePreviewReceiver.attach();
     miniThumbnail.attach();
+    avatarReceiver.attach();
   }
 
   public void detach () {
@@ -1564,6 +1899,7 @@ public class MediaCellView extends ViewGroup implements
     imageReceiver.detach();
     imagePreviewReceiver.detach();
     miniThumbnail.detach();
+    avatarReceiver.detach();
   }
 
   // Video
@@ -1615,7 +1951,7 @@ public class MediaCellView extends ViewGroup implements
     if (this.hideStaticView != hideStaticView) {
       this.hideStaticView = hideStaticView;
       if (hideStaticView) {
-        prepareVideo();
+        prepareVideo(media != null && media.getSourceGalleryFile() != null);
         if (playerView != null) {
           playerView.setVideo(media);
         }
@@ -1642,6 +1978,7 @@ public class MediaCellView extends ViewGroup implements
 
   private void resetVideoState () {
     setHideStaticView(false, false);
+    updateCanSeek();
     isPlaying = false;
     videoReady = false;
     timeNow = -1;
@@ -1691,14 +2028,12 @@ public class MediaCellView extends ViewGroup implements
     }
   }
 
-  private void prepareVideo () {
+  private void prepareVideo (boolean enableCropping) {
     if (playerView == null) {
       videoParentView = new CellVideoView(getContext());
       videoParentView.setLayoutParams(FrameLayoutFix.newParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-      playerView = new VideoPlayerView(getContext(), videoParentView, 0);
-      playerView.setInForceTouch();
+      playerView = new VideoPlayerView(getContext(), videoParentView, 0, enableCropping);
       playerView.forceLooping(forceTouchMode);
-      playerView.setBoundCell(this);
       playerView.setCallback(this);
       hideStaticView = true;
       addView(videoParentView, 0);
@@ -1738,6 +2073,10 @@ public class MediaCellView extends ViewGroup implements
     }
   }
 
+  public void stopPlaying () {
+    resetVideoState();
+  }
+
   public void pauseIfPlaying () {
     setHideStaticView(true, true);
     if (playerView != null) {
@@ -1763,13 +2102,13 @@ public class MediaCellView extends ViewGroup implements
     }
   }
 
+  private void updateCanSeek () {
+    setCanSeek(media != null && media.canSeekVideo());
+  }
+
   @Override
   public void onStateChanged (TdApi.File file, @TdlibFilesManager.FileDownloadState int state) {
-    if (media != null && media.isVideo() && Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE) {
-      setCanSeek(true);
-    } else {
-      setCanSeek(media != null && media.isVideo() && state == TdlibFilesManager.STATE_DOWNLOADED_OR_UPLOADED);
-    }
+    updateCanSeek();
 
     if (state == TdlibFilesManager.STATE_DOWNLOADED_OR_UPLOADED && (forceTouchMode || (media != null && media.isAutoplay()))) {
       autoplayIfNeeded(false);

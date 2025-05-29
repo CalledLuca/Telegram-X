@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,10 +23,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationManagerCompat;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.drinkmore.Tracer;
-import org.thunderdog.challegram.BuildConfig;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
+import org.thunderdog.challegram.TDLib;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Passcode;
 import org.thunderdog.challegram.unsorted.Settings;
@@ -41,7 +41,7 @@ import java.util.Map;
 import java.util.Set;
 
 import me.vkryl.core.util.FilteredIterator;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class TdlibNotificationHelper implements Iterable<TdlibNotificationGroup> {
   private final TdlibNotificationManager context;
@@ -82,7 +82,7 @@ public class TdlibNotificationHelper implements Iterable<TdlibNotificationGroup>
   }
 
   private static boolean accept (TdApi.NotificationGroupType type) {
-    if (BuildConfig.EXPERIMENTAL) {
+    if (Config.FORCE_DISABLE_NOTIFICATIONS) {
       // Ignore all notifications in experimental builds
       return false;
     }
@@ -141,6 +141,11 @@ public class TdlibNotificationHelper implements Iterable<TdlibNotificationGroup>
         hideUnknownNotification(manager, baseNotificationId, true, extras);
       }
     }
+  }
+
+  public void abortCancelableOperations () {
+    Context context = UI.getAppContext();
+    style.cancelPendingMediaPreviewDownloads(context, this);
   }
 
   public void restoreState (TdApi.UpdateActiveNotifications update) {
@@ -334,8 +339,12 @@ public class TdlibNotificationHelper implements Iterable<TdlibNotificationGroup>
               return false;
           }
           return true;
-        } catch (Throwable t) {
-          Tracer.onNotificationError(t);
+        } catch (TdlibNotificationChannelGroup.ChannelCreationFailureException e) {
+          TDLib.Tag.notifications("Unable to create some notification channels for userId %d:\n%s",
+            accountUserId,
+            Log.toString(e)
+          );
+          tdlib.settings().trackNotificationChannelProblem(e, 0);
         }
       }
     }
@@ -351,7 +360,7 @@ public class TdlibNotificationHelper implements Iterable<TdlibNotificationGroup>
   }
 
   @TargetApi(Build.VERSION_CODES.O)
-  public String findCommonChannelId (int category) {
+  public String findCommonChannelId (int category) throws TdlibNotificationChannelGroup.ChannelCreationFailureException {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       TdlibNotificationChannelGroup channelGroup = tdlib.notifications().getChannelCache();
       android.app.NotificationChannel channel = null;

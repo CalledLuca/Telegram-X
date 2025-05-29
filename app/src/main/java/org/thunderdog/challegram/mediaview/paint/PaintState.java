@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@ import java.lang.ref.Reference;
 import java.util.ArrayList;
 import java.util.List;
 
+import me.vkryl.core.FileUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.reference.ReferenceUtils;
 import me.vkryl.core.util.Blob;
@@ -75,18 +76,17 @@ public class PaintState {
     }
   }
 
+  public static void forgetPaintState (int paintId) {
+    synchronized (PaintState.class) {
+      if (pendingPaints != null) {
+        pendingPaints.remove(paintId);
+      }
+    }
+  }
+
   public static PaintState obtainPaintState (int paintId) {
     synchronized (PaintState.class) {
-      if (pendingPaints == null) {
-        return null;
-      }
-      int i = pendingPaints.indexOfKey(paintId);
-      if (i >= 0) {
-        PaintState painting = pendingPaints.valueAt(i);
-        pendingPaints.removeAt(i);
-        return painting;
-      }
-      return null;
+      return pendingPaints != null ? pendingPaints.get(paintId) : null;
     }
   }
 
@@ -175,19 +175,20 @@ public class PaintState {
 
     if (size >= 256) {
       int paintId = Settings.instance().getPaintId();
-      File dir = new File(UI.getAppContext().getFilesDir(), "paints");
-      if (dir.exists() || dir.mkdir()) {
+      File paintCacheDirectory = new File(UI.getAppContext().getFilesDir(), "paints");
+      if (FileUtils.createDirectory(paintCacheDirectory)) {
         File file;
         do {
           paintId++;
           Settings.instance().setPaintId(paintId);
-          file = new File(dir, paintId + ".bin");
+          file = new File(paintCacheDirectory, paintId + ".bin");
         } while (file.exists());
 
         b = new Blob(Blob.sizeOf(paintId));
         b.writeVarint(paintId);
 
         putPaintState(paintId, this);
+        final int paintIdFinal = paintId;
         final File fileFinal = file;
         final int sizeFinal = size;
 
@@ -207,6 +208,7 @@ public class PaintState {
               for (SimpleDrawing drawing : drawingsList) {
                 drawing.save(f);
               }
+              forgetPaintState(paintIdFinal);
             } catch (Throwable t) {
               Log.w("Cannot save paint file: %s", t, fileFinal.getName());
             }
@@ -229,8 +231,7 @@ public class PaintState {
     return b.toByteArray();
   }
 
-  @Override
-  public String toString () {
+  public String saveAndSerializeToString () {
     if (isEmpty()) {
       return "";
     }

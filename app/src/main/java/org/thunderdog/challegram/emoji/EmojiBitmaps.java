@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,15 +16,20 @@ package org.thunderdog.challegram.emoji;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Rect;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Media;
+import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.tool.EmojiCode;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
@@ -33,10 +38,54 @@ import java.io.File;
 import java.io.InputStream;
 import java.util.Locale;
 
+import me.vkryl.core.lambda.Destroyable;
+
 class EmojiBitmaps {
+  public static class Entry implements Destroyable {
+    public Bitmap bitmap;
+    public int inSampleSize;
+
+    private boolean isLoading;
+
+    public Entry () { }
+
+    public void setBitmap (Bitmap bitmap, int inSampleSize) {
+      this.bitmap = bitmap;
+      this.inSampleSize = inSampleSize;
+    }
+
+    public boolean isLoaded () {
+      return U.isValidBitmap(bitmap);
+    }
+
+    public boolean markAsLoading () {
+      synchronized (this) {
+        if (!isLoading) {
+          isLoading = true;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    @Override
+    public void performDestroy () {
+      U.recycle(bitmap);
+      setBitmap(null, 0);
+      isLoading = false;
+    }
+
+    public boolean draw (@NonNull Canvas c, EmojiInfo info, Rect outRect, Paint paint) {
+      if (isLoaded()) {
+        c.drawBitmap(bitmap, info.getRect(inSampleSize), outRect, paint);
+        return true;
+      }
+      return false;
+    }
+  }
+
   public final String identifier;
-  public final Bitmap[][] bitmaps = new Bitmap[5][EmojiCode.SPLIT_COUNT];
-  private final boolean[][] loadingEmoji = new boolean[5][EmojiCode.SPLIT_COUNT];
+  private final Entry[][] bitmaps = new Entry[5][EmojiCode.SPLIT_COUNT];
   private boolean recycled;
 
   public final float scaleDp;
@@ -50,8 +99,7 @@ class EmojiBitmaps {
     }
   }
 
-  private static Bitmap loadAsset (String filePath, boolean isAsset) {
-    final int sampleSize = calculateSampleSize();
+  private static Bitmap loadAsset (String filePath, boolean isAsset, int sampleSize) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && Config.MODERN_IMAGE_DECODER_ENABLED) {
       try {
         android.graphics.ImageDecoder.Source source;
@@ -90,17 +138,21 @@ class EmojiBitmaps {
     return Screen.density() <= 1.0f ? 2 : 1;
   }
 
-  public Bitmap getBitmap (int page1, int page2) {
-    return isReady(page1, page2) ? bitmaps[page1][page2] : null;
+  @Nullable
+  public Entry getBitmap (int section, int page) {
+    return isReady(section, page) ? bitmaps[section][page] : null;
   }
 
   private boolean isReady (int page1, int page2) {
     if (recycled)
       return false;
-    Bitmap bitmap = bitmaps[page1][page2];
-    if (!U.isValidBitmap(bitmap)) {
-      if (!loadingEmoji[page1][page2]) {
-        loadingEmoji[page1][page2] = true;
+    Entry bitmap = bitmaps[page1][page2];
+    if (bitmap == null) {
+      bitmap = new Entry();
+      bitmaps[page1][page2] = bitmap;
+    }
+    if (!bitmap.isLoaded()) {
+      if (bitmap.markAsLoading()) {
         Media.instance().post(() -> loadEmoji(page1, page2));
       }
       return false;
@@ -111,37 +163,48 @@ class EmojiBitmaps {
   public void recycle () {
     if (!recycled) {
       recycled = true;
-      for (Bitmap[] bitmaps : this.bitmaps) {
-        int index = 0;
-        for (Bitmap bitmap : bitmaps) {
-          U.recycle(bitmap);
-          bitmaps[index] = null;
-          index++;
+      for (Entry[] bitmaps : this.bitmaps) {
+        for (int i = 0; i < bitmaps.length; i++) {
+          Entry bitmap = bitmaps[i];
+          if (bitmap != null) {
+            bitmap.performDestroy();
+            bitmaps[i] = null;
+          }
         }
       }
     }
   }
 
-  private void loadEmoji (int page1, int page2) {
-    String fileSuffix = String.format(Locale.US, "%d_%d.png", page1, page2);
+  private void loadEmoji (int section, int page) {
+    String fileSuffix = String.format(Locale.US, "%d_%d.png", section, page);
 
+    int sampleSize = calculateSampleSize();
     Bitmap result = null;
-    if (!BuildConfig.EMOJI_BUILTIN_ID.equals(identifier)) {
-      File file = new File(new File(Emoji.getEmojiPackDirectory(), identifier), fileSuffix);
-      result = loadAsset(file.getPath(), false);
-    }
-    if (result == null) {
-      result = loadAsset(String.format(Locale.US, "emoji/v%d_%s", (12 + BuildConfig.EMOJI_VERSION), fileSuffix), true);
-    }
-    Bitmap resultFinal = result;
+    int attemptNo = 0;
+    do {
+      if (!BuildConfig.EMOJI_BUILTIN_ID.equals(identifier)) {
+        File file = new File(new File(Emoji.getEmojiPackDirectory(), identifier), fileSuffix);
+        result = loadAsset(file.getPath(), false, sampleSize);
+      }
+      if (result == null) {
+        result = loadAsset(String.format(Locale.US, "emoji/v%d_%s", (12 + BuildConfig.EMOJI_VERSION), fileSuffix), true, sampleSize);
+      }
+      if (U.isValidBitmap(result)) {
+        break;
+      }
+      attemptNo++;
+      sampleSize++;
+    } while (attemptNo < 3);
+    final Bitmap resultFinal = result;
+    final int sampleSizeFinal = sampleSize;
     UI.post(() -> {
       if (recycled) {
         if (resultFinal != null)
           resultFinal.recycle();
       } else {
-        bitmaps[page1][page2] = resultFinal;
+        bitmaps[section][page].setBitmap(resultFinal, sampleSizeFinal);
       }
-      UI.emojiLoaded(false);
+      TGLegacyManager.instance().notifyEmojiChanged(false);
     });
   }
 }

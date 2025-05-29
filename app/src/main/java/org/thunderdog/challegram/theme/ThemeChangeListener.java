@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,5 +21,5 @@ public interface ThemeChangeListener {
   void onThemeColorsChanged (boolean areTemp, @Nullable ColorState state);
   default void onThemeChanged (ThemeDelegate fromTheme, ThemeDelegate toTheme) { }
   default void onThemeAutoNightModeChanged (int autoNightMode) { }
-  default void onThemePropertyChanged (int themeId, @ThemeProperty int propertyId, float value, boolean isDefault) { }
+  default void onThemePropertyChanged (int themeId, @PropertyId int propertyId, float value, boolean isDefault) { }
 }

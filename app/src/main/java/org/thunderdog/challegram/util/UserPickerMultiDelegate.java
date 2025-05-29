@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,12 +14,12 @@
  */
 package org.thunderdog.challegram.util;
 
-import org.thunderdog.challegram.data.TGUser;
+import org.thunderdog.challegram.component.user.BubbleView;
 
 import java.util.List;
 
 public interface UserPickerMultiDelegate {
   long[] getAlreadySelectedChatIds ();
-  void onAlreadyPickedChatsChanged (List<TGUser> chats);
+  void onAlreadyPickedChatsChanged (List<BubbleView.Entry> entries);
   int provideMultiUserPickerHint ();
 }

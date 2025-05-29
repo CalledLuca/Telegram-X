@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@ import android.webkit.WebView;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
@@ -63,7 +63,7 @@ import java.util.ArrayList;
 
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
 public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickListener, MediaCollectorDelegate, MediaViewDelegate {
   public static final float MEDIA_MARGIN = 16f, MEDIA_POST_MARGIN = 8f;
@@ -145,7 +145,7 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
   public PageBlockMedia (ViewController<?> context, TdApi.PageBlockVideo video) {
     super(context, video);
     if (video.video != null) {
-      wrapper = new MediaWrapper(context.context(), context.tdlib(), video.video, 0, 0, null, false);
+      wrapper = new MediaWrapper(context.context(), context.tdlib(), video.video, null, 0, 0, null, false);
       initWrapper(wrapper);
       setCaption(video.caption);
     }
@@ -198,7 +198,7 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
         case TdApi.PageBlockVideo.CONSTRUCTOR: {
           TdApi.PageBlockVideo video = (TdApi.PageBlockVideo) pageBlock;
           if (video.video != null) {
-            wrapper = new MediaWrapper(context.context(), context.tdlib(), video.video, 0, 0, null, false);
+            wrapper = new MediaWrapper(context.context(), context.tdlib(), video.video, null, 0, 0, null, false);
             initWrapper(wrapper);
             caption = video.caption;
           }
@@ -453,7 +453,7 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
       final int x = ((view.getMeasuredWidth() - getMinimumContentPadding(true) - getMinimumContentPadding(false)) / 2 - wrapper.getCellWidth() / 2) + getMinimumContentPadding(true);
       wrapper.draw(view, c, x, getContentTop(), preview, receiver, 1f);
       if (!StringUtils.isEmpty(url)) {
-        Drawables.draw(c, linkIcon, receiver.getRight() - linkIcon.getMinimumWidth() - Screen.dp(9f), receiver.getTop() + Screen.dp(9f), Paints.getPorterDuffPaint(0xffffffff));
+        Drawables.draw(c, linkIcon, receiver.getRight() - linkIcon.getMinimumWidth() - Screen.dp(9f), receiver.getTop() + Screen.dp(9f), Paints.whitePorterDuffPaint());
       }
     }
   }
@@ -480,27 +480,20 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
     }
     if (!StringUtils.isEmpty(url)) {
       context.showOptions(Lang.getString(R.string.OpenThisLink, url), new int[] {R.id.btn_openLink, R.id.btn_copyLink, R.id.btn_open}, new String[] {Lang.getString(R.string.Open), Lang.getString(R.string.CopyLink), Lang.getString(R.string.ViewPhoto)}, null, new int[] {R.drawable.baseline_open_in_browser_24, R.drawable.baseline_content_copy_24, R.drawable.baseline_visibility_24}, (optionItemView, id) -> {
-        switch (id) {
-          case R.id.btn_openLink: {
-            TdlibUi.UrlOpenParameters openParameters = new TdlibUi.UrlOpenParameters(this.urlOpenParameters);
-            if (openParameters.tooltip == null) {
-              openParameters.tooltip = UI.getContext(view.getContext()).tooltipManager().builder(view, currentViews).locate((targetView, outRect) -> outRect.set(wrapper.getCellLeft(), wrapper.getCellTop(), wrapper.getCellRight(), wrapper.getCellBottom()));
-            }
-            if (context instanceof InstantViewController) {
-              ((InstantViewController) context).onUrlClick(view, url, false, openParameters);
-            } else {
-              context.tdlib().ui().openUrl(context, url, openParameters);
-            }
-            break;
+        if (id == R.id.btn_openLink) {
+          TdlibUi.UrlOpenParameters openParameters = new TdlibUi.UrlOpenParameters(this.urlOpenParameters);
+          if (openParameters.tooltip == null) {
+            openParameters.tooltip = UI.getContext(view.getContext()).tooltipManager().builder(view, currentViews).locate((targetView, outRect) -> outRect.set(wrapper.getCellLeft(), wrapper.getCellTop(), wrapper.getCellRight(), wrapper.getCellBottom()));
           }
-          case R.id.btn_copyLink: {
-            UI.copyText(url, R.string.CopiedLink);
-            break;
+          if (context instanceof InstantViewController) {
+            ((InstantViewController) context).onUrlClick(view, url, false, openParameters);
+          } else {
+            context.tdlib().ui().openUrl(context, url, openParameters);
           }
-          case R.id.btn_open: {
-            openMedia(clickWrapper);
-            break;
-          }
+        } else if (id == R.id.btn_copyLink) {
+          UI.copyText(url, R.string.CopiedLink);
+        } else if (id == R.id.btn_open) {
+          openMedia(clickWrapper);
         }
         return true;
       });
@@ -559,7 +552,8 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
       if (wrapper.getPhoto() != null) {
         parsedItem = MediaItem.valueOf(context.context(), context.tdlib(), wrapper.getPhoto(), captionText);
       } else if (wrapper.getVideo() != null) {
-        parsedItem = MediaItem.valueOf(context.context(), context.tdlib(), wrapper.getVideo(), captionText);
+        // TODO: TDLib/server doesn't have alternativeVideos in PageBlockVideo
+        parsedItem = MediaItem.valueOf(context.context(), context.tdlib(), wrapper.getVideo(), null, null, captionText);
       } else if (wrapper.getAnimation() != null) {
         parsedItem = MediaItem.valueOf(context.context(), context.tdlib(), wrapper.getAnimation(), captionText);
       } else {
@@ -598,10 +592,10 @@ public class PageBlockMedia extends PageBlock implements MediaWrapper.OnClickLis
   }
 
   @Override
-  public MediaViewThumbLocation getTargetLocation (int index, MediaItem item) {
+  public MediaViewThumbLocation getTargetLocation (int indexInStack, MediaItem item) {
     MediaWrapper wrapper;
     if (isList || collageContext != null) {
-      wrapper = getWrapper(index);
+      wrapper = getWrapper(indexInStack);
     } else {
       wrapper = this.wrapper;
     }

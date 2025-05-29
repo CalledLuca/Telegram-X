@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,20 +21,20 @@ import android.view.View;
 import androidx.annotation.Nullable;
 import androidx.palette.graphics.Palette;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibCache;
 import org.thunderdog.challegram.theme.ChatStyleChangeListener;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.ColorState;
+import org.thunderdog.challegram.theme.PropertyId;
 import org.thunderdog.challegram.theme.TGBackground;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeChangeListener;
 import org.thunderdog.challegram.theme.ThemeDelegate;
 import org.thunderdog.challegram.theme.ThemeManager;
-import org.thunderdog.challegram.theme.ThemeProperty;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
@@ -147,9 +147,9 @@ public class WallpaperView extends View implements ThemeChangeListener, ChatStyl
   }
 
   @Override
-  public void onThemePropertyChanged (int themeId, @ThemeProperty int propertyId, float value, boolean isDefault) {
+  public void onThemePropertyChanged (int themeId, @PropertyId int propertyId, float value, boolean isDefault) {
     switch (propertyId) {
-      case ThemeProperty.WALLPAPER_USAGE_ID:
+      case PropertyId.WALLPAPER_USAGE_ID:
         setWallpaper(tdlib.settings().getWallpaper(Theme.getWallpaperIdentifier(themeId)), true);
         break;
     }
@@ -273,7 +273,7 @@ public class WallpaperView extends View implements ThemeChangeListener, ChatStyl
   }
 
   private static int getWallpaperBackground (ThemeDelegate theme) {
-    return ColorUtils.compositeColor(theme.getColor(R.id.theme_color_background), theme.getColor(R.id.theme_color_bubble_chatBackground));
+    return ColorUtils.compositeColor(theme.getColor(ColorId.background), theme.getColor(ColorId.bubble_chatBackground));
   }
 
   private final DrawAlgorithms.GradientCache gradientCache = new DrawAlgorithms.GradientCache();
@@ -298,7 +298,7 @@ public class WallpaperView extends View implements ThemeChangeListener, ChatStyl
       } else {
         c.drawColor(ColorUtils.alphaColor(alpha, wallpaper.getBackgroundColor(defaultColor)));
       }
-      receiver.getReceiver().setColorFilter(wallpaper.getPatternColor());
+      receiver.getReceiver().setPorterDuffColorFilter(wallpaper.getPatternColor());
       alpha *= wallpaper.getPatternIntensity();
       if (alpha != 1f)
         receiver.setPaintAlpha(alpha);
@@ -309,7 +309,7 @@ public class WallpaperView extends View implements ThemeChangeListener, ChatStyl
       if (receiver.needPlaceholder()) {
         c.drawColor(ColorUtils.alphaColor(alpha, defaultColor));
       }
-      receiver.disableColorFilter();
+      receiver.disablePorterDuffColorFilter();
       if (alpha != 1f) {
         receiver.setPaintAlpha(alpha);
       }
@@ -374,7 +374,7 @@ public class WallpaperView extends View implements ThemeChangeListener, ChatStyl
         drawWallpaper(previewWallpaper, c, gradientCache, ThemeManager.instance().appliedTheme(), preview, factor);
       }
     } else {
-      c.drawColor(Theme.getColor(R.id.theme_color_chatBackground));
+      c.drawColor(Theme.getColor(ColorId.chatBackground));
     }
   }
 }

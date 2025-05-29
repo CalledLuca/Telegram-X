@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
  */
 package org.thunderdog.challegram.loader;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.filegen.PhotoGenerationInfo;
@@ -26,9 +26,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import me.vkryl.core.MathUtils;
 import me.vkryl.core.BitwiseUtils;
-import me.vkryl.td.Td;
+import me.vkryl.core.MathUtils;
+import tgx.td.Td;
 
 public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalleryFile> {
   private static int CURRENT_ID = ImageFile.GALLERY_START_ID;
@@ -54,6 +54,8 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
   private double videoWidth, videoHeight;
   private long videoBitrate;
   private int videoFrameRate;
+
+  private boolean isFavorite;
 
   public ImageGalleryFile (long imageId, String path, long dateTaken, int width, int height, long bucketId, boolean needThumb) {
     super(null, TD.newFile(CURRENT_ID--, Integer.toString(CURRENT_ID), path, 1));
@@ -87,7 +89,16 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
     this.duration = source.duration;
     this.mimeType = source.mimeType;
     // this.caption = source.caption;
+    this.isFavorite = source.isFavorite;
     setSize(source.getSize());
+  }
+
+  public void setFavorite (boolean favorite) {
+    isFavorite = favorite;
+  }
+
+  public boolean isFavorite () {
+    return isFavorite;
   }
 
   @Override
@@ -125,7 +136,12 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
   }
 
   public boolean hasTrim () {
-    return startTimeUs != -1 && endTimeUs != -1 && totalDurationUs != -1;
+    return startTimeUs != -1 && totalDurationUs != -1;
+  }
+
+  public boolean hasCrop () {
+    CropState cropState = getCropState();
+    return cropState != null && !cropState.isEmpty();
   }
 
   public boolean setVideoInformation (long totalDurationUs, double width, double height, int frameRate, long bitrate) {
@@ -210,7 +226,7 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
   }
 
   public boolean canSendAsFile () {
-    if (getTTL() > 0)
+    if (getSelfDestructType() != null)
       return false;
     if (isVideo()) {
       return VideoGenerationInfo.canSendInOriginalQuality(this);
@@ -258,6 +274,10 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
     return !Td.equalsTo(markdown, noMarkdown, true);
   }
 
+  public boolean hasCaption () {
+    return !Td.isEmpty(caption);
+  }
+
   public TdApi.FormattedText getCaption (boolean obtain, boolean parseMarkdown) {
     if (obtain) {
       if (Td.isEmpty(caption)) {
@@ -280,7 +300,17 @@ public class ImageGalleryFile extends ImageFile implements Comparable<ImageGalle
   }
 
   public long getVideoDuration (boolean trimmed, TimeUnit unit) {
-    return trimmed && hasTrim() ? unit.convert(endTimeUs - startTimeUs, TimeUnit.MICROSECONDS) : unit.convert(duration, TimeUnit.MILLISECONDS);
+    if (trimmed && hasTrim()) {
+      if (endTimeUs == -1) {
+        return unit.convert(
+          TimeUnit.MILLISECONDS.toMicros(duration) - startTimeUs,
+          TimeUnit.MICROSECONDS
+        );
+      } else {
+        return unit.convert(endTimeUs - startTimeUs, TimeUnit.MICROSECONDS);
+      }
+    }
+    return unit.convert(duration, TimeUnit.MILLISECONDS);
   }
 
   public long getGalleryId () {

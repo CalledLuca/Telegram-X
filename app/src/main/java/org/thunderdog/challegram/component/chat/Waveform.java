@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.PorterDuffPaint;
@@ -167,7 +167,7 @@ public class Waveform {
     int[] adjustedSamples = new int[numSamples];
     scale(data, adjustedSamples);
     if (mode == MODE_BITMAP) {
-      paint.setColor(Theme.getColor(isOutBubble ? R.id.theme_color_bubbleOut_waveformInactive : R.id.theme_color_waveformInactive));
+      paint.setColor(Theme.getColor(isOutBubble ? ColorId.bubbleOut_waveformInactive : ColorId.waveformInactive));
     }
     int cx = 0;
     int centerY = (int) ((float) currentHeight * .5f);
@@ -210,12 +210,16 @@ public class Waveform {
   }
 
   public void draw (Canvas c, float progress, int startX, int centerY) {
+    draw(c, progress, startX, centerY, false);
+  }
+
+  public void draw (Canvas c, float progress, int startX, int centerY, boolean hideActive) {
     switch (mode) {
       case MODE_BITMAP: {
         if (chunks == null || bitmap == null || bitmap.isRecycled()) {
           break;
         }
-        int color = Theme.getColor(isOutBubble ? R.id.theme_color_bubbleOut_waveformInactive : R.id.theme_color_waveformInactive);
+        int color = Theme.getColor(isOutBubble ? ColorId.bubbleOut_waveformInactive : ColorId.waveformInactive);
         if (paint.getColor() != color) {
           paint.setColorFilter(Paints.createColorFilter(color));
           paint.setColor(color);
@@ -226,16 +230,20 @@ public class Waveform {
           break;
         }
         if (progress == 1f) {
-          int colorId = isOutBubble ? R.id.theme_color_bubbleOut_waveformActive : R.id.theme_color_waveformActive;
-          c.drawBitmap(bitmap, startX, topY, PorterDuffPaint.get(colorId));
+          if (!hideActive) {
+            int colorId = isOutBubble ? ColorId.bubbleOut_waveformActive : ColorId.waveformActive;
+            c.drawBitmap(bitmap, startX, topY, PorterDuffPaint.get(colorId));
+          }
           break;
         }
         float endX = progress * (float) currentWidth;
-        c.save();
-        c.clipRect(startX, topY, startX + endX, topY + bitmap.getHeight());
-        int colorId = isOutBubble ? R.id.theme_color_bubbleOut_waveformActive : R.id.theme_color_waveformActive;
-        c.drawBitmap(bitmap, startX, topY, PorterDuffPaint.get(colorId));
-        c.restore();
+        if (!hideActive) {
+          c.save();
+          c.clipRect(startX, topY, startX + endX, topY + bitmap.getHeight());
+          int colorId = isOutBubble ? ColorId.bubbleOut_waveformActive : ColorId.waveformActive;
+          c.drawBitmap(bitmap, startX, topY, PorterDuffPaint.get(colorId));
+          c.restore();
+        }
         c.save();
         c.clipRect(startX + endX, topY, startX + bitmap.getWidth(), topY + bitmap.getHeight());
         c.drawBitmap(bitmap, startX, topY, paint);
@@ -248,7 +256,10 @@ public class Waveform {
         }
         int cx = startX;
         if (progress == 0f || progress == 1f) {
-          paint.setColor(Theme.getColor(progress == 0f ? (isOutBubble ? R.id.theme_color_bubbleOut_waveformInactive : R.id.theme_color_waveformInactive) : (isOutBubble ? R.id.theme_color_bubbleOut_waveformActive : R.id.theme_color_waveformActive)));
+          if (hideActive && progress == 1f ) {
+            break;
+          }
+          paint.setColor(Theme.getColor(progress == 0f ? (isOutBubble ? ColorId.bubbleOut_waveformInactive : ColorId.waveformInactive) : (isOutBubble ? ColorId.bubbleOut_waveformActive : ColorId.waveformActive)));
           for (Chunk chunk : chunks) {
             chunk.draw(c, cx, centerY, expandFactor, paint);
             cx += width + spacing;
@@ -259,23 +270,25 @@ public class Waveform {
         int topY = centerY - bound;
         int bottomY = centerY + bound;
         float endX = startX + progress * (float) currentWidth;
-        c.save();
-        c.clipRect(startX, topY, endX, bottomY);
-        paint.setColor(Theme.getColor(isOutBubble ? R.id.theme_color_bubbleOut_waveformActive : R.id.theme_color_waveformActive));
         int i = 0;
-        for (Chunk chunk : chunks) {
-          chunk.draw(c, cx, centerY, expandFactor, paint);
-          cx += width + spacing;
-          if (cx > endX) {
-            cx -= width + spacing;
-            break;
+        if (!hideActive) {
+          c.save();
+          c.clipRect(startX, topY, endX, bottomY);
+          paint.setColor(Theme.getColor(isOutBubble ? ColorId.bubbleOut_waveformActive : ColorId.waveformActive));
+          for (Chunk chunk : chunks) {
+            chunk.draw(c, cx, centerY, expandFactor, paint);
+            cx += width + spacing;
+            if (cx > endX) {
+              cx -= width + spacing;
+              break;
+            }
+            i++;
           }
-          i++;
+          c.restore();
         }
-        c.restore();
         c.save();
         c.clipRect(endX - 1, topY, startX + currentWidth, bottomY);
-        paint.setColor(Theme.getColor(isOutBubble ? R.id.theme_color_bubbleOut_waveformInactive : R.id.theme_color_waveformInactive));
+        paint.setColor(Theme.getColor(isOutBubble ? ColorId.bubbleOut_waveformInactive : ColorId.waveformInactive));
         for (; i < chunks.length; i++) {
           Chunk chunk = chunks[i];
           chunk.draw(c, cx, centerY, expandFactor, paint);

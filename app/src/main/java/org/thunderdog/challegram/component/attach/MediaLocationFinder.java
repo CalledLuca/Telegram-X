@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@ import android.os.Build;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.tool.UI;
@@ -32,7 +32,7 @@ import org.thunderdog.challegram.util.CancellableResultHandler;
 import java.util.ArrayList;
 import java.util.List;
 
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class MediaLocationFinder {
   private static MediaLocationFinder instance;

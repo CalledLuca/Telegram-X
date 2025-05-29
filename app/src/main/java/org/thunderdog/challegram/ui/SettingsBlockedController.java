@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,11 +18,12 @@ import android.content.Context;
 import android.view.View;
 import android.widget.LinearLayout;
 
+import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.user.RemoveHelper;
 import org.thunderdog.challegram.component.user.UserView;
@@ -30,7 +31,6 @@ import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TGUser;
 import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.Menu;
-import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.ChatListener;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibCache;
@@ -44,9 +44,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import me.vkryl.core.ArrayUtils;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
-public class SettingsBlockedController extends RecyclerViewController<SettingsPrivacyController> implements View.OnClickListener, Menu, TdlibCache.UserDataChangeListener, TdlibCache.UserStatusChangeListener, SenderPickerDelegate, Client.ResultHandler, ChatListener {
+public class SettingsBlockedController extends RecyclerViewController<TdApi.BlockList> implements View.OnClickListener, Menu, TdlibCache.UserDataChangeListener, TdlibCache.UserStatusChangeListener, SenderPickerDelegate, Client.ResultHandler, ChatListener {
   public SettingsBlockedController (Context context, Tdlib tdlib) {
     super(context, tdlib);
   }
@@ -75,21 +76,15 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_contacts: {
-        header.addButton(menu, R.id.menu_btn_addContact, R.drawable.baseline_person_add_24, getHeaderIconColorId(), this, Screen.dp(49f));
-        break;
-      }
+    if (id == R.id.menu_contacts) {
+      header.addButton(menu, R.id.menu_btn_addContact, R.drawable.baseline_person_add_24, getHeaderIconColorId(), this, Screen.dp(49f));
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_addContact: {
-        blockContact();
-        break;
-      }
+    if (id == R.id.menu_btn_addContact) {
+      blockContact();
     }
   }
 
@@ -113,7 +108,7 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
 
   @Override
   public boolean onSenderPick (ContactsController context, View view, TdApi.MessageSender senderId) {
-    showOptions(Lang.getStringBold(senderId.getConstructor() == TdApi.MessageSenderUser.CONSTRUCTOR ? R.string.QBlockUser : R.string.QBlockChat, Strings.wrapRtlLtr(tdlib.senderName(senderId))), new int[] {R.id.btn_blockSender, R.id.btn_cancel}, new String[] {Lang.getString(senderId.getConstructor() == TdApi.MessageSenderUser.CONSTRUCTOR ? R.string.BlockUserBtn : R.string.BlockChatBtn), Lang.getString(R.string.Cancel)}, new int[] {OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[] {R.drawable.baseline_block_24, R.drawable.baseline_cancel_24});
+    showOptions(Lang.getStringBold(senderId.getConstructor() == TdApi.MessageSenderUser.CONSTRUCTOR ? R.string.QBlockUser : R.string.QBlockChat, Strings.wrapRtlLtr(tdlib.senderName(senderId))), new int[] {R.id.btn_blockSender, R.id.btn_cancel}, new String[] {Lang.getString(senderId.getConstructor() == TdApi.MessageSenderUser.CONSTRUCTOR ? R.string.BlockUserBtn : R.string.BlockChatBtn), Lang.getString(R.string.Cancel)}, new int[] {OptionColor.RED, OptionColor.NORMAL}, new int[] {R.drawable.baseline_block_24, R.drawable.baseline_cancel_24});
     return false;
   }
 
@@ -128,15 +123,19 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
   public void onFocus () {
     super.onFocus();
     if (senderToBlock != null) {
-      tdlib.blockSender(senderToBlock, true, tdlib.okHandler());
+      tdlib.blockSender(senderToBlock, getArgumentsStrict(), tdlib.okHandler());
       senderToBlock = null;
     }
   }
 
   public void unblockSender (TGUser user) {
-    showOptions(Lang.getStringBold(R.string.QUnblockX, tdlib.senderName(user.getSenderId())), new int[]{R.id.btn_unblockSender, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Unblock), Lang.getString(R.string.Cancel)}, new int[]{OPTION_COLOR_RED, OPTION_COLOR_NORMAL}, new int[] {R.drawable.baseline_block_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
+    showOptions(Lang.getStringBold(R.string.QUnblockX, tdlib.senderName(user.getSenderId())), new int[]{R.id.btn_unblockSender, R.id.btn_cancel}, new String[]{Lang.getString(R.string.Unblock), Lang.getString(R.string.Cancel)}, new int[]{OptionColor.RED, OptionColor.NORMAL}, new int[] {R.drawable.baseline_block_24, R.drawable.baseline_cancel_24}, (itemView, id) -> {
       if (id == R.id.btn_unblockSender) {
-        tdlib.blockSender(user.getSenderId(), false, tdlib.okHandler());
+        tdlib.blockSender(user.getSenderId(), null, tdlib.okHandler(() -> {
+          runOnUiThreadOptional(() -> {
+            removeSender(user.getSenderId());
+          });
+        }));
       }
       return true;
     });
@@ -152,7 +151,7 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
       return;
     }
     isLoadingMore = true;
-    tdlib.client().send(new TdApi.GetBlockedMessageSenders(loadOffset, 50), this);
+    tdlib.client().send(new TdApi.GetBlockedMessageSenders(getArgumentsStrict(), loadOffset, 50), this);
   }
 
   @Override
@@ -196,7 +195,8 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
         break;
       }
       default: {
-        throw new UnsupportedOperationException(sender.toString());
+        Td.assertMessageSender_439d4c9c();
+        throw Td.unsupported(sender);
       }
     }
     parsedUser.setNoBotState();
@@ -219,7 +219,7 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
       }
     };
     buildCells();
-    ViewSupport.setThemedBackground(recyclerView, R.id.theme_color_filling, this);
+    // ViewSupport.setThemedBackground(recyclerView, ColorId.filling, this);
     RemoveHelper.attach(recyclerView, new RemoveHelper.Callback() {
       @Override
       public boolean canRemove (RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, int position) {
@@ -244,7 +244,7 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
     });
 
     recyclerView.setAdapter(adapter);
-    tdlib.client().send(new TdApi.GetBlockedMessageSenders(0, 20), result -> {
+    tdlib.client().send(new TdApi.GetBlockedMessageSenders(getArgumentsStrict(), 0, 20), result -> {
       if (result.getConstructor() == TdApi.MessageSenders.CONSTRUCTOR) {
         TdApi.MessageSenders senders = (TdApi.MessageSenders) result;
         ArrayList<TGUser> list = new ArrayList<>(senders.senders.length);
@@ -263,14 +263,14 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
       }
     });
     tdlib.cache().addGlobalUsersListener(this);
-    tdlib.listeners().subscribeForAnyUpdates(this);
+    tdlib.listeners().subscribeForGlobalUpdates(this);
   }
 
   @Override
   public void destroy () {
     super.destroy();
     tdlib.cache().removeGlobalUsersListener(this);
-    tdlib.listeners().unsubscribeFromAnyUpdates(this);
+    tdlib.listeners().unsubscribeFromGlobalUpdates(this);
   }
 
   private void buildCells () {
@@ -340,6 +340,13 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
     }
   }
 
+  private void removeSender (TdApi.MessageSender sender) {
+    int index = indexOfSender(ChatId.fromSender(sender));
+    if (index != -1) {
+      removeSender(index);
+    }
+  }
+
   private void removeSender (int position) {
     if (senders.size() == 1) {
       senders.clear();
@@ -364,12 +371,13 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
   }
 
   @Override
-  public void onChatBlocked (long chatId, boolean isBlocked) {
+  public void onChatBlockListChanged (long chatId, @Nullable TdApi.BlockList blockList) {
     if (ChatId.isSecret(chatId)) {
       return;
     }
     tdlib.ui().post(() -> {
       if (!isDestroyed() && senders != null) {
+        final boolean isBlocked = blockList != null && blockList.getConstructor() == getArgumentsStrict().getConstructor();
         int index = indexOfSender(chatId);
         if (isBlocked && index == -1) {
           long userId = tdlib.chatUserId(chatId);
@@ -399,13 +407,12 @@ public class SettingsBlockedController extends RecyclerViewController<SettingsPr
 
   @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.user: {
-        TGUser user = ((UserView) v).getUser();
-        if (user != null) {
-          tdlib.ui().openChat(this, user.getSenderId(), new TdlibUi.ChatOpenParameters().keepStack());
-        }
-        break;
+    if (v.getId() == R.id.user) {
+      TGUser user = ((UserView) v).getUser();
+      if (user != null) {
+        tdlib.ui().openChat(this, user.getSenderId(), new TdlibUi.ChatOpenParameters().keepStack()
+          .urlOpenParameters(new TdlibUi.UrlOpenParameters().tooltip(context.tooltipManager().builder(v)))
+        );
       }
     }
   }

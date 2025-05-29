@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,42 +15,55 @@
 package org.thunderdog.challegram.data;
 
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.view.View;
 
+import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.loader.AvatarReceiver;
+import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibContext;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.PorterDuffPaint;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.util.DrawableProvider;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
 import org.thunderdog.challegram.util.MessageSourceProvider;
 import org.thunderdog.challegram.util.UserProvider;
 import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextColorSetOverride;
 import org.thunderdog.challegram.util.text.TextColorSets;
-import org.thunderdog.challegram.widget.SmallChatView;
+import org.thunderdog.challegram.util.text.TextMedia;
+import org.thunderdog.challegram.widget.SimplestCheckBoxHelper;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 import me.vkryl.android.animator.BounceAnimator;
 import me.vkryl.android.util.MultipleViewProvider;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.StringUtils;
-import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.ChatId;
-import me.vkryl.td.Td;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
-public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewProvider.InvalidateContentProvider, UserProvider, TooltipOverlayView.LocationProvider {
+public class DoubleTextWrapper implements MessageSourceProvider, UserProvider, TooltipOverlayView.LocationProvider {
   private final Tdlib tdlib;
 
   private long chatId;
@@ -72,16 +85,21 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
   private Text trimmedSubtitle;
 
   private AvatarPlaceholder avatarPlaceholder;
+  private EmojiStatusHelper.EmojiStatusDrawable emojiStatusDrawable;
 
   private ImageFile avatarFile;
 
-  private final MultipleViewProvider currentViews = new MultipleViewProvider().setContentProvider(this);
+  private final MultipleViewProvider currentViews = new MultipleViewProvider();
   private final BounceAnimator isAnonymous = new BounceAnimator(currentViews);
-  private final int horizontalPadding;
+  private final int horizontalPadding = Screen.dp(72f) + Screen.dp(11f);
+  private boolean forceSingleLine, allowSavedMessages;
 
   public DoubleTextWrapper (Tdlib tdlib, TdApi.Chat chat) {
+    this(tdlib, chat, /* needSubtitle */ true, false);
+  }
+
+  public DoubleTextWrapper (Tdlib tdlib, TdApi.Chat chat, boolean needSubtitle, boolean allowSavedMessages) {
     this.tdlib = tdlib;
-    this.horizontalPadding = Screen.dp(72f) + Screen.dp(11f);
 
     this.chatId = chat.id;
     this.userId = TD.getUserId(chat);
@@ -94,22 +112,47 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
       setChatMark(false, false);
     }
 
-    setTitle(chat.title);
-    this.avatarPlaceholder = tdlib.chatPlaceholder(chat, false, AVATAR_PLACEHOLDER_RADIUS, null);
+    if (allowSavedMessages || !tdlib.isUserChat(chat)) {
+      setTitle(tdlib.chatTitle(chat));
+    } else {
+      setTitle(tdlib.cache().userName(tdlib.chatUserId(chat)));
+    }
+    this.allowSavedMessages = allowSavedMessages;
+    this.avatarPlaceholder = tdlib.chatPlaceholder(chat, allowSavedMessages, AVATAR_PLACEHOLDER_RADIUS, null);
     if (chat.photo != null) {
       setPhoto(chat.photo.small);
     }
-    updateSubtitle();
+    if (needSubtitle) {
+      updateSubtitle();
+    }
   }
 
   public DoubleTextWrapper (Tdlib tdlib, long userId, boolean needSubtitle) {
+    this(tdlib, userId, needSubtitle, 0);
+  }
+
+  @SubtitleOption
+  private int subtitleOptions = SubtitleOption.NONE;
+
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef(value = {
+    SubtitleOption.NONE,
+    SubtitleOption.SHOW_ACCESS_TO_MESSAGE_PRIVACY
+  }, flag = true)
+  public @interface SubtitleOption {
+    int
+      NONE = 0,
+      SHOW_ACCESS_TO_MESSAGE_PRIVACY = 1;
+  }
+
+  public DoubleTextWrapper (Tdlib tdlib, long userId, boolean needSubtitle, @SubtitleOption int subtitleOptions) {
     this.tdlib = tdlib;
-    this.horizontalPadding = Screen.dp(72f) + Screen.dp(11f);
 
     this.userId = userId;
     this.user = tdlib.cache().user(userId);
+    this.subtitleOptions = subtitleOptions;
 
-    setChatMark(this.user != null && this.user.isScam, this.user != null && this.user.isFake);
+    setChatMark(Td.isScam(this.user), Td.isFake(this.user));
     setTitle(TD.getUserName(user));
     this.avatarPlaceholder = tdlib.cache().userPlaceholder(user, false, AVATAR_PLACEHOLDER_RADIUS, null);
     if (user != null && user.profilePhoto != null) {
@@ -117,6 +160,18 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     }
     if (needSubtitle) {
       updateSubtitle();
+    }
+  }
+
+  public DoubleTextWrapper (Tdlib tdlib, String title, CharSequence subtitle, AvatarPlaceholder.Metadata metadata) {
+    this.tdlib = tdlib;
+    this.userId = 0;
+    setTitle(title);
+    this.avatarPlaceholder = new AvatarPlaceholder(AVATAR_PLACEHOLDER_RADIUS, metadata, null);
+    if (StringUtils.isEmpty(subtitle)) {
+      forceSingleLine = true;
+    } else {
+      setForcedSubtitle(subtitle);
     }
   }
 
@@ -132,7 +187,7 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     DoubleTextWrapper item;
     switch (member.memberId.getConstructor()) {
       case TdApi.MessageSenderUser.CONSTRUCTOR: {
-        item = new DoubleTextWrapper(tdlib, ((TdApi.MessageSenderUser) member.memberId).userId, !needFullDescription);
+        item = new DoubleTextWrapper(tdlib, ((TdApi.MessageSenderUser) member.memberId).userId, !needFullDescription, DoubleTextWrapper.SubtitleOption.SHOW_ACCESS_TO_MESSAGE_PRIVACY);
         break;
       }
       case TdApi.MessageSenderChat.CONSTRUCTOR: {
@@ -196,7 +251,7 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
         this.avatarFile = null;
       }
       if (currentWidth > 0) {
-        currentViews.invalidateContent();
+        currentViews.invalidateContent(this);
       }
     }
   }
@@ -238,6 +293,10 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     }
   }
 
+  public @Nullable String getTitle () {
+    return title;
+  }
+
   public void updateSubtitle () {
     CharSequence description = needFullDescription ? TD.getMemberDescription(new TdlibContext(null, tdlib), memberInfo, false) : null;
     if (!StringUtils.isEmpty(description)) {
@@ -247,10 +306,10 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     if (userId != 0) {
       TdApi.User user = tdlib.cache().user(userId);
       boolean isOnline = TD.isOnline(user);
-      String newSubtitle;
+      CharSequence newSubtitle;
       if (isOnline) {
         newSubtitle = Lang.getString(R.string.status_Online);
-      } else if (user != null && user.type.getConstructor() == TdApi.UserTypeBot.CONSTRUCTOR) {
+      } else if (user != null && user.type.getConstructor() == TdApi.UserTypeBot.CONSTRUCTOR && BitwiseUtils.hasFlag(subtitleOptions, SubtitleOption.SHOW_ACCESS_TO_MESSAGE_PRIVACY)) {
         boolean hasAccess = ((TdApi.UserTypeBot) user.type).canReadAllGroupMessages;
         newSubtitle = Lang.getString(hasAccess ? R.string.BotStatusRead : R.string.BotStatusCantRead);
       } else {
@@ -264,7 +323,79 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     }
   }
 
+  private TdApi.ChatMessageSender chatMessageSender;
+  private @Nullable SimplestCheckBoxHelper checkBoxHelper;
+  private boolean isPremiumLocked;
+  private boolean drawAnonymousIcon;
+  private boolean drawCrossIcon;
+
+  public void setChatMessageSender (TdApi.ChatMessageSender sender) {
+    this.chatMessageSender = sender;
+    this.isPremiumLocked = !tdlib.hasPremium() && sender.needsPremium;
+    this.drawAnonymousIcon = !tdlib.isSelfSender(sender.sender) && !tdlib.isChannel(Td.getSenderId(sender.sender));
+
+    buildTitle();
+  }
+
+  public void setIsChecked (boolean isChecked, boolean animated) {
+    if (isChecked != isChecked()) {
+      if (checkBoxHelper == null) {
+        checkBoxHelper = new SimplestCheckBoxHelper(currentViews);
+      }
+      checkBoxHelper.setIsChecked(isChecked, animated);
+      if (isChecked) {
+        this.drawCrossIcon = false;
+      }
+      currentViews.invalidate();
+    }
+  }
+
+  public boolean isChecked () {
+    return checkBoxHelper != null && checkBoxHelper.isChecked();
+  }
+
+  public void setDrawCrossIcon (boolean drawCrossIcon) {
+    if (this.drawCrossIcon != drawCrossIcon) {
+      this.drawCrossIcon = drawCrossIcon;
+      if (drawCrossIcon) {
+        setIsChecked(/* isChecked */ false, /* animated */ false);
+      }
+      currentViews.invalidate();
+    }
+  }
+
+  public boolean isDrawCrossIcon () {
+    return drawCrossIcon;
+  }
+
+  public boolean isPremiumLocked () {
+    return this.isPremiumLocked;
+  }
+
+  public @Nullable TdApi.ChatMessageSender getChatMessageSender () {
+    return chatMessageSender;
+  }
+
+  public void setForceSingleLine (boolean forceSingleLine) {
+    if (this.forceSingleLine != forceSingleLine) {
+      this.forceSingleLine = forceSingleLine;
+      currentViews.invalidate();
+    }
+  }
+
+  private CharSequence forcedSubtitle;
+
+  public void setForcedSubtitle (CharSequence newSubtitle) {
+    this.forcedSubtitle  = newSubtitle;
+    setIgnoreOnline(true);
+    setSubtitle(!StringUtils.isEmpty(forcedSubtitle) ? forcedSubtitle : subtitle);
+  }
+
   public void setSubtitle (CharSequence newSubtitle) {
+    if (!StringUtils.isEmpty(forcedSubtitle)) {
+      newSubtitle = forcedSubtitle;
+    }
+
     if (!StringUtils.equalsOrBothEmpty(this.subtitle, newSubtitle)) {
       this.subtitle = newSubtitle;
       if (currentWidth != 0) {
@@ -322,19 +453,6 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     return avatarPlaceholder;
   }
 
-  // IMAGE UPDATING
-
-  @Override
-  public void invalidateContent () {
-    ReferenceList<View> views = currentViews.getViewsList();
-    for (View view : views) {
-      if (view instanceof SmallChatView) {
-        ((SmallChatView) view).invalidateContent(this);
-      }
-    }
-  }
-
-
   // Layouting
 
   private int currentWidth;
@@ -348,8 +466,21 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     buildSubtitle();
   }
 
+  private boolean adminSignVisible = true;
+
+  public void setAdminSignVisible (boolean adminSignVisible, boolean isUpdate) {
+    this.adminSignVisible = adminSignVisible;
+    if (isUpdate) {
+      buildTitle();
+      currentViews.invalidate();
+    }
+  }
+
   private void buildTitle () {
     int availWidth = currentWidth - horizontalPadding;
+    if (drawAnonymousIcon || isPremiumLocked) {
+      availWidth -= Screen.dp(30);
+    }
 
     String adminSign = null;
     if (memberInfo != null) {
@@ -365,7 +496,7 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
         }
       }
     }
-    if (!StringUtils.isEmpty(adminSign)) {
+    if (!StringUtils.isEmpty(adminSign) && adminSignVisible) {
       this.adminSign = new Text.Builder(adminSign, availWidth, Paints.robotoStyleProvider(13), TextColorSets.Regular.LIGHT).singleLine().build();
       availWidth -= this.adminSign.getWidth() + Screen.dp(4f);
     } else {
@@ -377,6 +508,15 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
       availWidth -= chatMark.getWidth() + Screen.dp(8f);
     }
 
+    emojiStatusDrawable = EmojiStatusHelper.makeDrawable(null, tdlib, user, new TextColorSetOverride(TextColorSets.Regular.NORMAL) {
+      @Override
+      public long mediaTextComplexColor () {
+        return Theme.newComplexColor(true, ColorId.iconActive);
+      }
+    }, this::invalidateEmojiStatusReceiver);
+    emojiStatusDrawable.invalidateTextMedia();
+    availWidth -= emojiStatusDrawable.getWidth(Screen.dp(6));
+
     if (availWidth <= 0) {
       trimmedTitle = null;
       return;
@@ -385,17 +525,49 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     this.trimmedTitle = StringUtils.isEmpty(title) ? null : new Text.Builder(title, availWidth, Paints.robotoStyleProvider(15), TextColorSets.Regular.NORMAL).allBold().singleLine().build();
   }
 
+  public void requestAvatar (AvatarReceiver receiver) {
+    TdApi.MessageSender sender = getSenderId();
+    AvatarPlaceholder placeholder = getAvatarPlaceholder();
+    if (allowSavedMessages && getChatId() != 0) {
+      receiver.requestChat(tdlib, getChatId(), AvatarReceiver.Options.NONE);
+    } else if (sender != null) {
+      receiver.requestMessageSender(tdlib, sender, AvatarReceiver.Options.NONE);
+    } else if (placeholder != null) {
+      receiver.requestPlaceholder(tdlib, placeholder.metadata, AvatarReceiver.Options.NONE);
+    } else {
+      receiver.clear();
+    }
+  }
+
+  public void invalidateEmojiStatusReceiver (Text text, @Nullable TextMedia specificMedia) {
+    currentViews.performWithViews(view -> {
+      if (view instanceof EmojiStatusHelper.EmojiStatusReceiverInvalidateDelegate) {
+        ((EmojiStatusHelper.EmojiStatusReceiverInvalidateDelegate) view).invalidateEmojiStatusReceiver(text, specificMedia);
+      }
+    });
+  }
+
+  public void requestEmojiStatusReceiver (ComplexReceiver receiver) {
+    if (emojiStatusDrawable != null) {
+      emojiStatusDrawable.requestMedia(receiver);
+    }
+  }
+
   private void buildSubtitle () {
     int availWidth = currentWidth - horizontalPadding;
     if (this.adminSign != null) {
       availWidth -= this.adminSign.getWidth() + Screen.dp(4f);
+    }
+    if (drawAnonymousIcon || isPremiumLocked) {
+      availWidth -= Screen.dp(30);
     }
     if (availWidth <= 0) {
       trimmedSubtitle = null;
       return;
     }
     if (!StringUtils.isEmpty(subtitle)) {
-      trimmedSubtitle = new Text.Builder(tdlib, subtitle, null, availWidth, Paints.robotoStyleProvider(15), TextColorSets.Regular.LIGHT)
+      // TODO: custom emoji support
+      trimmedSubtitle = new Text.Builder(tdlib, subtitle, null, availWidth, Paints.robotoStyleProvider(15), TextColorSets.Regular.LIGHT, null)
         .singleLine()
         .build();
     } else {
@@ -410,9 +582,14 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
     }
   }
 
-  public <T extends View & DrawableProvider> void draw (T view, Receiver receiver, Canvas c) {
+  public void onAttachToView () {
+    if (emojiStatusDrawable != null) {
+      emojiStatusDrawable.onAppear();
+    }
+  }
+
+  public <T extends View & DrawableProvider> void draw (T view, Receiver receiver, Canvas c, ComplexReceiver emojiStatusReceiver) {
     int left = Screen.dp(72f);
-    boolean rtl = Lang.rtl();
     int viewWidth = view.getMeasuredWidth();
 
     final float anonymousFactor = isAnonymous.getFloatValue();
@@ -420,7 +597,7 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
       double radians = Math.toRadians(45f);
       float x = receiver.centerX() + (float) ((double) (receiver.getWidth() / 2) * Math.sin(radians));
       float y = receiver.centerY() + (float) ((double) (receiver.getHeight() / 2) * Math.cos(radians));
-      Drawable incognitoIcon = view.getSparseDrawable(R.drawable.baseline_incognito_circle_18, R.id.theme_color_iconLight);
+      Drawable incognitoIcon = view.getSparseDrawable(R.drawable.baseline_incognito_circle_18, ColorId.iconLight);
       c.drawCircle(x, y, incognitoIcon.getMinimumWidth() / 2f * anonymousFactor, Paints.fillingPaint(Theme.fillingColor()));
       if (anonymousFactor != 1f) {
         c.save();
@@ -432,25 +609,75 @@ public class DoubleTextWrapper implements MessageSourceProvider, MultipleViewPro
       }
     }
 
+    final float checkFactor = checkBoxHelper != null ? checkBoxHelper.getCheckFactor() : 0f;
+    boolean drawCheckBox = checkFactor > 0f;
+    if (drawCheckBox || drawCrossIcon) {
+      if (drawCheckBox) {
+        DrawAlgorithms.drawSimplestCheckBox(c, receiver, checkFactor);
+      } else {
+        float lineSize = Screen.dp(2);
+        double radians = Math.toRadians(45f);
+        float cx = receiver.centerX() + (float) ((double) (receiver.getWidth() / 2) * Math.sin(radians));
+        float cy = receiver.centerY() + (float) ((double) (receiver.getHeight() / 2) * Math.cos(radians));
+        int backgroundColor = Theme.textDecentColor();
+        c.drawCircle(cx, cy, Screen.dp(10f), Paints.fillingPaint(backgroundColor));
+        c.save();
+        float h = Screen.dp(5.5f);
+        c.rotate(45f, cx, cy);
+        int color = Theme.isDark() ? Color.BLACK : Color.WHITE;
+        c.drawRect(cx - h, cy - lineSize / 2f, cx + h, cy + lineSize / 2f, Paints.fillingPaint(color));
+        c.drawRect(cx - lineSize / 2f, cy - h, cx + lineSize / 2f, cy + h, Paints.fillingPaint(color));
+        c.restore();
+
+        RectF rectF = Paints.getRectF();
+        int radius = Screen.dp(11f);
+        float sweepFactor = 1f;
+        rectF.set(cx - radius, cy - radius, cx + radius, cy + radius);
+        c.drawArc(rectF, Lang.rtl() ? 225f + 170f * (1f - sweepFactor) : 135f, 170f * sweepFactor, false, Paints.getOuterCheckPaint(Theme.fillingColor()));
+      }
+    }
+    if (drawAnonymousIcon) {
+      Drawable incognitoIcon = view.getSparseDrawable(R.drawable.dot_baseline_acc_anon_24, ColorId.icon);
+      float x = currentWidth - Screen.dp(28);
+      float y = receiver.centerY();
+      Drawables.draw(c, incognitoIcon, x - incognitoIcon.getMinimumWidth() / 2f, y - incognitoIcon.getMinimumHeight() / 2f, PorterDuffPaint.get(ColorId.icon));
+    }
+    if (isPremiumLocked) {
+      Drawable incognitoIcon = view.getSparseDrawable(R.drawable.baseline_lock_16, ColorId.text);
+      float x = currentWidth - Screen.dp(18 + 16);
+      float y = receiver.centerY();
+      Drawables.draw(c, incognitoIcon, x, y - incognitoIcon.getMinimumHeight() / 2f, PorterDuffPaint.get(ColorId.text));
+    }
+
+    int titleY = Screen.dp(13f);
+    int offset = 0;
     if (trimmedTitle != null) {
-      trimmedTitle.draw(c, left, Screen.dp(13f));
+      if (forceSingleLine) {
+        titleY = view.getMeasuredHeight() / 2 - trimmedTitle.getHeight() / 2;
+      }
+      trimmedTitle.draw(c, left, titleY);
+      offset += trimmedTitle.getWidth();
+    }
+    if (emojiStatusDrawable != null) {
+      emojiStatusDrawable.draw(c, left + offset + Screen.dp(6f), titleY, 1f, emojiStatusReceiver);
+      offset += emojiStatusDrawable.getWidth(Screen.dp(6f));
     }
 
     if (adminSign != null) {
       adminSign.draw(c, viewWidth - Screen.dp(14f) - adminSign.getWidth(), view.getMeasuredHeight() / 2 - adminSign.getHeight() / 2, memberInfo != null && TD.isCreator(memberInfo.status) ? TextColorSets.Regular.NEUTRAL : null);
     }
 
-    if (trimmedSubtitle != null) {
+    if (!forceSingleLine && trimmedSubtitle != null) {
       trimmedSubtitle.draw(c, left, Screen.dp(33f), isOnline ? TextColorSets.Regular.NEUTRAL : null);
     }
 
     if (trimmedTitle != null && chatMark != null) {
-      int cmLeft = left + trimmedTitle.getWidth() + Screen.dp(6f);
+      int cmLeft = left + offset + Screen.dp(6f);
       RectF rct = Paints.getRectF();
-      rct.set(cmLeft, Screen.dp(13f), cmLeft + chatMark.getWidth() + Screen.dp(8f), Screen.dp(13f) + trimmedTitle.getLineHeight(false));
-      c.drawRoundRect(rct, Screen.dp(2f), Screen.dp(2f), Paints.getProgressPaint(Theme.getColor(R.id.theme_color_textNegative), Screen.dp(1.5f)));
+      rct.set(cmLeft, titleY, cmLeft + chatMark.getWidth() + Screen.dp(8f), titleY + trimmedTitle.getLineHeight(false));
+      c.drawRoundRect(rct, Screen.dp(2f), Screen.dp(2f), Paints.getProgressPaint(Theme.getColor(ColorId.textNegative), Screen.dp(1.5f)));
       cmLeft += Screen.dp(4f);
-      chatMark.draw(c, cmLeft, cmLeft + chatMark.getWidth(), 0, Screen.dp(13f) + ((trimmedTitle.getLineHeight(false) - chatMark.getLineHeight(false)) / 2));
+      chatMark.draw(c, cmLeft, cmLeft + chatMark.getWidth(), 0, titleY + ((trimmedTitle.getLineHeight(false) - chatMark.getLineHeight(false)) / 2));
     }
   }
 

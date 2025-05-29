@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Build;
 import android.os.SystemClock;
 import android.text.TextPaint;
 import android.text.TextUtils;
@@ -34,13 +35,15 @@ import androidx.annotation.ColorInt;
 import androidx.annotation.FloatRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.UiThread;
 import androidx.collection.LongSparseArray;
 import androidx.collection.SparseArrayCompat;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.core.DiffMatchPatch;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.emoji.Emoji;
@@ -48,33 +51,45 @@ import org.thunderdog.challegram.emoji.EmojiInfo;
 import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
+import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeDelegate;
+import org.thunderdog.challegram.tool.EmojiBidUtil;
+import org.thunderdog.challegram.tool.EmojiBidUtilLegacy;
+import org.thunderdog.challegram.tool.EmojiCode;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.unsorted.Settings;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
+import org.thunderdog.challegram.util.text.bidi.BiDiEntity;
+import org.thunderdog.challegram.util.text.bidi.BiDiUtils;
+import org.thunderdog.challegram.util.text.counter.CounterTextPart;
+import org.thunderdog.challegram.util.text.quotes.QuoteBackground;
 
+import java.text.Bidi;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.ViewUtils;
 import me.vkryl.android.animator.BoolAnimator;
-import me.vkryl.android.animator.CounterAnimator;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.android.animator.ListAnimator;
+import me.vkryl.android.util.SingleViewProvider;
 import me.vkryl.android.util.ViewProvider;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
-import org.thunderdog.challegram.core.DiffMatchPatch;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.core.BitwiseUtils;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
-public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextDrawable, ListAnimator.Measurable {
+public class Text implements Runnable, Emoji.CountLimiter, CounterTextPart, ListAnimator.Measurable, Destroyable {
   public static final int FLAG_NO_TRIM = 1;
   public static final int FLAG_ALIGN_CENTER = 1 << 1;
   public static final int FLAG_ALL_BOLD = 1 << 2;
@@ -96,12 +111,13 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   public static final int FLAG_NO_CLICKABLE = 1 << 18;
   public static final int FLAG_TRIM_END = 1 << 19;
   public static final int FLAG_NO_SPACING = 1 << 20;
+  public static final int FLAG_ALWAYS_BREAK = 1 << 21;
 
+  private static final int FLAG_DESTROYED = 1 << 23;
   private static final int FLAG_IN_LONG_PRESS = 1 << 24;
   private static final int FLAG_ABORT_PROCESS = 1 << 25;
   private static final int FLAG_FAKE_BOLD = 1 << 26;
   private static final int FLAG_FULL_RTL = 1 << 27;
-  private static final int FLAG_MAY_APPLY_RTL = 1 << 28;
   private static final int FLAG_ELLIPSIZED = 1 << 29;
   private static final int FLAG_NEED_BACKGROUND = 1 << 30;
   private static final int FLAG_HAS_SPOILERS = 1 << 31;
@@ -128,13 +144,18 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     boolean onClick (View v, Text text, TextPart part, @Nullable TdlibUi.UrlOpenParameters openParameters);
   }
 
+  public interface TextMediaListener {
+    void onInvalidateTextMedia (Text text, @Nullable TextMedia specificMedia);
+  }
+
   private int maxWidth, textFlags;
 
   private final @Nullable LineWidthProvider lineWidthProvider;
   private final @Nullable LineMarginProvider lineMarginProvider;
   private final @Nullable ClickListener clickListener;
+  private final @Nullable TextMediaListener textMediaListener;
   private final int maxLineCount;
-  private final TextStyleProvider textStyleProvider;
+  private final @NonNull TextStyleProvider textStyleProvider;
   private final @NonNull TextColorSet defaultTextColorSet;
   private final String suffix;
   private final int suffixWidth;
@@ -222,7 +243,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       // TODO move particles faster when pressed
     }
 
-    public void draw (Canvas c, @Deprecated int iconColor) {
+    public void draw (Canvas c, int iconColor) {
       // TODO proper particles
       c.drawPath(path, Paints.fillingPaint(ColorUtils.alphaColor(1f - getContentAlpha(), iconColor)));
     }
@@ -243,9 +264,13 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   private LongSparseArray<Background> backgrounds;
   private SparseArrayCompat<Path> pressHighlights;
   private List<int[]> lineSizes;
-  private int emojiCount;
-  private int iconCount;
+  private int builtInEmojiCount, customEmojiCount;
+  private Map<String, TextMedia> media;
   private @Nullable TextEntity[] entities;
+
+  @Nullable public TextEntity[] getEntities () {
+    return entities;
+  }
 
   private int paragraphCount;
   private int currentX, currentY;
@@ -307,17 +332,14 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return null;
   }
 
-  public Text (@NonNull String in, int maxWidth, TextStyleProvider textStyleProvider, @NonNull TextColorSet textColorSet, int maxLineCount, int textFlags, @Nullable TextEntity[] entities) {
-    this(in, maxWidth, textStyleProvider, textColorSet, maxLineCount, null, null, textFlags, entities, null, null);
-  }
-
-  private Text (@NonNull String in, int maxWidth, TextStyleProvider textStyleProvider, @NonNull TextColorSet textColorSet, int maxLineCount, @Nullable LineWidthProvider lineWidthProvider, @Nullable LineMarginProvider lineMarginProvider, int textFlags, @Nullable TextEntity[] entities, String suffix, ClickListener clickListener) {
+  private Text (@NonNull String in, int maxWidth, @NonNull TextStyleProvider textStyleProvider, @NonNull TextColorSet textColorSet, int maxLineCount, @Nullable LineWidthProvider lineWidthProvider, @Nullable LineMarginProvider lineMarginProvider, int textFlags, @Nullable TextEntity[] entities, String suffix, @Nullable ClickListener clickListener, @Nullable TextMediaListener textMediaListener) {
     this.textFlags = textFlags;
     this.maxWidth = maxWidth;
     this.maxLineCount = maxLineCount;
     this.lineWidthProvider = lineWidthProvider;
     this.lineMarginProvider = lineMarginProvider;
     this.clickListener = clickListener;
+    this.textMediaListener = textMediaListener;
     this.textStyleProvider = textStyleProvider;
     this.defaultTextColorSet = textColorSet;
     this.entities = entities;
@@ -327,8 +349,9 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public static class Builder {
-    private String in;
-    private int maxWidth;
+    private final String in;
+    private final int maxWidth;
+
     private TextStyleProvider provider;
     private TextColorSet theme;
 
@@ -340,44 +363,70 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     private String suffix;
     private ViewProvider viewProvider;
     private ClickListener clickListener;
+    private TextMediaListener textMediaListener;
+    private Highlight highlight; // TODO highlight text
 
-    public Builder (String in, int maxWidth, TextStyleProvider provider, @NonNull TextColorSet theme) {
+    public Builder (String in, int maxWidth, @NonNull TextStyleProvider provider, @NonNull TextColorSet theme) {
       if (in == null)
         throw new IllegalArgumentException();
+      //noinspection ConstantConditions
+      if (provider == null)
+        throw new IllegalStateException();
+      //noinspection ConstantConditions
+      if (theme == null)
+        throw new IllegalStateException();
       this.in = in;
       this.maxWidth = maxWidth;
       this.provider = provider;
       this.theme = theme;
     }
 
-    public Builder (Tdlib tdlib, CharSequence in, TdlibUi.UrlOpenParameters urlOpenParameters, int maxWidth, TextStyleProvider provider, @NonNull TextColorSet theme) {
-      this.in = in.toString();
-      this.maxWidth = maxWidth;
-      this.provider = provider;
-      this.theme = theme;
+    public Builder (FormattedText in, int maxWidth, @NonNull TextStyleProvider provider, @NonNull TextColorSet theme, @Nullable TextMediaListener textMediaListener) {
+      this(in.text, maxWidth, provider, theme);
+      entities(in.entities, textMediaListener);
+    }
+
+    public Builder (Tdlib tdlib, CharSequence in, TdlibUi.UrlOpenParameters urlOpenParameters, int maxWidth, TextStyleProvider provider, @NonNull TextColorSet theme, @Nullable TextMediaListener textMediaListener) {
+      this(in.toString(), maxWidth, provider, theme);
       TextEntity[] entities = null;
       TdApi.TextEntity[] telegramEntities = TD.toEntities(in, false);
       if (telegramEntities != null && telegramEntities.length > 0) {
         entities = TextEntity.valueOf(tdlib, in.toString(), telegramEntities, urlOpenParameters);
       }
       if (entities == null) {
-        entities = Lang.toEntities(in);
+        entities = TextEntity.toEntities(in);
       }
-      entities(entities);
+      entities(entities, textMediaListener);
     }
 
-    public Builder (Tdlib tdlib, TdApi.FormattedText in, TdlibUi.UrlOpenParameters urlOpenParameters, int maxWidth, TextStyleProvider provider, @NonNull TextColorSet theme) {
+    public Builder (Tdlib tdlib, TdApi.FormattedText in, TdlibUi.UrlOpenParameters urlOpenParameters, int maxWidth, TextStyleProvider provider, @NonNull TextColorSet theme, @Nullable TextMediaListener textMediaListener) {
       this(in.text, maxWidth, provider, theme);
-      entities(TextEntity.valueOf(tdlib, this.in, in.entities, urlOpenParameters));
+      entities(TextEntity.valueOf(tdlib, this.in, in.entities, urlOpenParameters), textMediaListener);
     }
 
-    public Builder styleProvider (TextStyleProvider provider) {
+    public Builder styleProvider (@NonNull TextStyleProvider provider) {
+      //noinspection ConstantConditions
+      if (provider == null)
+        throw new IllegalStateException();
       this.provider = provider;
+      return this;
+    }
+
+    public Builder colorSet (@NonNull TextColorSet colorSet) {
+      //noinspection ConstantConditions
+      if (colorSet == null)
+        throw new IllegalStateException();
+      this.theme = colorSet;
       return this;
     }
 
     public Builder onClick (ClickListener listener) {
       this.clickListener = listener;
+      return this;
+    }
+
+    public Builder highlight (Highlight highlight) {
+      this.highlight = highlight;
       return this;
     }
 
@@ -415,6 +464,10 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
 
     public Builder singleLine () {
       return maxLineCount(1);
+    }
+
+    public Builder singleLine (boolean isSingleLine) {
+      return maxLineCount(isSingleLine ? 1 : -1);
     }
 
     public Builder clipTextArea () {
@@ -470,9 +523,14 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       return this;
     }
 
-    public Builder entities (TextEntity[] entities) {
+    public Builder entities (TextEntity[] entities, TextMediaListener textMediaListener) {
       this.entities = entities;
+      this.textMediaListener = textMediaListener;
       return this;
+    }
+
+    public Builder view (View view) {
+      return viewProvider(new SingleViewProvider(view));
     }
 
     public Builder viewProvider (ViewProvider viewProvider) {
@@ -481,7 +539,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     }
 
     public Text build () {
-      Text text = new Text(in, maxWidth, provider, theme, maxLineCount, lineWidthProvider, lineMarginProvider, textFlags, entities, suffix, clickListener);
+      TextEntity[] entities = this.entities;
+      if (this.highlight != null) {
+        entities = new FormattedText(in, entities).highlight(this.highlight).entities;
+      }
+      Text text = new Text(in, maxWidth, provider, theme, maxLineCount, lineWidthProvider, lineMarginProvider, textFlags, entities, suffix, clickListener, textMediaListener);
       if (viewProvider != null)
         text.setViewProvider(viewProvider);
       return text;
@@ -539,8 +601,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       case TdApi.TextEntityTypeBankCardNumber.CONSTRUCTOR:
       case TdApi.TextEntityTypeUrl.CONSTRUCTOR:
         return (flags & ENTITY_FLAG_URL) != 0;
+      case TdApi.TextEntityTypeMediaTimestamp.CONSTRUCTOR: // TODO
       case TdApi.TextEntityTypeBold.CONSTRUCTOR:
       case TdApi.TextEntityTypeCode.CONSTRUCTOR:
+      case TdApi.TextEntityTypeBlockQuote.CONSTRUCTOR:
+      case TdApi.TextEntityTypeExpandableBlockQuote.CONSTRUCTOR:
       case TdApi.TextEntityTypeItalic.CONSTRUCTOR:
       case TdApi.TextEntityTypeMentionName.CONSTRUCTOR:
       case TdApi.TextEntityTypePre.CONSTRUCTOR:
@@ -548,7 +613,12 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       case TdApi.TextEntityTypeStrikethrough.CONSTRUCTOR:
       case TdApi.TextEntityTypeTextUrl.CONSTRUCTOR:
       case TdApi.TextEntityTypeUnderline.CONSTRUCTOR:
+      case TdApi.TextEntityTypeCustomEmoji.CONSTRUCTOR:
+      case TdApi.TextEntityTypeSpoiler.CONSTRUCTOR:
         break;
+      default:
+        Td.assertTextEntityType_56c1e709();
+        throw Td.unsupported(entity.type);
     }
     return false;
   }
@@ -577,18 +647,27 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return -1;
   }
 
+  public int getTotalEmojiCount () {
+    return builtInEmojiCount + customEmojiCount;
+  }
+
   public int getEmojiOnlyCount () {
+    final int emojiCount = getTotalEmojiCount();
     return parts == null || emojiCount == 0 || parts.size() > emojiCount ? -1 : emojiCount;
   }
 
   @Override
   public int getEmojiCount () {
-    return emojiCount;
+    return builtInEmojiCount;
+  }
+
+  public boolean hasBuiltInEmoji () {
+    return getEmojiCount() > 0;
   }
 
   @Override
   public boolean incrementEmojiCount () {
-    emojiCount++;
+    builtInEmojiCount++;
     return true;
   }
 
@@ -598,6 +677,10 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
 
   private boolean isAborted () {
     return (textFlags & FLAG_ABORT_PROCESS) != 0;
+  }
+
+  public void setTextFlag (int flag, boolean value) {
+    setTextFlags(BitwiseUtils.setFlag(textFlags, flag, value));
   }
 
   public boolean setTextFlags (int flags) {
@@ -686,16 +769,19 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   // Text
 
   private void reset () {
+    bidiClear();
     entityIndex = -1;
     entityStart = entityEnd = 0;
     pressHighlight = null;
-    emojiCount = 0;
-    iconCount = 0;
+    pressedQuote = null;
+    builtInEmojiCount = 0;
+    customEmojiCount = 0;
+    quotes.clear();
+    clearMedia();
     maxPartHeight = currentWidth = currentX = currentY = paragraphCount = 0;
     lastPart = null;
     textFlags &= ~(
       FLAG_FULL_RTL |
-      FLAG_MAY_APPLY_RTL |
       FLAG_ELLIPSIZED |
       FLAG_NEED_BACKGROUND |
       FLAG_HAS_SPOILERS
@@ -704,6 +790,49 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       lineSizes.clear();
     }
     clearSpoilers();
+  }
+
+  private interface MediaCreator {
+    TextMedia onCreateMedia (String keyId, long id);
+  }
+
+  private TextMedia newOrExistingMedia (@Nullable String keyId, int start, int end, MediaCreator creator) {
+    if (textMediaListener == null)
+      throw new IllegalStateException();
+    if (media == null)
+      media = new LinkedHashMap<>();
+    final long nextMediaId = media.size();
+    if (keyId == null) {
+      keyId = "_" + nextMediaId + "x" + (start != end ? start + ".."  + end : start);
+    }
+    TextMedia existingMedia = media.get(keyId);
+    if (existingMedia != null) {
+      return existingMedia;
+    }
+    TextMedia newMedia = creator.onCreateMedia(keyId, nextMediaId);
+    media.put(keyId, newMedia);
+    return newMedia;
+  }
+
+  private void removeMedia (TextPart part) {
+    TextMedia media = part.getMedia();
+    if (media != null && media.attachedToParts.remove(part)) {
+      if (part.isCustomEmoji()) {
+        customEmojiCount--;
+      }
+    } else if (part.isBuiltInEmoji()) {
+      builtInEmojiCount--;
+    }
+  }
+
+  @UiThread
+  public void notifyMediaChanged (@Nullable TextMedia media) {
+    if (textMediaListener != null) {
+      textMediaListener.onInvalidateTextMedia(this, media);
+    }
+    if (viewProvider != null) {
+      viewProvider.invalidate();
+    }
   }
 
   private void clearSpoilers () {
@@ -737,7 +866,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public void changeMaxWidth (int maxWidth) {
-    if (this.maxWidth != maxWidth) {
+    changeMaxWidth(maxWidth, false);
+  }
+
+  public void changeMaxWidth (int maxWidth, boolean force) {
+    if (this.maxWidth != maxWidth || force) {
       set(maxWidth, originalText, entities);
     }
   }
@@ -767,6 +900,9 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   private void setImpl (final String in) {
+    if (BitwiseUtils.hasFlag(textFlags, FLAG_DESTROYED))
+      throw new IllegalStateException();
+
     reset();
 
     if ((textFlags & FLAG_ALL_BOLD) != 0 && Text.needFakeBold(in, 0, in.length())) {
@@ -790,16 +926,24 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       if (position > emojiStart) {
         processPartSplitty(in, emojiStart, position, out, emojiEntity, false);
       }
-      processEmoji(in, code, info, position, position + length, out, emojiEntity);
+      processEmoji(in, position, position + length, info, out, emojiEntity);
       emojiStart = position + length;
       return true;
     };
+
+    bidiProcessTextStart(in);
 
     try {
       boolean prevIsNewLine = false;
       final int totalLength = in.length();
       for (int index = 0; index < totalLength; ) {
-        int indexOfNewLine = in.indexOf('\n', index);
+        int indexOfNewLine;
+        if (BitwiseUtils.hasFlag(textFlags, Text.FLAG_ALWAYS_BREAK)) {
+          indexOfNewLine = indexOfSpaceOrNewLine(in, index);
+        } else {
+          indexOfNewLine = indexOfParagraphSeparator(in, index); //in.indexOf('\n', index);
+        }
+
         int length = indexOfNewLine == -1 ? totalLength - index : indexOfNewLine - index;
 
         processLine(in, index, index + length, out, emojiCallback);
@@ -810,8 +954,8 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         index += length;
 
         if (indexOfNewLine != -1) {
-          if (!prevIsNewLine || !BitwiseUtils.getFlag(textFlags, Text.FLAG_IGNORE_CONTINUOUS_NEWLINES)) {
-            if (BitwiseUtils.getFlag(textFlags, Text.FLAG_IGNORE_NEWLINES)) {
+          if (!prevIsNewLine || !BitwiseUtils.hasFlag(textFlags, Text.FLAG_IGNORE_CONTINUOUS_NEWLINES)) {
+            if (BitwiseUtils.hasFlag(textFlags, Text.FLAG_IGNORE_NEWLINES)) {
               if (currentX > 0 && !out.isEmpty()) {
                 currentX += makeSpaceSize(getTextPaint(null));
                 if (currentX > getLineMaxWidth(out.get(out.size() - 1).getLineIndex(), currentY)) {
@@ -829,6 +973,8 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       do {
         TextEntity entity = findEntity(totalLength, totalLength);
         if (entity != null) {
+          if (entity.end > totalLength)
+            throw new IllegalArgumentException(entity.end + " > " + totalLength);
           processTextOrEmoji(in, totalLength, totalLength, out, emojiCallback, entity);
         } else {
           break;
@@ -851,6 +997,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       TextPart lastPart = out.get(out.size() - 1);
       int[] lastLineSize = getLineSize(getLineCount() - 1);
       TextPart suffixPart = new TextPart(this, suffix, 0, suffix.length(), lastPart.getLineIndex(), lastPart.getParagraphIndex());
+      suffixPart.setBidiEntity(lastPart.getBidiEntity());
       suffixPart.setXY(lastLineSize[0], lastPart.getY());
       suffixPart.setWidth(suffixWidth);
       lastLineSize[0] += suffixWidth;
@@ -859,9 +1006,6 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     }
 
     out.trimToSize();
-    if (BitwiseUtils.getFlag(textFlags, FLAG_ANIMATED_EMOJI) && out.size() == 1 && out.get(0).isEmoji()) {
-      out.get(0).setAnimateEmoji(true);
-    }
     this.parts = out;
     if (this.pressHighlights != null)
       this.pressHighlights.clear();
@@ -879,113 +1023,9 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       }
     }
 
-    final int partsCount = out.size();
-
-    // Now check RTL lines
-    int rtlPartsCount = 0;
-
-    int paragraphIndex = 0;
-    boolean prevIsRtl = false;
-    boolean prevParagraphRtl = false;
-    int neutralLineCount = 0, ltrLineCount = 0, rtlLineCount = 0;
-    for (int partIndex = 0; partIndex < partsCount; ) {
-      int direction = Strings.DIRECTION_NEUTRAL;
-      int startIndex = partIndex;
-
-      TextPart part = out.get(partIndex);
-      int currentLine = part.getLineIndex();
-      int currentParagraphIndex = part.getParagraphIndex();
-      if (paragraphIndex != currentParagraphIndex) {
-        prevParagraphRtl = prevIsRtl;
-
-        paragraphIndex = currentParagraphIndex;
-        neutralLineCount = ltrLineCount = rtlLineCount = 0;
-        prevIsRtl = false;
-      }
-
-      do {
-        if (part.isEssential()) {
-          int partDirection = Strings.getTextDirection(part.getLine(), part.getStart(), part.getEnd());
-          // part.setPartDirection(partDirection);
-          if (partDirection != Strings.DIRECTION_NEUTRAL) {
-            if (direction == Strings.DIRECTION_NEUTRAL)
-              direction = partDirection;
-            if (partDirection == Strings.DIRECTION_RTL && part.getEnd() - part.getStart() > 0) {
-              int start = part.getStart();
-              int checkIndex = part.getEnd() - 1;
-              if (part.getLine().charAt(checkIndex) == '\u2068') {
-                int spacebarCount = 0;
-                while (--checkIndex >= start) {
-                  char c = part.getLine().charAt(checkIndex);
-                  if (c == ' ')
-                    spacebarCount++;
-                  else if (c != '\u2068')
-                    break;
-                }
-                if (spacebarCount > 0)
-                  part.setXY(part.getX() - (int) makeSpaceSize(getTextPaint(part.getEntity())), part.getY() * spacebarCount);
-              }
-            }
-          }
-        }
-        partIndex++;
-      } while (partIndex < partsCount && (part = out.get(partIndex)).getLineIndex() == currentLine);
-
-      switch (direction) {
-        case Strings.DIRECTION_LTR: {
-          if (ltrLineCount == 0 && rtlLineCount == 0 && neutralLineCount > 0 && prevParagraphRtl) {
-            int prevPartIndex = startIndex - 1;
-            TextPart prevPart;
-            while (prevPartIndex >= 0 && (prevPart = out.get(prevPartIndex)).getParagraphIndex() == paragraphIndex) {
-              prevPart.setRtlMode(false, false);
-              rtlPartsCount--;
-              prevPartIndex--;
-            }
-            prevIsRtl = false;
-            prevParagraphRtl = false;
-          }
-          ltrLineCount++;
-          break;
-        }
-        case Strings.DIRECTION_RTL: {
-          if (rtlLineCount == 0 && ltrLineCount == 0 && neutralLineCount > 0) {
-            int prevPartIndex = startIndex - 1;
-            TextPart prevPart;
-            while (prevPartIndex >= 0 && (prevPart = out.get(prevPartIndex)).getParagraphIndex() == paragraphIndex) {
-              prevPart.setRtlMode(true, true);
-              rtlPartsCount++;
-              prevPartIndex--;
-            }
-            prevIsRtl = true;
-          }
-          rtlLineCount++;
-          break;
-        }
-        case Strings.DIRECTION_NEUTRAL: {
-          neutralLineCount++;
-          break;
-        }
-        default:
-          throw new IllegalStateException("direction == " + direction);
-      }
-
-      if (direction == Strings.DIRECTION_RTL || (direction == Strings.DIRECTION_NEUTRAL && (prevIsRtl || prevParagraphRtl))) {
-        prevIsRtl = true;
-        boolean isFakeRtl = direction != Strings.DIRECTION_RTL;
-        for (int i = startIndex; i < partIndex; i++) {
-          out.get(i).setRtlMode(true, isFakeRtl);
-          rtlPartsCount++;
-        }
-      } else {
-        prevIsRtl = false;
-      }
-    }
-
-    if (rtlPartsCount == partsCount) {
-      textFlags |= FLAG_FULL_RTL;
-    } else if (ltrLineCount == 0 && neutralLineCount == getLineCount() - rtlLineCount) {
-      textFlags |= FLAG_MAY_APPLY_RTL;
-    }
+    bidiPartsReorder();
+    bidiClear();
+    buildQuotes();
 
     if (BuildConfig.DEBUG) {
       int partCount = parts.size();
@@ -1009,6 +1049,33 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return c;
   }
 
+  private static int indexOfParagraphSeparator (String in, int start) {
+    final int length = in.length();
+    for (int index = start; index < length; ) {
+      final int codePoint = in.codePointAt(index);
+      if (Character.getDirectionality(codePoint) == Character.DIRECTIONALITY_PARAGRAPH_SEPARATOR) {
+        return index;
+      }
+
+      final int size = Character.charCount(codePoint);
+      index += size;
+    }
+    return -1;
+  }
+
+  private static int indexOfSpaceOrNewLine (String in, int start) {
+    final int length = in.length();
+    for (int index = start; index < length; ) {
+      int codePoint = in.codePointAt(index);
+      int size = Character.charCount(codePoint);
+      if (codePoint == '\n' || codePoint == ' ') {
+        return index;
+      }
+      index += size;
+    }
+    return -1;
+  }
+
   private static int indexOfSpace (String in, int start) {
     final int length = in.length();
     for (int i = start; i < length; ) {
@@ -1030,13 +1097,16 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       processEntities(in, start, end, out, emojiCallback, false);
       return;
     }
+
+    bidiProcessLineStart(in, start, end);
+
     boolean first = true;
     boolean lastIsSpace = false;
     int count = 0;
     for (int i = start; i < end; ) {
       int codePoint = in.codePointAt(i);
       int size = Character.charCount(codePoint);
-      if (codePoint == '\n' && !BitwiseUtils.getFlag(textFlags, FLAG_IGNORE_NEWLINES)) {
+      if (codePoint == '\n' && !BitwiseUtils.hasFlag(textFlags, FLAG_IGNORE_NEWLINES)) {
         break;
       }
       boolean isSpace = size == 1 && (codePoint == '\n' || Character.getType(codePoint) == Character.SPACE_SEPARATOR);
@@ -1058,9 +1128,20 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     if (start + count < end) {
       processEntities(in, start + count, end, out, emojiCallback, false);
     }
+
+    bidiProcessLineComplete();
   }
 
   private int processEntities (String in, int start, int end, ArrayList<TextPart> out, Emoji.Callback emojiCallback, boolean isChild) {
+    if (start != end) {
+      final int bidiRunEnd = findBidiRunEnd(start);
+      if (bidiRunEnd != -1 && bidiRunEnd < end) {
+        processEntities(in, start, bidiRunEnd, out, emojiCallback, false);
+        processEntities(in, bidiRunEnd, end, out, emojiCallback, false);
+        return -1;
+      }
+    }
+
     TextEntity entity = findEntity(start, end);
     TextColorSet theme = pickTheme(null, entity);
 
@@ -1106,6 +1187,23 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   private void processTextOrEmoji (final String in, final int start, final int end, final ArrayList<TextPart> out, final Emoji.Callback emojiCallback, final @Nullable TextEntity entity) {
     TextPaint paint = getTextPaint(entity);
     Paint.FontMetricsInt fontMetricsInt = Paints.getFontMetricsInt(paint);
+    emojiSize = Math.abs(fontMetricsInt.descent - fontMetricsInt.ascent) + Screen.dp(2f);
+
+    if (in.endsWith("wtftest")) {
+      in.toString();
+    }
+
+    if (entity != null && entity.isCustomEmoji()) {
+      String emojiCode = in.substring(start, end);
+      EmojiInfo info;
+      if (!EmojiStatusHelper.EMOJI.equals(emojiCode)) {
+        info = Emoji.instance().getEmojiInfo(emojiCode, true);
+      } else {
+        info = null;
+      }
+      processEmoji(in, start, end, info, out, entity);
+      return;
+    }
 
     if (end - start == 0) {
       if (entity != null && entity.isIcon()) {
@@ -1116,7 +1214,6 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
 
     emojiStart = start;
     emojiEntity = entity;
-    emojiSize = Math.abs(fontMetricsInt.descent - fontMetricsInt.ascent) + Screen.dp(2f);
 
     Emoji.instance().replaceEmoji(in, start, end, this, emojiCallback);
 
@@ -1128,10 +1225,13 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   private void processIcon (String in, int index, ArrayList<TextPart> out, @NonNull TextEntity entity) {
     lastPart = null;
 
-    TextIcon icon = entity.getIcon();
+    if (entity.tdlib == null)
+      throw new IllegalArgumentException();
 
-    int iconWidth = Screen.dp(icon.getWidth());
-    int iconHeight = Screen.dp(icon.getHeight());
+    TdApi.RichTextIcon icon = entity.getIcon();
+
+    int iconWidth = Screen.dp(icon.width);
+    int iconHeight = Screen.dp(icon.height);
 
     int maxWidth = getLineMaxWidth(getLineCount(), currentY);
 
@@ -1151,16 +1251,18 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     part.setWidth(iconWidth);
     part.setHeight(iconHeight);
     part.setEntity(entity);
-    part.setIcon(iconCount, icon);
+    part.setBidiEntity(getBidiEntity(index));
+    part.attachToMedia(newOrExistingMedia(TextMedia.keyForIcon(entity.tdlib, icon), index, index, (keyId, id) ->
+      new TextMedia(this, entity.tdlib, keyId, id, icon)
+    ));
 
     out.add(part);
 
     currentX += iconWidth;
     maxPartHeight = Math.max(iconHeight, maxPartHeight);
-    iconCount++;
   }
 
-  private void processEmoji (String in, CharSequence code, EmojiInfo info, int start, int end, ArrayList<TextPart> out, @Nullable TextEntity entity) {
+  private void processEmoji (String in, int start, int end, @Nullable EmojiInfo info, ArrayList<TextPart> out, @Nullable TextEntity entity) {
     lastPart = null;
 
     final int maxWidth = getLineMaxWidth(getLineCount(), currentY);
@@ -1168,13 +1270,21 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       newLineOrEllipsis(out, in);
     }
 
+    final int quoteFlags = quoteCheckAndMakeNewLines(in, start, end, out, entity);
+    quoteShiftCords(quoteFlags);
     TextPart part;
 
     part = new TextPart(this, in, start, end, getLineCount(), paragraphCount);
     part.setXY(currentX, currentY);
     part.setWidth(emojiSize);
     part.setEntity(entity);
+    part.setBidiEntity(getBidiEntity(start));
     part.setEmoji(info);
+    if (entity != null && entity.tdlib != null && entity.isCustomEmoji()) {
+      part.attachToMedia(newOrExistingMedia(TextMedia.keyForEmoji(entity.getCustomEmojiId(), emojiSize), start, end, (keyId, id) ->
+        new TextMedia(this, entity.tdlib, keyId, id, emojiSize, entity.getCustomEmojiId())
+      ));
+    }
 
     out.add(part);
 
@@ -1473,6 +1583,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     // TODO optimize https://fonts.google.com/specimen/Roboto+Mono
     final boolean isMonospace = false; // (entity != null && entity.isMonospace());
     final boolean isFullyMonospace = isMonospace && isMonospace(in, start, end);
+    final @BiDiEntity int bidiEntity = getBidiEntity(start);
     // final float monospaceSize = spaceSize;
 
     float fullWidth;
@@ -1493,7 +1604,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       } else if (isChild) {
         fullWidth = childWidth[0];
       } else {
-        fullWidth = U.measureText(in, start, end, paint);
+        fullWidth = BiDiUtils.measureTextRun(bidiEntity, in, start, end, paint);
       }
     }
     futureWidth = fullWidth;
@@ -1551,7 +1662,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         } else if (newEnd - currentEnd == 1 && lastCodePointWidth != -1 && lastCodePoint == codePoint) {
           charWidth = lastCodePointWidth;
         } else {
-          charWidth = U.measureText(in, currentEnd, newEnd, paint);
+          charWidth = BiDiUtils.measureTextRun(bidiEntity, in, currentEnd, newEnd, paint); //    U.measureText(in, currentEnd, newEnd, paint);
           if (newEnd - currentEnd == 1) {
             lastCodePoint = codePoint;
             lastCodePointWidth = charWidth;
@@ -1621,17 +1732,21 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       }
     }
 
+    final int quoteFlags = quoteCheckAndMakeNewLines(in, start, end, out, entity);
+
     if (lastPart != null && (!lastPart.isSameEntity(entity) || start < lastPart.getEnd() || findNewLines(in, lastPart.getEnd(), start))) {
       lastPart = null;
     }
 
-    if (lastPart == null || lastPart.getEntity() != entity) {
+    if (lastPart == null || lastPart.getEntity() != entity || lastPart.getBidiEntity() != bidiEntity) {
       TextPart part;
 
+      quoteShiftCords(quoteFlags);
       part = new TextPart(this, in, start, end, getLineCount(), paragraphCount);
       part.setXY(currentX, currentY);
       part.setWidth(fullWidth);
       part.setEntity(entity);
+      part.setBidiEntity(bidiEntity);
 
       lastPart = part;
 
@@ -1690,20 +1805,29 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     currentX = (int) part.getWidth();
     currentY += lineHeight;
     maxPartHeight = 0;
-    part.setXY(0, currentY);
+    
+    if (part.getQuoteEntityId() != -1) {
+      final var x = Screen.dp(QuoteBackground.QUOTE_LEFT_PADDING + QuoteBackground.QUOTE_RIGHT_PADDING);
+      part.setXY(x, currentY);
+      currentX += x;
+    } else {
+      part.setXY(0, currentY);
+    }
+
+    part.setLineIndex(getLineCount(), paragraphCount);
     ensureLineCount(lineHeight, prevMaxPartHeight);
     return true;
   }
 
   private void newLineOrEllipsis (List<TextPart> out, @NonNull String in) {
-    newLineOrEllipsis(out, in, 0, 0, null);
+    newLineOrEllipsis(out, in, 0, 0, null);   // ?
   }
 
   private int getCurrentLineHeight () {
     return Math.max(maxPartHeight, getLineHeight());
   }
 
-  private void newLineOrEllipsis (List<TextPart> out, @NonNull String in, int start, int end, TextEntity entity) {
+  private void newLineOrEllipsis (List<TextPart> out, @NonNull String in, final int start, final int end, TextEntity entity) {
     int lineHeight = getCurrentLineHeight();
     int prevMaxPartHeight = maxPartHeight;
     addLine(currentX, lineHeight);
@@ -1718,19 +1842,32 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       textFlags |= FLAG_ELLIPSIZED;
       if (out.isEmpty())
         throw e;
+
+      @BiDiEntity int bidiEntity = getBidiEntity(start);
+      final String defaultEllipsis = Strings.ELLIPSIS;
       TextPart lastPart = out.get(out.size() - 1);
       int currentX = getLineWidth(getLineCount() - 1);
       int lineMaxWidth = getLineMaxWidth(getLineCount() - 1, currentY);
-      String ellipsis = Strings.ELLIPSIS;
-      if (!StringUtils.isEmpty(in) && end > start && !BitwiseUtils.getFlag(this.textFlags, FLAG_ELLIPSIZE_NO_FILL)) {
+      boolean hasEllipsizedPart = false;
+      String ellipsis = defaultEllipsis;
+      if (!StringUtils.isEmpty(in) && end > start && !BitwiseUtils.hasFlag(this.textFlags, FLAG_ELLIPSIZE_NO_FILL)) {
         int ellipsisMaxWidth = lineMaxWidth - currentX;
-        String ellipsized = TextUtils.ellipsize(in.substring(start, end).replace('\n', ' '), getTextPaint(entity), ellipsisMaxWidth, TextUtils.TruncateAt.END).toString();
-        if (!StringUtils.isEmpty(ellipsized)) {
+        String ellipsized = TextUtils.ellipsize(
+          in.substring(start, end).replace('\n', ' '),
+          getTextPaint(entity),
+          ellipsisMaxWidth,
+          TextUtils.TruncateAt.END
+        ).toString();
+        hasEllipsizedPart = !StringUtils.isEmpty(ellipsized);
+        if (hasEllipsizedPart) {
           ellipsis = ellipsized;
         }
       }
-      final String defaultEllipsis = Strings.ELLIPSIS;
-      float ellipsisWidth = U.measureText(ellipsis, getTextPaint(entity));
+
+      float ellipsisWidth = BiDiUtils.measureTextRun(bidiEntity, ellipsis, getTextPaint(entity));
+      if (!BiDiUtils.isValid(bidiEntity)) {
+        bidiEntity = lastPart.getBidiEntity();
+      }
       boolean addLine = false;
       if (currentX + ellipsisWidth <= lineMaxWidth || (addLine = (textFlags & Text.FLAG_ELLIPSIZE_NEWLINE) != 0 && getLineCount() == maxLineCount - 1)) {
         // Easy path: just add ellipsis
@@ -1742,12 +1879,27 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
           addLine(0, getCurrentLineHeight());
           lineIndex++;
         }
-        TextPart ellipsisPart = new TextPart(this, ellipsis, 0, ellipsis.length(), lineIndex, paragraphIndex);
-        ellipsisPart.setXY(currentX, currentY);
-        ellipsisPart.setWidth(ellipsisWidth);
-        ellipsisPart.setEntity(entity);
-        out.add(ellipsisPart);
-        currentX += ellipsisWidth;
+
+        final float defaultEllipsisWidth = U.measureText(defaultEllipsis, getTextPaint(entity));
+        if (hasEllipsizedPart && !StringUtils.equalsOrBothEmpty(ellipsis, defaultEllipsis) && ellipsis.length() > defaultEllipsis.length()) {
+          TextPart ellipsisPart = new TextPart(this, ellipsis, 0, ellipsis.length() - defaultEllipsis.length(), lineIndex, paragraphIndex);
+          ellipsisPart.setXY(currentX, currentY);
+          ellipsisPart.setWidth(ellipsisWidth - defaultEllipsisWidth);
+          ellipsisPart.setEntity(entity);
+          ellipsisPart.setBidiEntity(bidiEntity);
+          out.add(ellipsisPart);
+          currentX += ellipsisWidth - defaultEllipsisWidth;
+        }
+
+        final int bidiParagraphLevel = BiDiUtils.isParagraphRtl(bidiEntity) ? 1 : 0;
+        final @BiDiEntity int bidiEntityForEllipsis = BiDiUtils.isValid(bidiEntity) ? BiDiUtils.create(bidiParagraphLevel, bidiParagraphLevel, BiDiUtils.getIndex(bidiEntity)) : bidiEntity;
+        TextPart defaultEllipsisPart = new TextPart(this, defaultEllipsis, 0, defaultEllipsis.length(), lineIndex, paragraphIndex);
+        defaultEllipsisPart.setXY(currentX, currentY);
+        defaultEllipsisPart.setWidth(defaultEllipsisWidth);
+        defaultEllipsisPart.setEntity(entity);
+        defaultEllipsisPart.setBidiEntity(bidiEntityForEllipsis);
+        out.add(defaultEllipsisPart);
+        currentX += defaultEllipsisWidth;
       } else {
         // Hard path: find enough place for ellipsis and place it there
         final int requiredLineIndex = lastPart.getLineIndex();
@@ -1757,8 +1909,10 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         boolean done = false;
         do {
           currentX = lastPart.getX();
-          if (lastPart.isEmoji() || lastPart.isIcon()) {
-            // Easy path: just replace first found emoji with ellipsis
+          final int bidiParagraphLevel = BiDiUtils.isParagraphRtl(lastPart.getBidiEntity()) ? 1 : 0;
+          final @BiDiEntity int bidiEntityForEllipsis = BiDiUtils.create(bidiParagraphLevel, bidiParagraphLevel, BiDiUtils.getIndex(lastPart.getBidiEntity()));
+          if (lastPart.isStaticElement()) {
+            // Easy path: just replace first found media with ellipsis
 
             boolean changedEllipsis = false;
             if (!ellipsis.equals(defaultEllipsis)) {
@@ -1771,8 +1925,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
             ellipsisPart.setXY(currentX, currentY);
             ellipsisPart.setWidth(ellipsisWidth);
             ellipsisPart.setEntity(lastPart.getEntity());
+            ellipsisPart.setBidiEntity(bidiEntityForEllipsis);
             out.set(out.size() - 1, ellipsisPart);
             currentX += ellipsisPart.getWidth();
+
+            removeMedia(lastPart);
 
             done = true;
             break;
@@ -1787,11 +1944,20 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
               if (!ellipsis.endsWith(defaultEllipsis)) {
                 ellipsis += defaultEllipsis;
               }
-              ellipsisWidth = U.measureText(ellipsis, paint);
+              ellipsisWidth = BiDiUtils.measureTextRun(lastPart.getBidiEntity(), ellipsis, paint);
+              final float defaultEllipsisWidth2 = U.measureText(defaultEllipsis, paint);
               if (currentX + ellipsisWidth <= lineMaxWidth) {
-                lastPart.setLine(ellipsis, 0, ellipsis.length());
-                lastPart.setWidth(ellipsisWidth);
-                currentX += ellipsisWidth;
+                lastPart.setLine(ellipsis, 0, ellipsis.length() - defaultEllipsis.length());
+                lastPart.setWidth(ellipsisWidth - defaultEllipsisWidth2);
+                currentX += ellipsisWidth - defaultEllipsisWidth2;
+
+                TextPart defaultEllipsisPart = new TextPart(this, defaultEllipsis, 0, defaultEllipsis.length(), lastPart.getLineIndex(), lastPart.getParagraphIndex());
+                defaultEllipsisPart.setXY(currentX, lastPart.getY());
+                defaultEllipsisPart.setWidth(defaultEllipsisWidth2);
+                defaultEllipsisPart.setEntity(entity);
+                defaultEllipsisPart.setBidiEntity(bidiEntityForEllipsis);
+                out.add(defaultEllipsisPart);
+                currentX += defaultEllipsisWidth2;
 
                 done = true;
                 break;
@@ -1800,6 +1966,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
           }
 
           out.remove(out.size() - 1);
+          removeMedia(lastPart);
           if (out.isEmpty())
             break;
           lastPart = out.get(out.size() - 1);
@@ -1858,6 +2025,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     }
   }
 
+  @Override
   public int getWidth () {
     return currentWidth;
   }
@@ -1900,6 +2068,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return (textFlags & FLAG_FULL_RTL) != 0;
   }
 
+  @Override
   public int getHeight () {
     return currentY;
   }
@@ -1916,7 +2085,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public boolean alignRight () {
-    return (textFlags & FLAG_ALIGN_RIGHT) != 0 || (Lang.rtl() && (textFlags & FLAG_MAY_APPLY_RTL) != 0);
+    return (textFlags & FLAG_ALIGN_RIGHT) != 0;
   }
 
   public int getLineCount () {
@@ -1942,35 +2111,84 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     locatePart(outRect, part, TextEntity.COMPARE_MODE_NORMAL);
   }
 
-  public void locatePart (Rect outRect, TextPart part, int compareMode) {
-    outRect.set(0, part.getY(), getLineWidth(part.getLineIndex()), part.getY() + getLineHeight(part.getLineIndex()));
-    if (getEntityCount() > 0) {
-      outRect.left = part.getX();
-      outRect.right = part.getX() + (int) part.getWidth();
+  public void locatePart (Rect outRect, TextPart touchPart, int compareMode) {
+    if (isDestroyed()) {
+      return;
     }
-    TextEntity entity = part.getEntity();
+    outRect.set(
+      0,
+      touchPart.getY(),
+      getLineWidth(touchPart.getLineIndex()),
+      touchPart.getY() + getLineHeight(touchPart.getLineIndex())
+    );
+    if (getEntityCount() > 0) {
+      outRect.left = touchPart.getX();
+      outRect.right = touchPart.getX() + (int) touchPart.getWidth();
+    }
+
+    TextEntity entity = touchPart.getEntity();
     if (entity != null) {
-      int i = parts.indexOf(part);
+      final int lineIndex = touchPart.getLineIndex();
+      final int lineWidth = getLineWidth(lineIndex);
+      final boolean center = BitwiseUtils.hasFlag(textFlags, FLAG_ALIGN_CENTER);
+
+      int i = parts.indexOf(touchPart);
       if (i != -1) {
         int start = i;
-        while (start > 0 && parts.get(start - 1).getLineIndex() == part.getLineIndex() && TextEntity.equals(entity, parts.get(start - 1).getEntity(), compareMode, originalText)) {
+        while (start > 0 && parts.get(start - 1).getLineIndex() == lineIndex && TextEntity.equals(entity, parts.get(start - 1).getEntity(), compareMode, originalText)) {
           start--;
         }
         int end = i;
-        while (end + 1 < parts.size() && parts.get(end + 1).getLineIndex() == part.getLineIndex() && TextEntity.equals(entity, parts.get(end + 1).getEntity(), compareMode, originalText)) {
+        while (end + 1 < parts.size() && parts.get(end + 1).getLineIndex() == lineIndex && TextEntity.equals(entity, parts.get(end + 1).getEntity(), compareMode, originalText)) {
           end++;
         }
         int bound = getBackgroundPadding(defaultTextColorSet, entity, compareMode != TextEntity.COMPARE_MODE_NORMAL, false);
         outRect.top -= bound;
         outRect.bottom += bound;
-        outRect.left = parts.get(start).getX();
-        outRect.right = parts.get(end).getX() + (int) parts.get(end).getWidth();
+
+        if (start != end) {
+          final TextPart startPart = parts.get(start);
+          final TextPart endPart = parts.get(end);
+          int startPartStartX, startPartWidth;
+          int endPartStartX, endPartWidth;
+
+          startPartWidth = (int) startPart.getWidth();
+          endPartWidth = (int) endPart.getWidth();
+
+          if (center) {
+            int cx = lastStartX + maxWidth / 2;
+            startPartStartX = startPart.makeX(cx - lineWidth / 2, cx + lineWidth / 2, 0);
+            endPartStartX = endPart.makeX(cx - lineWidth / 2, cx + lineWidth / 2, 0);
+          } else {
+            startPartStartX = startPart.makeX(lastStartX, lastEndX, lastEndXBottomPadding);
+            endPartStartX = startPart.makeX(lastStartX, lastEndX, lastEndXBottomPadding);
+          }
+          if (startPartStartX <= endPartStartX) {
+            outRect.left = startPartStartX;
+            outRect.right = endPartStartX + endPartWidth;
+          } else {
+            outRect.left = endPartStartX;
+            outRect.right = startPartStartX + startPartWidth;
+          }
+        } else {
+          if (center) {
+            int cx = lastStartX + maxWidth / 2;
+            outRect.left = touchPart.makeX(cx - lineWidth / 2, cx + lineWidth / 2, 0);
+          } else {
+            outRect.left = touchPart.makeX(lastStartX, lastEndX, lastEndXBottomPadding);
+          }
+          outRect.right = outRect.left + (int) touchPart.getWidth();
+        }
       }
     }
-    outRect.offset(lastStartX, lastStartY);
+    outRect.offset(0, lastStartY);
   }
 
-  private Paint.FontMetricsInt getFontMetrics (float textSizePx) {
+  public TextPart getTextPart (int index) {
+    return parts.get(index);
+  }
+
+  public Paint.FontMetricsInt getFontMetrics (float textSizePx) {
     if (mTmpTextSizePx == -1 || mTmpTextSizePx != textSizePx) {
       TextPaint paint = textStyleProvider.getTextPaint();
       paint.getFontMetricsInt(fm);
@@ -1983,8 +2201,15 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return getFontMetrics(textStyleProvider.getTextSize());
   }
 
-  int getAscent () {
-    return -getFontMetrics().ascent;
+  int getAscent (float textSizePx) {
+    return -getFontMetrics(textSizePx).ascent;
+  }
+
+
+  public static int getLineHeight (TextStyleProvider textStyleProvider, boolean needPadding) {
+    TextPaint paint = textStyleProvider.getTextPaint();
+    Paint.FontMetricsInt fm = paint.getFontMetricsInt();
+    return (Math.abs(fm.descent - fm.ascent) + fm.leading) + (needPadding ? textStyleProvider.convertUnit(2f) : 0);
   }
 
   public int getLineHeight (boolean needPadding) {
@@ -1993,7 +2218,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public int getLineSpacing () {
-    return BitwiseUtils.getFlag(textFlags, FLAG_NO_SPACING) ? 0 : textStyleProvider.convertUnit((textFlags & FLAG_ARTICLE) != 0 ? 3f : 2f);
+    return BitwiseUtils.hasFlag(textFlags, FLAG_NO_SPACING) ? 0 : textStyleProvider.convertUnit((textFlags & FLAG_ARTICLE) != 0 ? 3f : 2f);
   }
 
   private Paint lastSpacePaint;
@@ -2007,7 +2232,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     return lastSpaceSize;
   }
 
-  private int drawPartCentered (int partIndex, Canvas c, int x, int y, int maxWidth, float alpha, @Nullable TextColorSet defaultTheme, @Nullable ComplexReceiver receiver, int iconKeyOffset) {
+  private int drawPartCentered (int partIndex, Canvas c, int x, int y, int maxWidth, float alpha, @Nullable TextColorSet defaultTheme, @Nullable ComplexReceiver receiver) {
     TextPart part = parts.get(partIndex);
     int width = getLineWidth(part.getLineIndex());
     int cx = x + maxWidth / 2;
@@ -2035,39 +2260,78 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       if (count > 1) {
         part.drawMerged(partIndex, c, lastPart.getEnd(), cx - width / 2, cx + width / 2, 0, y, alpha, defaultTheme);
       } else {
-        part.draw(partIndex, c, cx - width / 2, cx + width / 2, 0, y, alpha, defaultTheme, receiver, iconKeyOffset);
+        part.draw(partIndex, c, cx - width / 2, cx + width / 2, 0, y, alpha, defaultTheme, receiver);
       }
     }
     return count;
   }
 
-  public int requestIcons (ComplexReceiver iconReceiver, int iconKeyOffset) {
-    boolean clear = iconKeyOffset == -1;
-    if (iconCount > 0) {
-      if (clear) {
-        iconKeyOffset = 0;
-      }
-      int iconIndex = 0;
-      for (TextPart part : parts) {
-        if (part.isIcon()) {
-          part.requestIcon(iconReceiver, iconKeyOffset);
-          iconIndex++;
-        }
-      }
-      if (clear) {
-        iconReceiver.clearReceiversWithHigherKey(iconIndex);
-      }
-      return iconIndex;
-    }
-    if (clear) {
-      iconReceiver.clear();
-    }
-    return 0;
+  public boolean hasMedia () {
+    return media != null && !media.isEmpty();
   }
 
-  private int drawPart (final int partIndex, Canvas c, int startX, int endX, int endXBottomPadding, int y, float alpha, @Nullable TextColorSet defaultTheme, @Nullable ComplexReceiver receiver, int iconKeyOffset) {
+  public int getMediaCount () {
+    return hasMedia() ? media.size() : 0;
+  }
+
+  public boolean invalidateMediaContent (ComplexReceiver textMediaReceiver, @Nullable TextMedia specificMedia) {
+    if (BitwiseUtils.hasFlag(textFlags, FLAG_DESTROYED)) {
+      return false;
+    }
+    if (specificMedia == null) {
+      // Force parent to call requestMedia() instead
+      return false;
+    }
+    final long displayMediaKey = specificMedia.getDisplayMediaKey();
+    if (displayMediaKey == -1 || media.get(specificMedia.keyId) != specificMedia) {
+      return false; // Don't invalidate what wasn't requested
+    }
+    if (!hasMedia()) {
+      textMediaReceiver.clearReceivers(displayMediaKey);
+      return false;
+    }
+    specificMedia.requestFiles(textMediaReceiver);
+    return true;
+  }
+
+  public int requestMedia (ComplexReceiver textMediaReceiver) {
+    return requestMedia(textMediaReceiver, -1, -1);
+  }
+
+  public int requestMedia (ComplexReceiver textMediaReceiver, long keyOffset, long maxKeyCount) {
+    if (!hasMedia())
+      return 0;
+    boolean clear = keyOffset == -1 && maxKeyCount == -1;
+    if (clear) {
+      keyOffset = 0;
+      maxKeyCount = Long.MAX_VALUE;
+    }
+    long maxMediaId = -1;
+    int mediaCount = 0;
+    for (Map.Entry<String, TextMedia> entry : media.entrySet()) {
+      TextMedia media = entry.getValue();
+      if (media.id >= maxKeyCount)
+        throw new IllegalArgumentException();
+      media.setDisplayMediaKeyOffset(keyOffset);
+      if (!media.attachedToParts.isEmpty()) {
+        media.requestFiles(textMediaReceiver);
+      } else {
+        textMediaReceiver.clearReceivers(media.getDisplayMediaKey());
+      }
+      maxMediaId = Math.max(maxMediaId, media.id);
+      mediaCount++;
+    }
+    if (clear && maxMediaId != -1) {
+      textMediaReceiver.clearReceiversWithHigherKey(keyOffset + maxMediaId + 1);
+    }
+    return mediaCount;
+  }
+
+  private int drawPart (final int partIndex, Canvas c, int startX, int endX, int endXBottomPadding, int y, float alpha, @Nullable TextColorSet defaultTheme, @Nullable ComplexReceiver receiver) {
     TextPart part = parts.get(partIndex);
 
+    final int firstPartX = part.getX();
+    int mergeOffset = 0;
     int count = 1;
     int partCount = parts.size();
     TextPart lastPart = part;
@@ -2077,6 +2341,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       if (lastPart.wouldMergeWithNextPart(curPart)) {
         lastPart = curPart;
         count++;
+        mergeOffset = Math.max(mergeOffset, firstPartX - curPart.getX());
       } else {
         break;
       }
@@ -2090,9 +2355,9 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     }
     if (alpha > 0f) {
       if (count > 1) {
-        part.drawMerged(partIndex, c, lastPart.getEnd(), startX, endX, endXBottomPadding, y, alpha, defaultTheme);
+        part.drawMerged(partIndex, c, lastPart.getEnd(), startX - mergeOffset, endX - mergeOffset, endXBottomPadding, y, alpha, defaultTheme);
       } else {
-        part.draw(partIndex, c, startX, endX, endXBottomPadding, y, alpha, defaultTheme, receiver, iconKeyOffset);
+        part.draw(partIndex, c, startX, endX, endXBottomPadding, y, alpha, defaultTheme, receiver);
       }
     }
     return count;
@@ -2171,6 +2436,26 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
 
   private int lastStartX, lastEndX, lastEndXBottomPadding, lastStartY;
 
+  public void beginDrawBatch (@Nullable ComplexReceiver receiver, int externalBatchId) {
+    if (receiver != null) {
+      for (TextPart part : parts) {
+        part.beginDrawBatch(receiver, externalBatchId);
+      }
+    }
+  }
+
+  public void finishAllDrawBatches (@Nullable ComplexReceiver receiver) {
+    finishDrawBatch(receiver, 0);
+  }
+
+  public void finishDrawBatch (@Nullable ComplexReceiver receiver, int externalBatchId) {
+    if (receiver != null) {
+      for (TextPart part : parts) {
+        part.finishDrawBatch(receiver, externalBatchId);
+      }
+    }
+  }
+
   public void draw (Canvas c, int startX, int startY) {
     draw(c, startX, startY, null, 1f);
   }
@@ -2188,7 +2473,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public void draw (Canvas c, int startX, int startY, @Nullable TextColorSet defaultTheme, @FloatRange(from = 0f, to = 1f) float alpha) {
-    draw(c, startX, startX/* + getWidth()*/, 0, startY, defaultTheme, alpha);
+    draw(c, startX, startY, defaultTheme, alpha, null);
+  }
+
+  public void draw (Canvas c, int startX, int startY, @Nullable TextColorSet defaultTheme, @FloatRange(from = 0f, to = 1f) float alpha, ComplexReceiver receiver) {
+    draw(c, startX, startX /* + getWidth()*/, 0, startY, defaultTheme, alpha, receiver);
   }
 
   public void draw (Canvas c, int startX, int endX, int endXBottomPadding, int startY, @Nullable TextColorSet defaultTheme, @FloatRange(from = 0f, to = 1f) float alpha) {
@@ -2196,14 +2485,13 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public void draw (Canvas c, int startX, int endX, int endXBottomPadding, int startY, @Nullable TextColorSet defaultTheme, @FloatRange(from = 0f, to = 1f) float alpha, @Nullable ComplexReceiver receiver) {
-    draw(c, startX, endX, endXBottomPadding, startY, defaultTheme, alpha, receiver, -1);
-  }
-
-  public void draw (Canvas c, int startX, int endX, int endXBottomPadding, int startY, @Nullable TextColorSet defaultTheme, @FloatRange(from = 0f, to = 1f) float alpha, @Nullable ComplexReceiver receiver, int iconKeyOffset) {
     if (parts == null || alpha == 0f)
       return;
 
-    final boolean needRestore = BitwiseUtils.getFlag(textFlags, FLAG_NEED_CLIP_TEXT_AREA);
+    //c.drawRect(startX, startY, startX + getWidth(), startY + getHeight(), Paints.strokeSmallPaint(0xFF000000));
+    //c.drawRect(startX, startY, endX, startY + getHeight(), Paints.strokeSmallPaint(0xFF00FF00));
+
+    final boolean needRestore = BitwiseUtils.hasFlag(textFlags, FLAG_NEED_CLIP_TEXT_AREA);
     final int saveCount;
     if (needRestore) {
       saveCount = Views.save(c);
@@ -2214,9 +2502,20 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
           lineMargin = Math.max(getLineStartMargin(i, 0/*FIXME*/), lineMargin);
         }
       }
-      c.clipRect(startX - bound, startY - bound, startX + getWidth() + bound + lineMargin, startY + getHeight() + bound);
+      if (isFullyRtl() && startX != endX) {
+        // c.drawRect(endX - lineMargin - getWidth() - bound, startY - bound, endX + bound, startY + getHeight() + bound, Paints.strokeSmallPaint(0xFF000000));
+        c.clipRect(endX - lineMargin - getWidth() - bound, startY - bound, endX + bound, startY + getHeight() + bound);
+      } else {
+        // c.drawRect(startX - bound, startY - bound, startX + getWidth() + bound + lineMargin, startY + getHeight() + bound, Paints.strokeSmallPaint(0xFF000000));
+        c.clipRect(startX - bound, startY - bound, startX + getWidth() + bound + lineMargin, startY + getHeight() + bound);
+      }
+
     } else {
       saveCount = -1;
+    }
+
+    for (QuoteBackground quote : quotes) {
+      quote.draw(c, startX, endX, endXBottomPadding, startY);
     }
 
     lastStartY = startY;
@@ -2345,15 +2644,43 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       }
     }
 
-    if (center) {
-      int partCount = parts.size();
-      for (int i = 0; i < partCount; ) {
-        i += drawPartCentered(i, c, startX, startY, startX == endX ? maxWidth : endX - startX, alpha, defaultTheme, receiver, iconKeyOffset);
+    int partCount = parts.size();
+    int topLayerPartsCount = 0;
+    for (int i = 0; i < partCount; ) {
+      TextPart part = parts.get(i);
+      if (part.requiresTopLayer()) {
+        TextPart nextPart;
+        do {
+          nextPart = i + 1 < partCount ? parts.get(i + 1) : null;
+          topLayerPartsCount++;
+          i++;
+          if (nextPart != null && part.wouldMergeWithNextPart(nextPart)) {
+            part = nextPart;
+          } else {
+            break;
+          }
+        } while (true);
+        continue;
       }
-    } else {
-      int partCount = parts.size();
-      for (int i = 0; i < partCount; ) {
-        i += drawPart(i, c, startX, endX, endXBottomPadding, startY, alpha, defaultTheme, receiver, iconKeyOffset);
+      if (center) {
+        i += drawPartCentered(i, c, startX, startY, startX == endX ? maxWidth : endX - startX, alpha, defaultTheme, receiver);
+      } else {
+        i += drawPart(i, c, startX, endX, endXBottomPadding, startY, alpha, defaultTheme, receiver);
+      }
+    }
+    if (topLayerPartsCount > 0) {
+      for (int i = 0; i < partCount && topLayerPartsCount > 0; ) {
+        TextPart part = parts.get(i);
+        if (part.requiresTopLayer()) {
+          int drawCount;
+          if (center) {
+            drawCount = drawPartCentered(i, c, startX, startY, startX == endX ? maxWidth : endX - startX, alpha, defaultTheme, receiver);
+          } else {
+            drawCount = drawPart(i, c, startX, endX, endXBottomPadding, startY, alpha, defaultTheme, receiver);
+          }
+          topLayerPartsCount -= drawCount;
+        }
+        i++;
       }
     }
     if (needRestore) {
@@ -2376,7 +2703,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     @Nullable
     default ThemeDelegate getForcedTheme (View view, Text text) { return null; }
     default boolean forceInstantView (String link) { return false; }
-    default TdApi.WebPage findWebPage (String link) { return null; }
+    default TdApi.LinkPreview findLinkPreview (String link) { return null; }
     default boolean onCommandClick (View view, Text text, TextPart part, String command, boolean isLongPress) { return false; }
     default boolean onUsernameClick (String username) { return false; }
     default boolean onUserClick (long userId) { return false; }
@@ -2403,11 +2730,11 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
 
   private int getPartHeight (TextPart part) {
     float partHeight = part.getHeight();
-    return partHeight != -1 ? (int) partHeight : getLineHeight();
+    return partHeight != -1 ? (int) partHeight : getLineHeight(part.getLineIndex());
   }
 
   private int getPartVerticalOffset (TextPart part) {
-    return iconCount > 0 ? (getLineHeight(part.getLineIndex()) - getPartHeight(part)) / 2 : 0;
+    return hasMedia() ? (getLineHeight(part.getLineIndex()) - getPartHeight(part)) / 2 : 0;
   }
 
   private int findTextPart (int touchX, int touchY, int startX, int endX, int endXBottomPadding, int startY, boolean onlyClickable) {
@@ -2426,7 +2753,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         int width = getLineWidth(part.getLineIndex());
         int cx = startX + maxWidth / 2;
         int sx = cx - width / 2, ex = cx + width / 2;
-        searchX = part.makeX(sx, ex, 0);
+        searchX = part.makeX(sx, ex, 0) - startX;
       } else {
         searchX = part.makeX(startX, endX, endXBottomPadding) - startX;
       }
@@ -2485,11 +2812,17 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   @Nullable
+  private QuoteBackground pressedQuote;
+
+  @Nullable
   private PressHighlight pressHighlight;
   private int touchX, touchY;
 
   public void setViewProvider (ViewProvider viewProvider) {
     this.viewProvider = viewProvider;
+    for (QuoteBackground quote : quotes) {
+      quote.setViewProvider(viewProvider);
+    }
   }
 
   public ViewProvider getViewProvider () {
@@ -2497,11 +2830,21 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public void cancelTouch () {
+    boolean canceled = false;
+    if (pressedQuote != null) {
+      pressedQuote.performCancelTouch();
+      pressedQuote = null;
+      canceled = true;
+    }
+
     if (pressHighlight != null) {
       if (pressHighlight.spoiler != null) {
         pressHighlight.spoiler.setPressed(false, true);
       }
       pressHighlight = null;
+      canceled = true;
+    }
+    if (canceled) {
       if ((textFlags & FLAG_CUSTOM_LONG_PRESS) != 0) {
         cancelLongPress();
       }
@@ -2571,9 +2914,14 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public boolean onTouchEvent (View view, MotionEvent e, @Nullable ClickCallback callback) {
-    if (parts == null) {
+    if (parts == null || isDestroyed()) {
       return false;
     }
+
+    if (pressedQuote != null && e.getAction() != MotionEvent.ACTION_DOWN) {
+      pressedQuote.onTouchEvent(view, e);
+    }
+
     switch (e.getAction()) {
       case MotionEvent.ACTION_DOWN: {
         touchX = (int) e.getX();
@@ -2582,6 +2930,20 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         final boolean onlyClickable = clickListener == null;
         final int causeIndex = findTextPart(touchX, touchY, lastStartX, lastEndX, lastEndXBottomPadding, lastStartY, onlyClickable);
         if (causeIndex == -1) {
+
+          for (QuoteBackground quote : quotes) {
+            if (quote.contains(touchX, touchY)) {
+              pressedQuote = quote;
+              pressedQuote.onTouchEvent(view, e);
+              if ((textFlags & FLAG_CUSTOM_LONG_PRESS) != 0) {
+                scheduleLongPress(view, callback);
+              } else {
+                longPressTargetCallback = callback;
+              }
+              return true;
+            }
+          }
+
           cancelTouch();
           return false;
         }
@@ -2594,7 +2956,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
           startIndex = spoiler.startPartIndex;
           endIndex = spoiler.startPartIndex + spoiler.partsCount;
         } else {
-          if ((onlyClickable && !foundPart.isClickable()) || (!onlyClickable && !foundPart.isClickable() && !BitwiseUtils.getFlag(textFlags, FLAG_ALL_CLICKABLE))) {
+          if (onlyClickable && !foundPart.isClickable()) {
             cancelTouch();
             return false;
           }
@@ -2626,7 +2988,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       }
       case MotionEvent.ACTION_CANCEL: {
         clearTouch();
-        if (pressHighlight != null) {
+        if (pressHighlight != null || pressedQuote != null) {
           cancelTouch();
           return true;
         } else {
@@ -2634,7 +2996,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         }
       }
       case MotionEvent.ACTION_MOVE: {
-        if (pressHighlight != null) {
+        if (pressHighlight != null || pressedQuote != null) {
           if (Math.max(Math.abs(touchX - e.getX()), Math.abs(touchY - e.getY())) > Screen.getTouchSlop()) {
             cancelTouch();
           }
@@ -2644,7 +3006,10 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       }
       case MotionEvent.ACTION_UP: {
         clearTouch();
-        if (pressHighlight != null) {
+        if (pressedQuote != null) {
+          cancelTouch();
+          return true;
+        } else if (pressHighlight != null) {
           TextPart part = parts.get(pressHighlight.causePartIndex);
           if (pressHighlight.isSpoilerReveal()) {
             revealSpoiler(part);
@@ -2654,9 +3019,9 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
           TextEntity entity = part.getClickableEntity();
           boolean done = false;
           if (clickListener != null) {
-            done = clickListener.onClick(view, this, part, entity != null ? entity.openParameters(view, this, part) : new TdlibUi.UrlOpenParameters().tooltip(part.newTooltipBuilder(view)));
+            done = clickListener.onClick(view, this, part, entity != null ? entity.openParameters(view, this, part, false) : new TdlibUi.UrlOpenParameters().tooltip(part.newTooltipBuilder(view)));
           } else if (entity != null) {
-            entity.performClick(view, this, part, callback);
+            entity.performClick(view, this, part, callback, false);
             done = true;
           }
           cancelTouch();
@@ -2668,7 +3033,7 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
         break;
       }
     }
-    return pressHighlight != null;
+    return pressHighlight != null || pressedQuote != null;
   }
 
   private static int getEntityTouchPadding () {
@@ -2678,12 +3043,22 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   // Sharing
 
   public boolean performLongPress (final View view) {
+    final ClickCallback callback = longPressTargetCallback;
+
+    if (pressedQuote != null) {
+      final QuoteBackground quote = pressedQuote;
+      final TextEntity entity = quote.entity;
+      pressedQuote.performLongPress(view);
+      cancelTouch();
+
+      return entity != null && entity.performLongPress(view, this, null, (textFlags & FLAG_CUSTOM_LONG_PRESS_NO_SHARE) == 0, callback);
+    }
+
     if (pressHighlight == null || pressHighlight.isSpoilerReveal()) {
       return false;
     }
 
     int causeIndex = this.pressHighlight.causePartIndex;
-    ClickCallback callback = longPressTargetCallback;
     cancelTouch();
 
     final TextPart part = parts.get(causeIndex);
@@ -2707,19 +3082,35 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
   }
 
   public final boolean isClickable (TextEntity entity) {
-    return (BitwiseUtils.getFlag(textFlags, FLAG_ALL_CLICKABLE) || (entity != null && entity.isClickable())) && !BitwiseUtils.getFlag(textFlags, FLAG_NO_CLICKABLE);
+    return (BitwiseUtils.hasFlag(textFlags, FLAG_ALL_CLICKABLE) || (entity != null && entity.isClickable())) && !BitwiseUtils.hasFlag(textFlags, FLAG_NO_CLICKABLE);
   }
 
   @ColorInt
   public int getTextColor (@Nullable TextColorSet defaultTheme, @Nullable TextEntity entity, boolean allClickable, boolean isPressed) {
     TextColorSet theme = pickTheme(defaultTheme, entity);
     boolean isClickable = isClickable(entity);
-    return isClickable ? theme.clickableTextColor(isPressed) : theme.defaultTextColor();
+    boolean isQuote = entity != null && entity.isQuote();
+    return isClickable ? theme.clickableTextColor(isPressed) : (isQuote ? Theme.getColor(theme.quoteTextColorId()): theme.defaultTextColor());
+  }
+
+  public long getMediaTextComplexColor () {
+    TextColorSet theme = pickTheme(null, null);
+    return theme.mediaTextComplexColor();
   }
 
   @ColorInt
   public int getTextColor () {
-    return getTextColor(null, null, BitwiseUtils.getFlag(textFlags, FLAG_ALL_CLICKABLE), false);
+    return getTextColor(null, null, BitwiseUtils.hasFlag(textFlags, FLAG_ALL_CLICKABLE), false);
+  }
+
+  @PorterDuffColorId
+  public int getQuoteTextColorId () {
+    return this.defaultTextColorSet.quoteTextColorId();
+  }
+
+  @PorterDuffColorId
+  public int getQuoteLineColorId () {
+    return this.defaultTextColorSet.quoteLineColorId();
   }
 
   @ColorInt
@@ -2760,6 +3151,25 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
     }
   }
 
+  private void clearMedia () {
+    if (hasMedia()) {
+      for (Map.Entry<String, TextMedia> entry : media.entrySet()) {
+        entry.getValue().performDestroy();
+      }
+      media.clear();
+    }
+  }
+
+  public boolean isDestroyed () {
+    return BitwiseUtils.hasFlag(textFlags, FLAG_DESTROYED);
+  }
+
+  @Override
+  public void performDestroy () {
+    textFlags |= FLAG_DESTROYED;
+    reset();
+  }
+
   // Utils
 
   public static int indexOfSplitter (String in, int startIndex) {
@@ -2794,5 +3204,344 @@ public class Text implements Runnable, Emoji.CountLimiter, CounterAnimator.TextD
       i -= Character.charCount(codePoint);
     }
     return -1;
+  }
+
+  public @Nullable TextMedia getTextMediaFromLastPart () {
+    if (parts == null || parts.isEmpty()) return null;
+    return parts.get(0).getMedia();
+  }
+
+
+
+  /* Bidi */
+
+  private Bidi bidi;
+  private boolean bidiRequired;
+  private char[] bidiTmpChars;
+  private int bidiStart;
+  private int bidiLength;
+  private int bidiIndex;
+  private int bidiParagraphCount;
+
+  private void bidiProcessTextStart (String in) {
+    if (!useGlobalBidiObject()) {
+      return;
+    }
+
+    bidiStart = 0;
+    bidiLength = in.length();
+    bidiRequired = BiDiUtils.requiresBidi(in, 0, bidiLength);
+
+    if (bidiRequired) {
+      bidiTmpChars = new char[bidiLength];
+      bidiGetChars(in, 0, bidiLength, bidiTmpChars, true, true);
+
+      bidi = new Bidi(bidiTmpChars, 0, null, 0, bidiLength, Lang.rtl() ? Bidi.DIRECTION_DEFAULT_RIGHT_TO_LEFT : Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+      bidiParagraphCount++;
+      bidiTmpChars = null;
+    } else {
+      bidi = null;
+    }
+  }
+
+  private void bidiProcessLineStart (String in, int start, int end) {
+    if (useGlobalBidiObject()) {
+      return;
+    }
+
+    bidiStart = start;
+    bidiLength = end - start;
+    bidiRequired = BiDiUtils.requiresBidi(in, start, end);
+
+    if (bidiRequired) {
+      if (bidiTmpChars == null || bidiTmpChars.length < bidiLength) {
+        final int size = Math.min(bidiLength * 3 / 2, in.length());
+        bidiTmpChars = new char[size];
+      }
+
+      bidiGetChars(in, start, end, bidiTmpChars, true, false);
+
+      bidi = new Bidi(bidiTmpChars, 0, null, 0, bidiLength, Lang.rtl() ? Bidi.DIRECTION_DEFAULT_RIGHT_TO_LEFT : Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+      bidiParagraphCount++;
+    } else {
+      bidi = null;
+    }
+  }
+
+  private void bidiProcessLineComplete () {
+    if (useGlobalBidiObject()) {
+      return;
+    }
+
+    bidi = null;
+    bidiIndex++;
+  }
+
+  private void bidiPartsReorder () {
+    final int partsCount = parts.size();
+    if (bidiParagraphCount == 0 || partsCount < 2) {
+      return;
+    }
+
+    // Fix order
+    TextPart[] partsArray = parts.toArray(new TextPart[0]);
+    byte[] partsLevels = new byte[parts.size()];
+    for (int a = 0; a < partsLevels.length; a++) {
+      partsLevels[a] = (byte) BiDiUtils.getLevel(partsArray[a].getBidiEntity());
+    }
+
+    int currentBidiIndex = 0;
+    int lineIndex = 0;
+    int rtlPartsCount = 0;
+    int lastLineStartIndex = 0;
+    for (int partIndex = 0; partIndex < partsCount; partIndex++) {
+      final TextPart part = partsArray[partIndex];
+      final @BiDiEntity int bidiEntity = part.getBidiEntity();
+      final boolean paragraphIsRtl = BiDiUtils.isParagraphRtl(bidiEntity);
+      final int bidiIndex = BiDiUtils.getIndex(bidiEntity);
+      final int partLineIndex = part.getY(); //getLineIndex();
+      if (lineIndex != partLineIndex || currentBidiIndex != bidiIndex) {
+        bidiPartsReorder(partsArray, partsLevels, lastLineStartIndex, partIndex);
+        currentBidiIndex = bidiIndex;
+        lastLineStartIndex = partIndex;
+        lineIndex = partLineIndex;
+      }
+      if (paragraphIsRtl) {
+        rtlPartsCount += 1;
+      }
+    }
+    bidiPartsReorder(partsArray, partsLevels, lastLineStartIndex, partsCount);
+
+    if (rtlPartsCount == partsCount) {
+      textFlags |= FLAG_FULL_RTL;
+    }
+  }
+
+  private void bidiClear () {
+    bidi = null;
+    bidiRequired = false;
+    bidiTmpChars = null;
+    bidiStart = 0;
+    bidiLength = 0;
+    bidiIndex = 0;
+    bidiParagraphCount = 0;
+  }
+
+  private @BiDiEntity int getBidiEntity (int start) {
+    final int offset = start - bidiStart;
+    if (0 <= offset && offset < bidiLength) {
+      if (bidi != null) {
+        return BiDiUtils.create(bidi.getLevelAt(offset), bidi.getBaseLevel(), bidiIndex);
+      }
+      if (!bidiRequired) {
+        return BiDiUtils.create(0, 0, bidiIndex);
+      }
+    }
+
+    return 0;   // illegal state ?
+  }
+
+  private int findBidiRunEnd (int start) {
+    if (bidi == null) {
+      return -1;
+    }
+
+    final int runsCount = bidi.getRunCount();
+    if (runsCount > 1) {
+      for (int a = 0; a < runsCount; a++) {
+        int runEnd = bidiStart + bidi.getRunLimit(a);
+        if (start < runEnd) {
+          return runEnd;
+        }
+      }
+      throw new RuntimeException("Cannot find bidi run");
+    }
+
+    return -1;
+  }
+
+  private boolean useGlobalBidiObject () {
+    return BitwiseUtils.hasAllFlags(textFlags, Text.FLAG_IGNORE_NEWLINES);
+  }
+
+  private void bidiPartsReorder (TextPart[] partsArray, byte[] partsLevels, int partStart, int partEnd ) {
+    if (partEnd - partStart < 2) {
+      return;
+    }
+
+    final boolean addSpaceBetweenLines = useGlobalBidiObject();
+    int x = partsArray[partStart].getX();
+    Bidi.reorderVisually(partsLevels, partStart, partsArray, partStart, partEnd - partStart);
+
+    for (int index = partStart; index < partEnd; index++) {
+      final TextPart part = partsArray[index];
+      if (addSpaceBetweenLines && part.getEnd() < originalText.length() && Character.getDirectionality(originalText.charAt(part.getEnd())) == Character.DIRECTIONALITY_PARAGRAPH_SEPARATOR) {
+        x += (int) part.getSource().makeSpaceSize(part.getSource().getTextPaint(null));
+      }
+
+      part.setXY(x, part.getY());
+      x += (int)(part.getWidth());
+    }
+  }
+
+  private static void bidiGetChars (String in, int start, int end, char[] dst, boolean neutralizeEmoji, boolean ignoreParagraphSeparators) {
+    in.getChars(start, end, dst, 0);
+
+    for (int a = start; a < end; ) {
+      final int codePoint = in.codePointAt(a);
+      int count = Character.charCount(codePoint);
+
+      boolean replaceWithNeutralDirectionChar = false;
+      if (neutralizeEmoji) {
+        int ltrEmojiCharCount = EmojiBidUtil.ltrEmojiCharCount(codePoint, count, in, a, end);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP && ltrEmojiCharCount == 0) {
+          ltrEmojiCharCount = EmojiBidUtilLegacy.ltrEmojiCharCountLegacy(codePoint, count);
+        }
+        if (ltrEmojiCharCount > 0) {
+          count = ltrEmojiCharCount;
+          replaceWithNeutralDirectionChar = true;
+        }
+      }
+      if (!replaceWithNeutralDirectionChar && ignoreParagraphSeparators && Character.getDirectionality(codePoint) == Character.DIRECTIONALITY_PARAGRAPH_SEPARATOR) {
+        replaceWithNeutralDirectionChar = true;
+      }
+
+      if (replaceWithNeutralDirectionChar) {
+        for (int b = 0; b < count; b++) {
+          dst[a - start + b] = ' ';
+        }
+      }
+
+      a += count;
+    }
+  }
+
+  public static String bidiGenerateTestMessage () {
+    StringBuilder b = new StringBuilder();
+    for (int a = 0; a < EmojiCode.DATA.length; a++) {
+      for (String emoji : EmojiCode.DATA[a]) {
+        if (Strings.getTextDirection(emoji) == Strings.DIRECTION_LTR) {
+          b.append(emoji);
+          b.append(' ');
+          b.append('\u062A');
+          b.append('\n');
+        }
+      }
+    }
+
+    return b.toString();
+  }
+
+  /* Quote */
+
+  public boolean allowQuotes () {
+    return maxLineCount == -1 && !BitwiseUtils.hasFlag(textFlags, FLAG_ALIGN_CENTER);
+  }
+
+  private final ArrayList<QuoteBackground> quotes = new ArrayList<>();
+
+  private void addQuote(QuoteBackground quoteBackground) {
+    quoteBackground.calcHeightAddition();
+    quotes.add(quoteBackground);
+  }
+
+  private void buildQuotes () {
+    if (!allowQuotes()) {
+      return;
+    }
+
+    QuoteBackground quote = null;
+    int lastQuoteId = -1;
+
+    for (int a = 0; a < parts.size(); a++) {
+      final TextPart part = parts.get(a);
+      final TextEntity entity = part.getEntity();
+      final int quoteId = entity != null ? entity.getQuoteId() : -1;
+      if (quoteId != -1) {
+        part.setXY(part.getX() - Screen.dp(QuoteBackground.QUOTE_RIGHT_PADDING), part.getY() - Screen.dp(QuoteBackground.QUOTE_VERTICAL_PADDING + QuoteBackground.QUOTE_VERTICAL_MARGIN));
+        if (lastQuoteId != quoteId) {
+          if (quote != null) {
+            addQuote(quote);
+          }
+          lastQuoteId = quoteId;
+          quote = new QuoteBackground(this, entity);
+          quote.setViewProvider(viewProvider);
+          quote.partStart = a;
+        }
+        quote.partEnd = a + 1;
+
+        if (a == parts.size() - 1) {
+          currentY -= Screen.dp(QuoteBackground.QUOTE_VERTICAL_MARGIN);
+        }
+      }
+    }
+    if (quote != null) {
+      addQuote(quote);
+    }
+  }
+
+
+
+  private static final int QUOTE_ADD_PADDING_HORIZONTAL = 1;
+  private static final int QUOTE_ADD_PADDING_VERTICAL = 1 << 1;
+  private static final int QUOTE_ADD_MARGIN_TOP = 1 << 2;
+  private static final int QUOTE_ADD_MARGIN_BOTTOM = 1 << 3;
+
+  private int quoteCheckAndMakeNewLines (final String in, final int start, int end, ArrayList<TextPart> out, @Nullable TextEntity entity) {
+    final boolean allowQuotes = allowQuotes();
+    if (!allowQuotes) {
+      return 0;
+    }
+
+    final TextPart prevPart = out.isEmpty() ? null : out.get(out.size() - 1);
+    final int prevPartQuoteId = prevPart != null ? prevPart.getQuoteEntityId() : -1;
+    final boolean prevPartIsQuote = prevPartQuoteId != -1;
+
+    final int nextPartQuoteId = entity != null ? entity.getQuoteId() : -1;
+    final boolean nextPartIsQuote = nextPartQuoteId != -1;
+
+    final boolean quoteChanged = prevPartQuoteId != nextPartQuoteId;
+    if (quoteChanged) {
+      if (prevPartIsQuote) {
+        final String line = prevPart.getLine();
+        final TextEntity prevEntity = prevPart.getEntity();
+        if (prevEntity != null) {
+          if (prevEntity.end < line.length() && line.charAt(prevEntity.end) != '\n') {
+            newLineOrEllipsis(out, in, start, end, entity);
+          }
+        }
+      }
+      if (prevPart != null && nextPartIsQuote && (!prevPartIsQuote || currentX != 0)) {
+        if (entity.start > 0 && in.charAt(entity.start - 1) != '\n') {
+          newLineOrEllipsis(out, in, start, end, entity);
+        }
+      }
+    }
+
+    if (!nextPartIsQuote) {
+      return 0;
+    }
+
+    return QUOTE_ADD_PADDING_HORIZONTAL
+      | (quoteChanged ? QUOTE_ADD_PADDING_VERTICAL | QUOTE_ADD_MARGIN_BOTTOM : 0)
+      | (quoteChanged && prevPart != null && !prevPartIsQuote ? QUOTE_ADD_MARGIN_TOP : 0);
+  }
+
+
+  private void quoteShiftCords (int flags) {
+    if (BitwiseUtils.hasFlag(flags, QUOTE_ADD_PADDING_HORIZONTAL) && currentX == 0) {
+      currentX = Screen.dp(QuoteBackground.QUOTE_LEFT_PADDING + QuoteBackground.QUOTE_RIGHT_PADDING);
+      int offsetDp = 0;
+      if (BitwiseUtils.hasFlag(flags, QUOTE_ADD_PADDING_VERTICAL)) {
+        offsetDp += QuoteBackground.QUOTE_VERTICAL_PADDING * 2;
+      }
+      if (BitwiseUtils.hasFlag(flags, QUOTE_ADD_MARGIN_TOP)) {
+        offsetDp += QuoteBackground.QUOTE_VERTICAL_MARGIN;
+      }
+      if (BitwiseUtils.hasFlag(flags, QUOTE_ADD_MARGIN_BOTTOM)) {
+        offsetDp += QuoteBackground.QUOTE_VERTICAL_MARGIN;
+      }
+      currentY += Screen.dp(offsetDp);
+    }
   }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -74,7 +74,7 @@ final class ThemeTemporary implements ThemeDelegate {
   }
 
   @Override
-  public float getProperty (@ThemeProperty int propertyId) {
+  public float getProperty (@PropertyId int propertyId) {
     if (factor == 1f || ThemeManager.isStaticProperty(propertyId))
       return toTheme.getProperty(propertyId);
     else if (factor == 0f)

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,11 +31,14 @@ import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.AvatarPlaceholder;
 import org.thunderdog.challegram.data.TGUser;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ComplexReceiver;
-import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.loader.ComplexReceiverProvider;
 import org.thunderdog.challegram.navigation.TooltipOverlayView;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibContactManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeManager;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
@@ -43,7 +46,9 @@ import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.util.DrawModifier;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
 import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextColorSetOverride;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.widget.BaseView;
 import org.thunderdog.challegram.widget.SimplestCheckBoxHelper;
@@ -54,7 +59,7 @@ import java.util.List;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class UserView extends BaseView implements Destroyable, RemoveHelper.RemoveDelegate, TooltipOverlayView.LocationProvider {
+public class UserView extends BaseView implements Destroyable, RemoveHelper.RemoveDelegate, TooltipOverlayView.LocationProvider, ComplexReceiverProvider {
   /*private static final int ACCENT_COLOR = 0xff569ace;
   private static final int DECENT_COLOR = 0xff8a8a8a;*/
 
@@ -66,14 +71,15 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
   private int height = Screen.dp(72);
 
   private @Nullable TGUser user;
-  private final ImageReceiver receiver;
+  private final AvatarReceiver avatarReceiver;
   private final ComplexReceiver complexReceiver;
 
+  private final EmojiStatusHelper emojiStatusHelper;
   private int offsetLeft;
 
   public static final float DEFAULT_HEIGHT = 72f;
 
-  private RemoveHelper removeHelper;
+  private final RemoveHelper removeHelper;
 
   public UserView (Context context, Tdlib tdlib) {
     super(context, tdlib);
@@ -94,8 +100,9 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
       lettersTop = Screen.dp(30f) + Screen.dp(12f);
     }
 
-    receiver = new ImageReceiver(this, avatarRadius);
+    avatarReceiver = new AvatarReceiver(this);
     complexReceiver = new ComplexReceiver(this);
+    emojiStatusHelper = new EmojiStatusHelper(tdlib, this, null);
     layoutReceiver();
 
     removeHelper = new RemoveHelper(this, R.drawable.baseline_remove_circle_24);
@@ -109,9 +116,9 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
     int centerY = height / 2;
     if (Lang.rtl()) {
       int viewWidth = getMeasuredWidth();
-      receiver.setBounds(viewWidth - offsetLeft - avatarRadius - avatarRadius, centerY - avatarRadius, viewWidth - offsetLeft, centerY + avatarRadius);
+      avatarReceiver.setBounds(viewWidth - offsetLeft - avatarRadius - avatarRadius, centerY - avatarRadius, viewWidth - offsetLeft, centerY + avatarRadius);
     } else {
-      receiver.setBounds(offsetLeft, centerY - avatarRadius, offsetLeft + avatarRadius * 2, centerY + avatarRadius);
+      avatarReceiver.setBounds(offsetLeft, centerY - avatarRadius, offsetLeft + avatarRadius * 2, centerY + avatarRadius);
     }
   }
 
@@ -119,7 +126,7 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
     if (this.offsetLeft != offset) {
       this.offsetLeft = offset;
       int centerY = height / 2;
-      receiver.setBounds(offsetLeft, centerY - avatarRadius, offsetLeft + avatarRadius * 2, centerY + avatarRadius);
+      avatarReceiver.setBounds(offsetLeft, centerY - avatarRadius, offsetLeft + avatarRadius * 2, centerY + avatarRadius);
     }
   }
 
@@ -131,14 +138,17 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
 
   public void attachReceiver () {
     complexReceiver.attach();
-    receiver.attach();
+    emojiStatusHelper.attach();
+    avatarReceiver.attach();
   }
 
   public void detachReceiver () {
     complexReceiver.detach();
-    receiver.detach();
+    emojiStatusHelper.detach();
+    avatarReceiver.detach();
   }
 
+  @Override
   public ComplexReceiver getComplexReceiver () {
     return complexReceiver;
   }
@@ -167,6 +177,13 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
       statusWidth = 0;
     }
     float availWidth = getMeasuredWidth() - textLeftMargin - offsetLeft - paddingRight - (unregisteredContact != null ? Screen.dp(32f) : 0);
+    if (drawModifiers != null) {
+      int maxWidth = 0;
+      for (DrawModifier modifier : drawModifiers) {
+        maxWidth = Math.max(maxWidth, modifier.getWidth());
+      }
+      availWidth -= maxWidth;
+    }
     if (availWidth > 0) {
       sourceStatus = status;
       if (statusWidth > availWidth) {
@@ -197,6 +214,23 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
       name = null;
     }
     float availWidth = getMeasuredWidth() - textLeftMargin - offsetLeft - paddingRight - (unregisteredContact != null ? Screen.dp(32f) : 0);
+    if (drawModifiers != null) {
+      int maxWidth = 0;
+      for (DrawModifier modifier : drawModifiers) {
+        maxWidth = Math.max(maxWidth, modifier.getWidth());
+      }
+      availWidth -= maxWidth - Screen.dp(12);
+    }
+    emojiStatusHelper.updateEmoji(user != null ? user.getUser() : null, new TextColorSetOverride(TextColorSets.Regular.NORMAL) {
+      @Override
+      public long mediaTextComplexColor () {
+        return Theme.newComplexColor(true, ColorId.iconActive);
+      }
+    });
+    if (emojiStatusHelper.needDrawEmojiStatus()) {
+      availWidth -= emojiStatusHelper.getWidth() + Screen.dp(6);
+    }
+
     if (availWidth > 0) {
       sourceName = name;
       trimmedName = StringUtils.isEmpty(name) ? null : new Text.Builder(name, (int) availWidth, Paints.robotoStyleProvider(16), TextColorSets.Regular.NORMAL).singleLine().allBold().build();
@@ -207,7 +241,6 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
     updateName();
     updateSubtext();
     updateLetters();
-    receiver.requestFile(user != null ? user.getAvatar() : null);
     if (Looper.getMainLooper() == Looper.myLooper()) {
       invalidate();
     } else {
@@ -222,8 +255,8 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
       this.user = null;
       this.unregisteredContact = contact;
       buildLayout();
+      avatarReceiver.requestPlaceholder(tdlib, avatarPlaceholder, AvatarReceiver.Options.NONE);
     }
-    receiver.requestFile(null);
   }
 
   public void setUser (@NonNull TGUser user) {
@@ -239,31 +272,26 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
         updateSubtext();
       }
     }
-    receiver.requestFile(user.getAvatar());
-  }
-
-  public void setUserForced (@NonNull TGUser user) {
-    this.user = user;
-    this.unregisteredContact = null;
-    buildLayout();
-    receiver.requestFile(user.getAvatar());
+    if (user.isChat()) {
+      avatarReceiver.requestChat(tdlib, user.getChatId(), AvatarReceiver.Options.SHOW_ONLINE);
+    } else {
+      avatarReceiver.requestUser(tdlib, user.getUserId(), AvatarReceiver.Options.SHOW_ONLINE);
+    }
   }
 
   public @Nullable TGUser getUser () {
     return user;
   }
 
-  private AvatarPlaceholder avatarPlaceholder;
+  private AvatarPlaceholder.Metadata avatarPlaceholder;
   private String sourceName;
   private Text trimmedName;
   private String sourceStatus, trimmedStatus;
   private float trimmedStatusWidth;
 
   private void updateLetters () {
-    if (user != null && user.getAvatarPlaceholderMetadata() != null) {
-      avatarPlaceholder = new AvatarPlaceholder(25f, user.getAvatarPlaceholderMetadata(), null);
-    } else if (unregisteredContact != null) {
-      avatarPlaceholder = new AvatarPlaceholder(25f, new AvatarPlaceholder.Metadata(R.id.theme_color_avatarInactive, unregisteredContact.letters.text), null);
+    if (unregisteredContact != null) {
+      avatarPlaceholder = new AvatarPlaceholder.Metadata(tdlib.accentColor(TdlibAccentColor.InternalId.INACTIVE), unregisteredContact.letters);
     } else {
       avatarPlaceholder = null;
     }
@@ -288,7 +316,8 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
   @Override
   public void performDestroy () {
     complexReceiver.performDestroy();
-    receiver.requestFile(null);
+    emojiStatusHelper.performDestroy();
+    avatarReceiver.destroy();
   }
 
   @Override
@@ -300,48 +329,43 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
     if (trimmedName != null) {
       trimmedName.draw(c, offsetLeft + textLeftMargin, (int) ((height - Screen.dp(DEFAULT_HEIGHT)) / 2f + Screen.dp(17f)));
     }
+    emojiStatusHelper.draw(c, offsetLeft + textLeftMargin + (trimmedName != null ? trimmedName.getWidth() : 0) + Screen.dp(6f), (int) ((height - Screen.dp(DEFAULT_HEIGHT)) / 2f + Screen.dp(17f)));
     if (trimmedStatus != null) {
-      statusPaint.setColor(Theme.getColor(user != null && user.isOnline() ? R.id.theme_color_textNeutral : R.id.theme_color_textLight));
+      statusPaint.setColor(Theme.getColor(user != null && user.isOnline() ? ColorId.textNeutral : ColorId.textLight));
       c.drawText(trimmedStatus, rtl ? viewWidth - offsetLeft - textLeftMargin - trimmedStatusWidth : offsetLeft + textLeftMargin,
         statusTop + (height - Screen.dp(DEFAULT_HEIGHT)) / 2f, statusPaint);
     }
-    if (user != null) {
+    if (user != null || unregisteredContact != null) {
+      float checkFactor = checkBoxHelper != null ? checkBoxHelper.getCheckFactor() : 0f;
+      avatarReceiver.forceAllowOnline(checkBoxHelper == null || !checkBoxHelper.isChecked(), 1f - checkFactor);
       layoutReceiver();
-      if (user.hasAvatar()) {
-        if (receiver.needPlaceholder()) {
-          receiver.drawPlaceholderRounded(c, avatarRadius);
-        }
-        receiver.draw(c);
-      } else if (avatarPlaceholder != null) {
-        avatarPlaceholder.draw(c, receiver.centerX(), receiver.centerY());
+      if (avatarReceiver.needPlaceholder()) {
+        avatarReceiver.drawPlaceholder(c);
       }
-    } else if (unregisteredContact != null) {
-      layoutReceiver();
-      if (avatarPlaceholder != null) {
-        avatarPlaceholder.draw(c, receiver.centerX(), receiver.centerY());
-      }
-
+      avatarReceiver.draw(c);
+    }
+    if (unregisteredContact != null) {
       int x = getMeasuredWidth() - Screen.dp(21f);
       int width = Screen.dp(14f);
       int height = Screen.dp(2f);
-      Paint paint = Paints.fillingPaint(Theme.getColor(R.id.theme_color_iconActive));
+      Paint paint = Paints.fillingPaint(Theme.getColor(ColorId.iconActive));
 
       if (rtl) {
         int x1, x2;
         x1 = x - width;
         x2 = x;
-        c.drawRect(viewWidth - x2, centerY - height / 2, viewWidth - x1, centerY + height / 2 + height % 2, paint);
+        c.drawRect(viewWidth - x2, centerY - height / 2f, viewWidth - x1, centerY + height / 2f + height % 2, paint);
         x1 = x - width / 2 - height / 2;
         x2 = x - width / 2 + height / 2 + height % 2;
-        c.drawRect(viewWidth - x2, centerY - width / 2, viewWidth - x1, centerY + width / 2 + width % 2, paint);
+        c.drawRect(viewWidth - x2, centerY - width / 2f, viewWidth - x1, centerY + width / 2f + width % 2, paint);
       } else {
-        c.drawRect(x - width, centerY - height / 2, x, centerY + height / 2 + height % 2, paint);
-        c.drawRect(x - width / 2 - height / 2, centerY - width / 2, x - width / 2 + height / 2 + height % 2, centerY + width / 2 + width % 2, paint);
+        c.drawRect(x - width, centerY - height / 2f, x, centerY + height / 2f + height % 2, paint);
+        c.drawRect(x - width / 2f - height / 2f, centerY - width / 2f, x - width / 2f + height / 2f + height % 2, centerY + width / 2f + width % 2, paint);
       }
     }
 
     if (checkBoxHelper != null) {
-      DrawAlgorithms.drawSimplestCheckBox(c, receiver, checkBoxHelper.getCheckFactor());
+      DrawAlgorithms.drawSimplestCheckBox(c, avatarReceiver, checkBoxHelper.getCheckFactor());
     }
 
     removeHelper.restore(c);
@@ -438,7 +462,7 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
 
   public void setChecked (boolean isChecked, boolean animated) {
     if (checkBoxHelper == null) {
-      checkBoxHelper = new SimplestCheckBoxHelper(this, receiver);
+      checkBoxHelper = new SimplestCheckBoxHelper(this);
     }
     checkBoxHelper.setIsChecked(isChecked, animated);
   }
@@ -460,7 +484,7 @@ public class UserView extends BaseView implements Destroyable, RemoveHelper.Remo
     statusPaint.setTypeface(Fonts.getRobotoRegular());
     statusPaint.setTextSize(Screen.dp(14f));
     statusPaint.setColor(Theme.textDecentColor());
-    ThemeManager.addThemeListener(statusPaint, R.id.theme_color_textLight);
+    ThemeManager.addThemeListener(statusPaint, ColorId.textLight);
   }
 
   public static TextPaint getStatusPaint () {

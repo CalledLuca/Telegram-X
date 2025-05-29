@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,8 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
@@ -52,8 +51,8 @@ import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeDeprecated;
 import org.thunderdog.challegram.theme.ThemeManager;
 import org.thunderdog.challegram.tool.Paints;
@@ -73,16 +72,16 @@ import java.util.List;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
-public class InstantViewController extends ViewController<InstantViewController.Args> implements Menu, Client.ResultHandler,  TGLegacyManager.EmojiLoadListener, Text.ClickCallback, View.OnClickListener, View.OnLongClickListener, TGPlayerController.PlayListBuilder {
+public class InstantViewController extends ViewController<InstantViewController.Args> implements Menu, TGLegacyManager.EmojiLoadListener, Text.ClickCallback, View.OnClickListener, View.OnLongClickListener, TGPlayerController.PlayListBuilder {
   public static class Args {
-    public final TdApi.WebPage webPage;
+    public final TdApi.LinkPreview linkPreview;
     public TdApi.WebPageInstantView instantView;
     public String anchorLink;
 
-    public Args (TdApi.WebPage webPage, TdApi.WebPageInstantView instantView, String anchorLink) {
-      this.webPage = webPage;
+    public Args (TdApi.LinkPreview linkPreview, TdApi.WebPageInstantView instantView, String anchorLink) {
+      this.linkPreview = linkPreview;
       this.instantView = instantView;
       this.anchorLink = anchorLink;
     }
@@ -104,18 +103,15 @@ public class InstantViewController extends ViewController<InstantViewController.
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_iv: {
-        menu.addView(header.genButton(R.id.menu_btn_forward, R.drawable.baseline_share_arrow_24, getHeaderIconColorId(), this, Screen.dp(52f), ThemeDeprecated.headerSelector(), header), Lang.rtl() ? 0 : -1);
-        break;
-      }
+    if (id == R.id.menu_iv) {
+      menu.addView(header.genButton(R.id.menu_btn_forward, R.drawable.baseline_share_arrow_24, getHeaderIconColorId(), this, Screen.dp(52f), ThemeDeprecated.headerSelector(), header), Lang.rtl() ? 0 : -1);
     }
   }
 
   @Override
   public boolean canSlideBackFrom (NavigationController navigationController, final float originalX, final float originalY) {
-    float x = originalX - (Views.getLocationInWindow(recyclerView)[0] - Views.getLocationInWindow(navigationController.get())[0]);
-    float y = originalY - (Views.getLocationInWindow(recyclerView)[1] - Views.getLocationInWindow(navigationController.get())[1]);
+    float x = originalX - (Views.getLocationInWindow(recyclerView)[0] - Views.getLocationInWindow(navigationController.getValue())[0]);
+    float y = originalY - (Views.getLocationInWindow(recyclerView)[1] - Views.getLocationInWindow(navigationController.getValue())[1]);
 
     View view = recyclerView.findChildViewUnder(x, y);
     if (view instanceof PageBlockWrapView) {
@@ -131,8 +127,9 @@ public class InstantViewController extends ViewController<InstantViewController.
           return child == null || y < child.getTop() || y >= child.getBottom() || wrapView.getViewPagerPosition() == 0f;
         }
         case PageBlockWrapView.MODE_TABLE: {
-          View child = ((ViewGroup) wrapView.getChildAt(0)).getChildAt(0);
-          return child == null || y < child.getTop() || y >= child.getBottom() || child.getLeft() >= 0;
+          ViewGroup vg = (ViewGroup) wrapView.getChildAt(0);
+          View child = vg.getChildAt(0);
+          return child == null || y < child.getTop() || y >= child.getBottom() || vg.getScrollX() == 0;
         }
       }
       return false;
@@ -142,25 +139,22 @@ public class InstantViewController extends ViewController<InstantViewController.
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_forward: {
-        String link = getArgumentsStrict().webPage.url;
-        ShareController c = new ShareController(context, tdlib);
-        ShareController.Args args = new ShareController.Args(link);
-        args.setCustomCopyLinkAction(R.string.OpenInExternalApp, () -> UI.openUrl(getArgumentsStrict().webPage.url));
-        if (Strings.isValidLink(link)) {
-          args.setExport(link);
-        }
-        c.setArguments(args);
-        c.show();
-        break;
+    if (id == R.id.menu_btn_forward) {
+      String link = getArgumentsStrict().linkPreview.url;
+      ShareController c = new ShareController(context, tdlib);
+      ShareController.Args args = new ShareController.Args(link);
+      args.setCustomCopyLinkAction(R.string.OpenInExternalApp, () -> UI.openUrl(getArgumentsStrict().linkPreview.url));
+      if (Strings.isValidLink(link)) {
+        args.setExport(link);
       }
+      c.setArguments(args);
+      c.show();
     }
   }
 
   @Override
   public CharSequence getName () {
-    return getArgumentsStrict().webPage.siteName;
+    return getArgumentsStrict().linkPreview.siteName;
   }
 
   @Override
@@ -242,7 +236,7 @@ public class InstantViewController extends ViewController<InstantViewController.
     if (openParameters.tooltip != null) {
       TdApi.RichText referenceText = Td.findReference(getArgumentsStrict().instantView, referenceAnchorName);
       if (referenceText != null) {
-        TextWrapper textWrapper = TextWrapper.parseRichText(this, this, referenceText, Paints.robotoStyleProvider(13f), openParameters.tooltip.colorProvider(), openParameters);
+        TextWrapper textWrapper = TextWrapper.parseRichText(this, this, referenceText, Paints.robotoStyleProvider(13f), openParameters.tooltip.colorProvider(), openParameters, null);
         openParameters.tooltip.anchor(view, ((PageBlockView) view).getBlock().getViewProvider()).controller(this).show(textWrapper);
         return true;
       }
@@ -313,7 +307,7 @@ public class InstantViewController extends ViewController<InstantViewController.
 
   // private static final float PADDING_FACTOR = .25f;
 
-  public static int getColor (@ThemeColorId int color) {
+  public static int getColor (@ColorId int color) {
     return Theme.getColor(color); // TODO separate themes for instant view
   }
 
@@ -322,17 +316,17 @@ public class InstantViewController extends ViewController<InstantViewController.
 
   @Override
   protected int getHeaderColorId () {
-    return R.id.theme_color_ivHeader;
+    return ColorId.ivHeader;
   }
 
   @Override
   protected int getHeaderIconColorId () {
-    return R.id.theme_color_ivHeaderIcon;
+    return ColorId.ivHeaderIcon;
   }
 
   @Override
   protected int getHeaderTextColorId () {
-    return R.id.theme_color_ivHeaderIcon;
+    return ColorId.ivHeaderIcon;
   }
 
   @Override
@@ -353,9 +347,16 @@ public class InstantViewController extends ViewController<InstantViewController.
 
   @Override
   protected View onCreateView (Context context) {
+    ArrayList<PageBlock> pageBlocks;
+    try {
+      pageBlocks = parsePageBlocks(getArgumentsStrict().instantView);
+    } catch (PageBlock.UnsupportedPageBlockException e) {
+      throw new UnsupportedOperationException();
+    }
+
     FrameLayout contentView = new FrameLayout(context);
     contentView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-    ViewSupport.setThemedBackground(contentView, R.id.theme_color_background, this);
+    ViewSupport.setThemedBackground(contentView, ColorId.background, this);
 
     recyclerView = (RecyclerView) Views.inflate(context(), R.layout.recycler, contentView);
     recyclerView.setHasFixedSize(true);
@@ -369,12 +370,12 @@ public class InstantViewController extends ViewController<InstantViewController.
       @Override
       protected int getFillingColor (int i, @NonNull View view) {
         PageBlock pageBlock = getPageBlock(view);
-        int colorId = pageBlock != null ? pageBlock.getBackgroundColorId() : ThemeColorId.NONE;
-        if (colorId == ThemeColorId.NONE) {
+        int colorId = pageBlock != null ? pageBlock.getBackgroundColorId() : ColorId.NONE;
+        if (colorId == ColorId.NONE) {
           return 0;
         }
-        if (colorId != R.id.theme_color_filling) {
-          return ColorUtils.compositeColor(Theme.getColor(R.id.theme_color_filling), ColorUtils.alphaColor(view.getAlpha(), Theme.getColor(colorId)));
+        if (colorId != ColorId.filling) {
+          return ColorUtils.compositeColor(Theme.getColor(ColorId.filling), ColorUtils.alphaColor(view.getAlpha(), Theme.getColor(colorId)));
         }
         return Theme.getColor(colorId);
       }
@@ -422,7 +423,7 @@ public class InstantViewController extends ViewController<InstantViewController.
     });
 
     adapter = new SettingsAdapter(this);
-    buildCells(false);
+    buildCells(pageBlocks, false);
 
     recyclerView.setAdapter(adapter);
 
@@ -433,16 +434,8 @@ public class InstantViewController extends ViewController<InstantViewController.
   }
 
   @Override
-  public void onEmojiPartLoaded () {
-    if (recyclerView != null && recyclerView.getLayoutManager() != null) {
-      final int count = recyclerView.getChildCount();
-      for (int i = 0; i < count; i++) {
-        View view = recyclerView.getChildAt(i);
-        if (view != null) {
-          view.invalidate();
-        }
-      }
-    }
+  public void onEmojiUpdated (boolean isPackSwitch) {
+    Views.invalidateChildren(recyclerView);
   }
 
   @Override
@@ -465,7 +458,11 @@ public class InstantViewController extends ViewController<InstantViewController.
     }
   }
 
-  private void buildCells (boolean isReplace) {
+  private ArrayList<PageBlock> parsePageBlocks (TdApi.WebPageInstantView instantView) throws PageBlock.UnsupportedPageBlockException {
+    return PageBlock.parse(this, getUrl(), instantView, null, this, null);
+  }
+
+  private void buildCells (ArrayList<PageBlock> blocks, boolean isReplace) {
     Args args = getArgumentsStrict();
     final TdApi.WebPageInstantView instantView = args.instantView;
 
@@ -474,15 +471,16 @@ public class InstantViewController extends ViewController<InstantViewController.
       return;
     }
 
-    final ArrayList<PageBlock> blocks = PageBlock.parse(this, getUrl(), instantView, null, this, null);
     ArrayList<ListItem> items = new ArrayList<>(blocks.size());
-    this.mediaBlocks = new ArrayList<>();
+    ArrayList<PageBlockMedia> mediaBlocks = new ArrayList<>();
     for (PageBlock block : blocks) {
       if (block instanceof PageBlockMedia && ((PageBlockMedia) block).bindToList(this, getDisplayUrl(), mediaBlocks)) {
         mediaBlocks.add((PageBlockMedia) block);
       }
       items.add(new ListItem(block.getRelatedViewType()).setData(block));
     }
+
+    this.mediaBlocks = mediaBlocks;
     // recyclerView.setItemAnimator(null);
     adapter.setItems(items, false);
     recyclerView.invalidateItemDecorations();
@@ -492,45 +490,36 @@ public class InstantViewController extends ViewController<InstantViewController.
     // recyclerView.setItemAnimator(new CustomItemAnimator(Anim.DECELERATE_INTERPOLATOR, 180l));
 
     if (!isReplace) {
-      tdlib.client().send(new TdApi.GetWebPageInstantView(getUrl(), true), this);
-    }
-  }
-
-  public String getUrl () {
-    return getArgumentsStrict().webPage.url;
-  }
-
-  public String getDisplayUrl () {
-    return getArgumentsStrict().webPage.displayUrl;
-  }
-
-  @Override
-  public void onResult (TdApi.Object object) {
-    switch (object.getConstructor()) {
-      case TdApi.WebPageInstantView.CONSTRUCTOR: {
-        final TdApi.WebPageInstantView instantView = (TdApi.WebPageInstantView) object;
-        tdlib.ui().post(() -> {
-          if (!isDestroyed()) {
+      tdlib.send(new TdApi.GetWebPageInstantView(getUrl(), false), (webPageInstantView, error) -> {
+        if (error != null) {
+          UI.showError(error);
+        } else {
+          runOnUiThreadOptional(() -> {
             if (!TD.hasInstantView(instantView.version)) {
               UI.showToast(R.string.InstantViewUnsupported, Toast.LENGTH_SHORT);
               UI.openUrl(getUrl());
             } else {
+              ArrayList<PageBlock> pageBlocks;
+              try {
+                pageBlocks = parsePageBlocks(instantView);
+              } catch (PageBlock.UnsupportedPageBlockException ignored) {
+                return;
+              }
               getArgumentsStrict().instantView = instantView;
-              buildCells(true);
+              buildCells(pageBlocks, true);
             }
-          }
-        });
-        break;
-      }
-      case TdApi.Error.CONSTRUCTOR: {
-        UI.showError(object);
-        break;
-      }
-      default: {
-        Log.unexpectedTdlibResponse(object, TdApi.GetWebPageInstantView.class, TdApi.WebPageInstantView.class);
-        break;
-      }
+          });
+        }
+      });
     }
+  }
+
+  public String getUrl () {
+    return getArgumentsStrict().linkPreview.url;
+  }
+
+  public String getDisplayUrl () {
+    return getArgumentsStrict().linkPreview.displayUrl;
   }
 
   @Nullable
@@ -539,6 +528,7 @@ public class InstantViewController extends ViewController<InstantViewController.
     ArrayList<TdApi.Message> out = new ArrayList<>();
     int foundIndex = -1;
     int desiredType;
+    //noinspection SwitchIntDef
     switch (fromMessage.content.getConstructor()) {
       case TdApi.MessageAudio.CONSTRUCTOR:
         desiredType = InlineResult.TYPE_AUDIO;
@@ -582,7 +572,7 @@ public class InstantViewController extends ViewController<InstantViewController.
     if (context.navigation().isEmpty()) {
       destroy();
     } else {
-      get();
+      getValue();
       context.navigation().navigateTo(this);
     }
   }

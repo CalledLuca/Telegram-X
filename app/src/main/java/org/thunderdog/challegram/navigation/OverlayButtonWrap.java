@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,12 +33,12 @@ import android.widget.TextView;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
+import androidx.core.content.res.ResourcesCompat;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.support.RippleSupport;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Anim;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Screen;
@@ -84,6 +84,11 @@ public class OverlayButtonWrap extends FrameLayoutFix implements View.OnClickLis
     addMainButton(parent, ids[0], resources[0], backgrounds[0], colors[0], overlayColorId, overlayIconColorId);
   }
 
+  @IdRes
+  public int getMainButtonId () {
+    return mainButton != null ? mainButton.getId() : ResourcesCompat.ID_NULL;
+  }
+
   public void replaceMainButton (@IdRes int id, @DrawableRes int icon) {
     mainButton.setId(id);
     mainButton.replaceIcon(icon);
@@ -91,7 +96,7 @@ public class OverlayButtonWrap extends FrameLayoutFix implements View.OnClickLis
 
   // Views
 
-  private void addMainButton (@NonNull ViewController<?> parent, int id, int resource, @ThemeColorId int circleColorId, @ThemeColorId int iconColorId, @ThemeColorId int overlayColorId, @ThemeColorId int overlayIconColorId) {
+  private void addMainButton (@NonNull ViewController<?> parent, int id, int resource, @ColorId int circleColorId, @ColorId int iconColorId, @ColorId int overlayColorId, @ColorId int overlayIconColorId) {
     FrameLayoutFix.LayoutParams params;
 
     int padding = Screen.dp(4f);
@@ -155,7 +160,7 @@ public class OverlayButtonWrap extends FrameLayoutFix implements View.OnClickLis
     };
     text.setTextColor(Theme.textDecentColor());
     parent.addThemeTextDecentColorListener(text);
-    RippleSupport.setRectBackground(text, 3f, 4f, R.id.theme_color_filling);
+    RippleSupport.setRectBackground(text, 3f, 4f, ColorId.filling);
     parent.addThemeInvalidateListener(text);
     text.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f);
     text.setTypeface(Fonts.getRobotoBold());
@@ -185,7 +190,7 @@ public class OverlayButtonWrap extends FrameLayoutFix implements View.OnClickLis
       AvatarView avatarView = new AvatarView(getContext());
       avatarView.setUser(user);
       avatarView.setPadding(padding, padding, padding, padding);
-      RippleSupport.setCircleBackground(avatarView, 40f, 4f, R.id.theme_color_filling);
+      RippleSupport.setCircleBackground(avatarView, 40f, 4f, ColorId.filling);
       button = avatarView;
     }*/
 
@@ -316,7 +321,8 @@ public class OverlayButtonWrap extends FrameLayoutFix implements View.OnClickLis
         mainButton.setScaleY(scale);
         mainButton.setAlpha(1f - factor);
       } else {
-        mainButton.setTranslationY((float) (Screen.dp(16f) * 2 + mainButton.getMeasuredHeight()) * factor);
+        mainButton.setTranslationY((float) (Screen.dp(16f) * 2 + mainButton.getMeasuredHeight() + getPaddingBottom()) * factor);
+        mainButton.setAlpha(factor < 1f ? 1f : 0f);
       }
     }
   }

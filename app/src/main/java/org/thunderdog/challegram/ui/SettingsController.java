@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,6 @@
  */
 package org.thunderdog.challegram.ui;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -23,25 +22,29 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 
+import androidx.annotation.DrawableRes;
+import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.collection.SparseArrayCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BuildConfig;
-import org.thunderdog.challegram.Log;
+import org.thunderdog.challegram.N;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
+import org.thunderdog.challegram.component.attach.AvatarPickerManager;
 import org.thunderdog.challegram.component.attach.MediaLayout;
 import org.thunderdog.challegram.component.base.SettingView;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.data.TGStickerSetInfo;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
-import org.thunderdog.challegram.mediaview.MediaViewController;
 import org.thunderdog.challegram.navigation.ActivityResultHandler;
 import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ComplexHeaderView;
@@ -62,7 +65,9 @@ import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibCache;
 import org.thunderdog.challegram.telegram.TdlibManager;
 import org.thunderdog.challegram.telegram.TdlibNotificationManager;
+import org.thunderdog.challegram.telegram.TdlibOptionListener;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
@@ -70,6 +75,7 @@ import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.unsorted.Size;
 import org.thunderdog.challegram.util.AppBuildInfo;
+import org.thunderdog.challegram.util.AppUpdater;
 import org.thunderdog.challegram.util.OptionDelegate;
 import org.thunderdog.challegram.util.PullRequest;
 import org.thunderdog.challegram.util.StringList;
@@ -77,29 +83,38 @@ import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.util.text.TextWrapper;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import me.vkryl.android.AppInstallationUtil;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
 import me.vkryl.core.lambda.CancellableRunnable;
-import me.vkryl.td.Td;
+import me.vkryl.core.reference.ReferenceList;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class SettingsController extends ViewController<Void> implements
   View.OnClickListener, ComplexHeaderView.Callback,
   Menu, MoreDelegate, OptionDelegate,
   TdlibCache.MyUserDataChangeListener, ConnectionListener, StickersListener, MediaLayout.MediaGalleryCallback,
-  ActivityResultHandler, Client.ResultHandler, View.OnLongClickListener, SessionListener, GlobalTokenStateListener {
+  ActivityResultHandler, View.OnLongClickListener, SessionListener, GlobalTokenStateListener, TdlibCache.UserDataChangeListener,
+  TdlibOptionListener {
+
+  private final AvatarPickerManager avatarPickerManager;
   private ComplexHeaderView headerCell;
   private ComplexRecyclerView contentView;
   private SettingsAdapter adapter;
 
   public SettingsController (Context context, Tdlib tdlib) {
     super(context, tdlib);
+    avatarPickerManager = new AvatarPickerManager(this);
   }
 
   @Override
@@ -118,7 +133,8 @@ public class SettingsController extends ViewController<Void> implements
   public void onFocus () {
     super.onFocus();
     contentView.setFactorLocked(false);
-    preloadStickers();
+    stickerSetsPreloader.preloadStickers();
+    emojiPacksPreloader.preloadStickers();
     if (!oneShot) {
       oneShot = true;
       tdlib.listeners().subscribeToStickerUpdates(this);
@@ -143,7 +159,7 @@ public class SettingsController extends ViewController<Void> implements
 
   @Override
   protected int getHeaderIconColorId () {
-    return headerCell != null && !headerCell.isCollapsed() ? R.id.theme_color_white : R.id.theme_color_headerIcon;
+    return headerCell != null && !headerCell.isCollapsed() ? ColorId.white : ColorId.headerIcon;
   }
 
   @Override
@@ -168,21 +184,15 @@ public class SettingsController extends ViewController<Void> implements
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_more_settings: {
-        header.addMoreButton(menu, this);
-        break;
-      }
+    if (id == R.id.menu_more_settings) {
+      header.addMoreButton(menu, this);
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_more: {
-        showMore(new int[] {R.id.more_btn_logout}, new String[] { Lang.getString(R.string.LogOut) }, 0);
-        break;
-      }
+    if (id == R.id.menu_btn_more) {
+      showMore(new int[] {R.id.more_btn_logout}, new String[] {Lang.getString(R.string.LogOut)}, 0);
     }
   }
 
@@ -194,7 +204,7 @@ public class SettingsController extends ViewController<Void> implements
   @Override
   protected void onFloatingButtonPressed () {
     EditNameController editNameController = new EditNameController(context, tdlib);
-    editNameController.setMode(EditNameController.MODE_RENAME_SELF);
+    editNameController.setMode(EditNameController.Mode.RENAME_SELF);
     navigateTo(editNameController);
   }
 
@@ -223,15 +233,10 @@ public class SettingsController extends ViewController<Void> implements
 
   @Override
   public void onMoreItemPressed (int id) {
-    switch (id) {
-      case R.id.menu_btn_more: {
-        tdlib.ui().logOut(this, true);
-        break;
-      }
-      default: {
-        tdlib.ui().handleProfileMore(this, id, tdlib.myUser(), null);
-        break;
-      }
+    if (id == R.id.menu_btn_more) {
+      tdlib.ui().logOut(this, true);
+    } else {
+      tdlib.ui().handleProfileMore(this, id, tdlib.myUser(), null);
     }
   }
 
@@ -253,65 +258,12 @@ public class SettingsController extends ViewController<Void> implements
   }
 
   private void changeProfilePhoto () {
-    IntList ids = new IntList(4);
-    StringList strings = new StringList(4);
-    IntList colors = new IntList(4);
-    IntList icons = new IntList(4);
-
-    final TdApi.User user = tdlib.myUser();
-    if (user != null && user.profilePhoto != null) {
-      ids.append(R.id.btn_open);
-      strings.append(R.string.Open);
-      icons.append(R.drawable.baseline_visibility_24);
-      colors.append(OPTION_COLOR_NORMAL);
-    }
-
-    ids.append(R.id.btn_changePhotoCamera);
-    strings.append(R.string.ChatCamera);
-    icons.append(R.drawable.baseline_camera_alt_24);
-    colors.append(OPTION_COLOR_NORMAL);
-
-    ids.append(R.id.btn_changePhotoGallery);
-    strings.append(R.string.Gallery);
-    icons.append(R.drawable.baseline_image_24);
-    colors.append(OPTION_COLOR_NORMAL);
-
-    final long profilePhotoToDelete = user != null && user.profilePhoto != null ? user.profilePhoto.id : 0;
-    if (user != null && user.profilePhoto != null) {
-      ids.append(R.id.btn_changePhotoDelete);
-      strings.append(R.string.Delete);
-      icons.append(R.drawable.baseline_delete_24);
-      colors.append(OPTION_COLOR_RED);
-    }
-
-    showOptions(null, ids.get(), strings.get(), colors.get(), icons.get(), (itemView, id) -> {
-      switch (id) {
-        case R.id.btn_open: {
-          MediaViewController.openFromProfile(SettingsController.this, user, headerCell);
-          break;
-        }
-        case R.id.btn_changePhotoCamera: {
-          UI.openCameraDelayed(context);
-          break;
-        }
-        case R.id.btn_changePhotoGallery: {
-          UI.openGalleryDelayed(false);
-          break;
-        }
-        case R.id.btn_changePhotoDelete: {
-          tdlib.client().send(new TdApi.DeleteProfilePhoto(profilePhotoToDelete), tdlib.okHandler());
-          break;
-        }
-      }
-      return true;
-    });
+    avatarPickerManager.showMenuForProfile(headerCell, false);
   }
 
   @Override
   public void onActivityResult (int requestCode, int resultCode, Intent data) {
-    if (resultCode == Activity.RESULT_OK) {
-      tdlib.ui().handlePhotoChange(requestCode, data, null);
-    }
+    avatarPickerManager.handleActivityResult(requestCode, resultCode, data, AvatarPickerManager.MODE_PROFILE, null, null);
   }
 
   private boolean hasNotificationError;
@@ -324,6 +276,8 @@ public class SettingsController extends ViewController<Void> implements
     switch (status) {
       case TdlibNotificationManager.Status.BLOCKED_ALL:
         return R.string.NotificationsErrorBlocked;
+      case TdlibNotificationManager.Status.MISSING_PERMISSION:
+        return R.string.NotificationsErrorPermission;
       case TdlibNotificationManager.Status.BLOCKED_CATEGORY:
         return R.string.NotificationsErrorBlockedCategory;
       case TdlibNotificationManager.Status.DISABLED_SYNC:
@@ -428,7 +382,7 @@ public class SettingsController extends ViewController<Void> implements
     for (int i = 0; i < menu.getChildCount(); i++ ){
       View v = menu.getChildAt(i);
       if (v instanceof HeaderButton) {
-        ((HeaderButton) v).setThemeColorId(R.id.theme_color_headerIcon, R.id.theme_color_white, headerCell != null ? headerCell.getAvatarExpandFactor() : 0f);
+        ((HeaderButton) v).setThemeColorId(ColorId.headerIcon, ColorId.white, headerCell != null ? headerCell.getAvatarExpandFactor() : 0f);
       }
     }
   }
@@ -443,6 +397,30 @@ public class SettingsController extends ViewController<Void> implements
     this.headerCell.initWithController(this, true);
     this.headerCell.setInnerMargins(Screen.dp(56f), Screen.dp(49f));
     this.headerCell.setPhotoOpenCallback(this);
+    this.headerCell.setOnEmojiStatusClickListener(v -> {
+      EmojiStatusSelectorEmojiPage.Wrapper c = new EmojiStatusSelectorEmojiPage.Wrapper(context, tdlib, SettingsController.this, new EmojiStatusSelectorEmojiPage.AnimationsEmojiStatusSetDelegate() {
+        @Override
+        public void onAnimationStart () {
+          headerCell.setIgnoreDrawEmojiStatus(true);
+        }
+
+        @Override
+        public void onAnimationEnd () {
+          headerCell.setIgnoreDrawEmojiStatus(false);
+        }
+
+        @Override
+        public int getDestX () {
+          return headerCell.getEmojiStatusLastDrawX() + Screen.dp(12);
+        }
+
+        @Override
+        public int getDestY () {
+          return headerCell.getEmojiStatusLastDrawY() + Screen.dp(12);
+        }
+      });
+      c.show();
+    });
     updateHeader();
 
     initMyUser();
@@ -451,149 +429,150 @@ public class SettingsController extends ViewController<Void> implements
     this.contentView.setHasFixedSize(true);
     this.contentView.setHeaderView(headerCell, this);
     this.contentView.setItemAnimator(null);
-    ViewSupport.setThemedBackground(contentView, R.id.theme_color_background, this);
+    ViewSupport.setThemedBackground(contentView, ColorId.background, this);
     this.contentView.setLayoutManager(new LinearLayoutManager(context, RecyclerView.VERTICAL, false));
     this.contentView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     this.adapter = new SettingsAdapter(this) {
       @Override
       public void setValuedSetting (ListItem item, SettingView view, boolean isUpdate) {
         boolean hasError = false;
-        switch (item.getId()) {
-          case R.id.btn_notificationSettings:
-            checkErrors(false);
-            hasError = hasNotificationError;
-            break;
-          case R.id.btn_devices:
-            hasError = sessions != null && sessions.incompleteLoginAttempts.length > 0;
-            break;
+        final int itemId = item.getId();
+        if (itemId == R.id.btn_notificationSettings) {
+          checkErrors(false);
+          hasError = hasNotificationError;
+        } else if (itemId == R.id.btn_devices) {
+          hasError = sessions != null && sessions.incompleteLoginAttempts.length > 0;
         }
         view.setUnreadCounter(hasError ? Tdlib.CHAT_FAILED : 0, false, isUpdate);
-        switch (item.getId()) {
-          case R.id.btn_sourceCode: {
-            PullRequest specificPullRequest = (PullRequest) item.getData();
-            CharSequence buildInfoShort;
-            if (specificPullRequest != null) {
-              buildInfoShort = Lang.getString(R.string.CommitInfo,
-                (target, argStart, argEnd, argIndex, needFakeBold) -> argIndex == 0 ? Lang.newCodeSpan(needFakeBold) : null,
-                specificPullRequest.getCommit(),
-                Lang.getUTCTimestamp(specificPullRequest.getCommitDate(), TimeUnit.SECONDS)
-              );
-            } else {
-              buildInfoShort = Lang.getString(R.string.CommitInfo,
-                (target, argStart, argEnd, argIndex, needFakeBold) -> argIndex == 0 ? Lang.newCodeSpan(needFakeBold) : null,
-                BuildConfig.COMMIT,
-                Lang.getUTCTimestamp(BuildConfig.COMMIT_DATE, TimeUnit.SECONDS)
-              );
-              if (BuildConfig.PULL_REQUEST_ID.length > 0) {
-                SpannableStringBuilder b = new SpannableStringBuilder(buildInfoShort).append(" + ");
-                if (BuildConfig.PULL_REQUEST_ID.length > 1) {
-                  b.append(Lang.plural(R.string.xPRs, BuildConfig.PULL_REQUEST_ID.length));
-                } else {
-                  b.append(Lang.getString(R.string.PR, BuildConfig.PULL_REQUEST_ID[0]));
-                }
-                buildInfoShort = b;
-              }
-            }
-            view.setData(buildInfoShort);
-            break;
-          }
-          case R.id.btn_tdlib: {
-            view.setData(TdlibUi.getTdlibVersionSignature());
-            break;
-          }
-          case R.id.btn_sourceCodeChanges: {
-            String previousVersionName = previousBuildInfo.getVersionName();
-            int index = previousVersionName.indexOf('-');
-            if (index != -1) {
-              previousVersionName = previousVersionName.substring(0, index);
-            }
-            int dotCount = 0;
-            for (int i = 0; i < previousVersionName.length(); i++) {
-              if (previousVersionName.charAt(i) == '.') {
-                dotCount++;
-              }
-            }
-            if (dotCount == 2) { // Missing build no: 0.24.9
-              previousVersionName = previousVersionName + "." + previousBuildInfo.getVersionCode();
-            }
-            view.setData(Lang.getString(R.string.ViewSourceCodeChangesSince, Lang.codeCreator(), previousVersionName, previousBuildInfo.getCommit()));
-            break;
-          }
-          case R.id.btn_copyDebug: {
-            view.setData(R.string.CopyReportDataInfo);
-            break;
-          }
-          case R.id.btn_devices: {
-            if (sessions == null) {
-              view.setData(R.string.LoadingInformation);
-            } else if (sessions.incompleteLoginAttempts.length > 0) {
-              view.setData(Lang.pluralBold(R.string.XSignInAttempts, sessions.incompleteLoginAttempts.length));
-            } else if (sessions.otherActiveSessions.length == 0) {
-              view.setData(R.string.SignedInNoOtherSessions);
-            } else if (sessions.otherActiveSessions.length == 1) {
-              TdApi.Session otherSession = sessions.otherActiveSessions[0];
-              if (sessions.otherDevicesCount == 1 && !StringUtils.isEmpty(otherSession.deviceModel)) {
-                view.setData(Lang.getStringBold(R.string.SignedInOtherDevice, otherSession.deviceModel));
+        if (itemId == R.id.btn_sourceCode) {
+          PullRequest specificPullRequest = (PullRequest) item.getData();
+          CharSequence buildInfoShort;
+          if (specificPullRequest != null) {
+            buildInfoShort = Lang.getString(R.string.CommitInfo,
+              (target, argStart, argEnd, argIndex, needFakeBold) -> argIndex == 0 ? Lang.newCodeSpan(needFakeBold) : null,
+              specificPullRequest.getCommit(),
+              Lang.getUTCTimestamp(specificPullRequest.getCommitDate(), TimeUnit.SECONDS)
+            );
+          } else {
+            buildInfoShort = Lang.getString(R.string.CommitInfo,
+              (target, argStart, argEnd, argIndex, needFakeBold) -> argIndex == 0 ? Lang.newCodeSpan(needFakeBold) : null,
+              BuildConfig.COMMIT,
+              Lang.getUTCTimestamp(BuildConfig.COMMIT_DATE, TimeUnit.SECONDS)
+            );
+            if (BuildConfig.PULL_REQUEST_ID.length > 0) {
+              SpannableStringBuilder b = new SpannableStringBuilder(buildInfoShort).append(" + ");
+              if (BuildConfig.PULL_REQUEST_ID.length > 1) {
+                b.append(Lang.plural(R.string.xPRs, BuildConfig.PULL_REQUEST_ID.length));
               } else {
-                view.setData(Lang.getStringBold(R.string.SignedInOtherSession, otherSession.applicationName));
+                b.append(Lang.getString(R.string.PR, BuildConfig.PULL_REQUEST_ID[0]));
               }
-            } else if (sessions.otherDevicesCount == 0) {
-              view.setData(Lang.pluralBold(R.string.SignedInXOtherApps, sessions.otherActiveSessions.length));
-            } else if (sessions.sessionCountOnCurrentDevice == 1) { // All sessions on other devices
-              if (sessions.otherActiveSessions.length == sessions.otherDevicesCount) {
-                view.setData(Lang.pluralBold(R.string.SignedInXOtherDevices, sessions.otherDevicesCount));
-              } else {
-                view.setData(Lang.getCharSequence(R.string.format_signedInAppsOnDevices, Lang.pluralBold(R.string.part_SignedInXApps, sessions.otherActiveSessions.length), Lang.pluralBold(R.string.part_SignedInXOtherDevices, sessions.otherDevicesCount)));
-              }
+              buildInfoShort = b;
+            }
+          }
+          view.setData(buildInfoShort);
+        } else if (itemId == R.id.btn_tdlib) {
+          view.setData(TdlibUi.getTdlibVersionSignature());
+        } else if (itemId == R.id.btn_sourceCodeChanges) {
+          String previousVersionName = previousBuildInfo.getVersionName();
+          int index = previousVersionName.indexOf('-');
+          if (index != -1) {
+            previousVersionName = previousVersionName.substring(0, index);
+          }
+          int dotCount = 0;
+          for (int i = 0; i < previousVersionName.length(); i++) {
+            if (previousVersionName.charAt(i) == '.') {
+              dotCount++;
+            }
+          }
+          if (dotCount == 2) { // Missing build no: 0.24.9
+            previousVersionName = previousVersionName + "." + previousBuildInfo.getVersionCode();
+          }
+          view.setData(Lang.getString(R.string.ViewSourceCodeChangesSince, Lang.codeCreator(), previousVersionName, previousBuildInfo.getCommit()));
+        } else if (itemId == R.id.btn_copyDebug) {
+          view.setData(R.string.CopyReportDataInfo);
+        } else if (itemId == R.id.btn_devices) {
+          if (sessions == null) {
+            view.setData(R.string.LoadingInformation);
+          } else if (sessions.incompleteLoginAttempts.length > 0) {
+            view.setData(Lang.pluralBold(R.string.XSignInAttempts, sessions.incompleteLoginAttempts.length));
+          } else if (sessions.otherActiveSessions.length == 0) {
+            view.setData(R.string.SignedInNoOtherSessions);
+          } else if (sessions.otherActiveSessions.length == 1) {
+            TdApi.Session otherSession = sessions.otherActiveSessions[0];
+            if (sessions.otherDevicesCount == 1 && !StringUtils.isEmpty(otherSession.deviceModel)) {
+              view.setData(Lang.getStringBold(R.string.SignedInOtherDevice, otherSession.deviceModel));
             } else {
-              view.setData(Lang.getCharSequence(R.string.format_signedInAppsOnDevices, Lang.pluralBold(R.string.part_SignedInXOtherApps, sessions.otherActiveSessions.length), Lang.pluralBold(R.string.part_SignedInXDevices, sessions.otherDevicesCount + 1)));
+              view.setData(Lang.getStringBold(R.string.SignedInOtherSession, otherSession.applicationName));
             }
-            break;
-          }
-          case R.id.btn_notificationSettings: {
-            if (notificationErrorDescriptionRes != 0) {
-              if (notificationErrorDescriptionRes == R.string.NotificationsErrorErrorChat) {
-                view.setData(Lang.getStringBold(notificationErrorDescriptionRes, tdlib.chatTitle(problematicChatId)));
-              } else {
-                view.setData(notificationErrorDescriptionRes);
-              }
-            }
-            break;
-          }
-          case R.id.btn_changePhoneNumber: {
-            view.setText(obtainWrapper(Lang.getStringBold(R.string.ReminderCheckPhoneNumberText, originalPhoneNumber != null ? myPhone : Strings.ELLIPSIS), ID_RATIONALE_PHONE_NUMBER));
-            break;
-          }
-          case R.id.btn_2fa: {
-            view.setText(obtainWrapper(Lang.getString(R.string.ReminderCheckTfaPasswordText), ID_RATIONALE_PASSWORD));
-            break;
-          }
-          case R.id.btn_username: {
-            if (myUsername == null) {
-              view.setData(R.string.LoadingUsername);
-            } else if (myUsername.isEmpty()) {
-              view.setData(R.string.SetUpUsername);
+          } else if (sessions.otherDevicesCount == 0) {
+            view.setData(Lang.pluralBold(R.string.SignedInXOtherApps, sessions.otherActiveSessions.length));
+          } else if (sessions.sessionCountOnCurrentDevice == 1) { // All sessions on other devices
+            if (sessions.otherActiveSessions.length == sessions.otherDevicesCount) {
+              view.setData(Lang.pluralBold(R.string.SignedInXOtherDevices, sessions.otherDevicesCount));
             } else {
-              view.setData("@" + myUsername);
+              view.setData(Lang.getCharSequence(R.string.format_signedInAppsOnDevices, Lang.pluralBold(R.string.part_SignedInXApps, sessions.otherActiveSessions.length), Lang.pluralBold(R.string.part_SignedInXOtherDevices, sessions.otherDevicesCount)));
             }
-            break;
+          } else {
+            view.setData(Lang.getCharSequence(R.string.format_signedInAppsOnDevices, Lang.pluralBold(R.string.part_SignedInXOtherApps, sessions.otherActiveSessions.length), Lang.pluralBold(R.string.part_SignedInXDevices, sessions.otherDevicesCount + 1)));
           }
-          case R.id.btn_phone: {
-            view.setData(myPhone);
-            break;
+        } else if (itemId == R.id.btn_notificationSettings) {
+          if (notificationErrorDescriptionRes != 0) {
+            if (notificationErrorDescriptionRes == R.string.NotificationsErrorErrorChat) {
+              view.setData(Lang.getStringBold(notificationErrorDescriptionRes, tdlib.chatTitle(problematicChatId)));
+            } else {
+              view.setData(notificationErrorDescriptionRes);
+            }
           }
-          case R.id.btn_bio: {
-            TdApi.FormattedText text;
-            if (about == null) {
-              text = TD.toFormattedText(Lang.getString(R.string.LoadingInformation), false);
-            } else if (Td.isEmpty(about)) {
+        } else if (itemId == R.id.btn_suggestion) {
+          TdApi.SuggestedAction action = (TdApi.SuggestedAction) item.getData();
+          switch (action.getConstructor()) {
+            case TdApi.SuggestedActionCheckPhoneNumber.CONSTRUCTOR:
+              view.setText(obtainWrapper(Lang.getStringBold(R.string.ReminderCheckPhoneNumberText, originalPhoneNumber != null ? myPhone : Strings.ELLIPSIS), action.getConstructor()));
+              break;
+            case TdApi.SuggestedActionCheckPassword.CONSTRUCTOR:
+              view.setText(obtainWrapper(Lang.getString(R.string.ReminderCheckTfaPasswordText), action.getConstructor()));
+              break;
+            case TdApi.SuggestedActionSetBirthdate.CONSTRUCTOR:
+              view.setText(obtainWrapper(Lang.getString(R.string.ReminderSetBirthdateText), action.getConstructor()));
+              break;
+            default:
+              Td.assertSuggestedAction_c92fb71c();
+              throw Td.unsupported(action);
+          }
+        } else if (itemId == R.id.btn_birthdate) {
+          if (userFull == null) {
+            view.setData(R.string.LoadingInformation);
+          } else if (userFull.birthdate == null) {
+            view.setData(R.string.SetBirthdate);
+          } else {
+            view.setData(Lang.getBirthdate(userFull.birthdate, true, true));
+          }
+        } else if (itemId == R.id.btn_username) {
+          if (myUsernames == null) {
+            view.setData(R.string.LoadingUsername);
+          } else if (StringUtils.isEmpty(myUsernames.editableUsername)) {
+            view.setData(R.string.SetUpUsername);
+          } else {
+            int collectibleCount = Td.secondaryUsernamesCount(myUsernames);
+            view.setData("@" + myUsernames.editableUsername + (collectibleCount != 0 ? " + " + Lang.pluralBold(R.string.xOtherUsernames, collectibleCount) : "")); // TODO multi-username support
+          }
+        } else if (itemId == R.id.btn_peer_id) {
+          view.setData(Strings.buildCounter(tdlib.myUserId(true)));
+        } else if (itemId == R.id.btn_phone) {
+          view.setData(myPhone);
+        } else if (itemId == R.id.btn_bio) {
+          TdApi.FormattedText text;
+          if (about == null) {
+            text = TD.toFormattedText(Lang.getString(R.string.LoadingInformation), false);
+          } else {
+            TdApi.FormattedText about = SettingsController.this.about;
+            if (Td.isEmpty(about)) {
               text = TD.toFormattedText(Lang.getString(R.string.BioNone), false);
             } else {
               text = about;
             }
-            view.setText(obtainWrapper(text, ID_BIO));
-            break;
           }
+          view.setText(obtainWrapper(text, TdApi.SetBio.CONSTRUCTOR));
         }
       }
     };
@@ -603,9 +582,17 @@ public class SettingsController extends ViewController<Void> implements
     ArrayUtils.ensureCapacity(items, 27);
 
     items.add(new ListItem(ListItem.TYPE_EMPTY_OFFSET));
+    if (Settings.instance().showPeerIds()) {
+      items.add(new ListItem(ListItem.TYPE_INFO_SETTING, R.id.btn_peer_id, R.drawable.baseline_identifier_24, R.string.UserId).setContentStrings(R.string.LoadingInformation, R.string.LoadingInformation));
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    }
     items.add(new ListItem(ListItem.TYPE_INFO_SETTING, R.id.btn_username, R.drawable.baseline_alternate_email_24, R.string.Username).setContentStrings(R.string.LoadingUsername, R.string.SetUpUsername));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
     items.add(new ListItem(ListItem.TYPE_INFO_SETTING, R.id.btn_phone, R.drawable.baseline_phone_24, R.string.Phone));
+    if (userFull != null && userFull.birthdate != null) {
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+      items.add(newBirthdateItem());
+    }
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
     items.add(new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_bio, R.drawable.baseline_info_24, R.string.UserBio).setContentStrings(R.string.LoadingInformation, R.string.BioNone));
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
@@ -617,16 +604,7 @@ public class SettingsController extends ViewController<Void> implements
         continue;
       }
       items.add(new ListItem(addedActionItems == 0 ? ListItem.TYPE_SHADOW_TOP : ListItem.TYPE_SEPARATOR));
-      switch (action.getConstructor()) {
-        case TdApi.SuggestedActionCheckPhoneNumber.CONSTRUCTOR: {
-          items.add(new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_changePhoneNumber, R.drawable.baseline_sim_card_alert_24, R.string.ReminderCheckPhoneNumber));
-          break;
-        }
-        case TdApi.SuggestedActionCheckPassword.CONSTRUCTOR: {
-          items.add(new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_2fa, R.drawable.baseline_gpp_maybe_24, R.string.ReminderCheckTfaPassword));
-          break;
-        }
-      }
+      items.add(newSuggestionItem(action));
       addedActionItems++;
     }
     if (addedActionItems > 0) {
@@ -645,12 +623,16 @@ public class SettingsController extends ViewController<Void> implements
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
     items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_privacySettings, R.drawable.baseline_lock_24, R.string.PrivacySettings));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_stickerSettingsAndEmoji, R.drawable.deproko_baseline_stickers_filled_24, R.string.StickersAndEmoji));
+    items.add(new ListItem(ListItem.TYPE_SEPARATOR));
     items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_themeSettings, R.drawable.baseline_palette_24, R.string.ThemeSettings));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
     items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_tweakSettings, R.drawable.baseline_extension_24, R.string.TweakSettings));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
-    items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_stickerSettings, R.drawable.deproko_baseline_stickers_filled_24, R.string.Stickers));
-    items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    if (Settings.instance().chatFoldersEnabled()) {
+      items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_chatFolders, R.drawable.baseline_folder_copy_24, R.string.ChatFolders));
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    }
     items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_languageSettings, R.drawable.baseline_language_24, R.string.Language));
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
 
@@ -663,18 +645,57 @@ public class SettingsController extends ViewController<Void> implements
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
 
     items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
-    items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_checkUpdates, R.drawable.baseline_google_play_24, U.isAppSideLoaded() ? R.string.AppOnGooglePlay : R.string.CheckForUpdates));
-    items.add(new ListItem(ListItem.TYPE_SEPARATOR));
-    if (!U.isAppSideLoaded()) {
-      items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_subscribeToBeta, R.drawable.templarian_baseline_flask_24, R.string.SubscribeToBeta));
-      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    AppInstallationUtil.DownloadUrl downloadUrl = AppUpdater.getDownloadUrl(null);
+    @DrawableRes int downloadIconRes;
+    @StringRes int downloadStringRes = R.string.CheckForUpdates;
+    if (tdlib.hasUrgentInAppUpdate() && tdlib.isProduction()) {
+      downloadIconRes = R.drawable.baseline_warning_24;
+      downloadUrl = new AppInstallationUtil.DownloadUrl(downloadUrl.installerId, tdlib.tMeUrl(BuildConfig.TELEGRAM_UPDATES_CHANNEL));
+    } else {
+      switch (downloadUrl.installerId) {
+        case AppInstallationUtil.InstallerId.UNKNOWN:
+        case AppInstallationUtil.InstallerId.MEMU_EMULATOR: {
+          if (!StringUtils.isEmpty(BuildConfig.GOOGLE_PLAY_URL)) {
+            downloadUrl = new AppInstallationUtil.DownloadUrl(AppInstallationUtil.InstallerId.GOOGLE_PLAY, BuildConfig.GOOGLE_PLAY_URL);
+            downloadIconRes = R.drawable.baseline_google_play_24;
+            downloadStringRes = R.string.AppOnGooglePlay;
+          } else {
+            downloadIconRes = R.drawable.baseline_update_24;
+          }
+          break;
+        }
+        case AppInstallationUtil.InstallerId.GOOGLE_PLAY: {
+          downloadIconRes = R.drawable.baseline_google_play_24;
+          break;
+        }
+        case AppInstallationUtil.InstallerId.GALAXY_STORE: {
+          downloadIconRes = R.drawable.baseline_galaxy_store_24;
+          break;
+        }
+        case AppInstallationUtil.InstallerId.HUAWEI_APPGALLERY: {
+          downloadIconRes = R.drawable.baseline_huawei_24;
+          break;
+        }
+        case AppInstallationUtil.InstallerId.AMAZON_APPSTORE: {
+          downloadIconRes = R.drawable.baseline_amazon_24;
+          break;
+        }
+        default:
+          throw new UnsupportedOperationException();
+      }
     }
-    items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCode, R.drawable.baseline_github_24, R.string.ViewSourceCode));
+    items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_checkUpdates, downloadIconRes, downloadStringRes)
+      .setData(downloadUrl));
+    if (downloadUrl.installerId == AppInstallationUtil.InstallerId.GOOGLE_PLAY) {
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+      items.add(new ListItem(ListItem.TYPE_SETTING, R.id.btn_subscribeToBeta, R.drawable.templarian_baseline_flask_24, R.string.SubscribeToBeta));
+    }
     items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+    items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCode, R.drawable.baseline_github_24, R.string.ViewSourceCode));
     this.previousBuildInfo = Settings.instance().getPreviousBuildInformation();
     if (this.previousBuildInfo != null) {
-      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCodeChanges, R.drawable.baseline_code_24, R.string.ViewSourceCodeChanges));
       items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCodeChanges, R.drawable.baseline_code_24, R.string.ViewSourceCodeChanges));
     }
     AppBuildInfo currentBuildInfo = Settings.instance().getCurrentBuildInformation();
     if (!currentBuildInfo.getPullRequests().isEmpty()) {
@@ -683,11 +704,14 @@ public class SettingsController extends ViewController<Void> implements
         if (!pullRequest.getCommitAuthor().isEmpty()) {
           title = Lang.getString(R.string.format_PRMadeBy, title, pullRequest.getCommitAuthor());
         }
-        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCode, R.drawable.templarian_baseline_source_merge_24, title, false).setData(pullRequest));
         items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_sourceCode, R.drawable.templarian_baseline_source_merge_24, title, false).setData(pullRequest));
       }
     }
-    items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_copyDebug, R.drawable.baseline_bug_report_24, R.string.CopyReportData));
+    if (Config.SHOW_COPY_REPORT_DETAILS_IN_SETTINGS) {
+      items.add(new ListItem(ListItem.TYPE_SEPARATOR));
+      items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_copyDebug, R.drawable.baseline_bug_report_24, R.string.CopyReportData));
+    }
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
 
     items.add(new ListItem(ListItem.TYPE_BUILD_NO, R.id.btn_build, 0, Lang.getAppBuildAndVersion(tdlib), false));
@@ -697,8 +721,10 @@ public class SettingsController extends ViewController<Void> implements
     this.contentView.setAdapter(adapter);
 
     tdlib.cache().addMyUserListener(this);
+    setMyUserId(tdlib.myUserId());
     tdlib.listeners().subscribeToConnectivityUpdates(this);
     tdlib.listeners().subscribeToSessionUpdates(this);
+    tdlib.listeners().addOptionsListener(this);
     TGLegacyManager.instance().addEmojiListener(adapter);
     TdlibManager.instance().global().addTokenStateListener(this);
 
@@ -741,10 +767,10 @@ public class SettingsController extends ViewController<Void> implements
 
   @Override
   public boolean onLongClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_build:
-        showBuildOptions(true);
-        return true;
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_build) {
+      showBuildOptions(true);
+      return true;
     }
     return false;
   }
@@ -781,9 +807,6 @@ public class SettingsController extends ViewController<Void> implements
     }
   }
 
-  private static final int ID_BIO = R.id.btn_bio;
-  private static final int ID_RATIONALE_PASSWORD = R.id.btn_2fa;
-  private static final int ID_RATIONALE_PHONE_NUMBER = R.id.btn_changePhoneNumber;
   private final SparseArrayCompat<TextWrapper> textWrappers = new SparseArrayCompat<>();
   private final SparseArrayCompat<TdApi.FormattedText> currentTexts = new SparseArrayCompat<>();
 
@@ -795,22 +818,70 @@ public class SettingsController extends ViewController<Void> implements
     TextWrapper textWrapper = textWrappers.get(id);
     if (textWrapper == null || !Td.equalsTo(currentTexts.get(id), text)) {
       currentTexts.put(id, text);
-      textWrapper = new TextWrapper(tdlib, text, TGMessage.simpleTextStyleProvider(), TextColorSets.Regular.NORMAL, null);
+      // TODO: custom emoji support
+      textWrapper = new TextWrapper(tdlib, text, TGMessage.simpleTextStyleProvider(), TextColorSets.Regular.NORMAL, null, null);
       textWrapper.addTextFlags(Text.FLAG_CUSTOM_LONG_PRESS | (Lang.rtl() ? Text.FLAG_ALIGN_RIGHT : 0));
       textWrappers.put(id, textWrapper);
     }
     return textWrapper;
   }
 
+  private @Nullable TdApi.UserFullInfo userFull;
+
   private void processUserFull (final TdApi.UserFullInfo userFull) {
     if (userFull == null) {
       return;
     }
-    tdlib.uiExecute(() -> {
-      if (!isDestroyed()) {
-        setBio(userFull.bio);
-      }
+    executeOnUiThreadOptional(() -> {
+      this.userFull = userFull;
+      checkBirthdate();
+      setBio(userFull.bio);
     });
+  }
+
+  private static ListItem newBirthdateItem () {
+    return new ListItem(ListItem.TYPE_INFO_SETTING, R.id.btn_birthdate, R.drawable.baseline_cake_variant_24, R.string.Birthdate).setContentStrings(R.string.LoadingInformation, R.string.SetBirthdate);
+  }
+
+  private static ListItem newSuggestionItem (TdApi.SuggestedAction action) {
+    ListItem item;
+    switch (action.getConstructor()) {
+      case TdApi.SuggestedActionCheckPhoneNumber.CONSTRUCTOR:
+        item = new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_suggestion, R.drawable.baseline_sim_card_alert_24, R.string.ReminderCheckPhoneNumber);
+        break;
+      case TdApi.SuggestedActionCheckPassword.CONSTRUCTOR:
+        item = new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_suggestion, R.drawable.baseline_gpp_maybe_24, R.string.ReminderCheckTfaPassword);
+        break;
+      case TdApi.SuggestedActionSetBirthdate.CONSTRUCTOR:
+        item = new ListItem(ListItem.TYPE_INFO_MULTILINE, R.id.btn_suggestion, R.drawable.baseline_cake_variant_24, R.string.ReminderSetBirthdate);
+        break;
+      default:
+        Td.assertSuggestedAction_c92fb71c();
+        throw Td.unsupported(action);
+    }
+    item
+      .setData(action)
+      .setLongId(action.getConstructor());
+    return item;
+  }
+
+  private void checkBirthdate () {
+    int position = adapter.indexOfViewById(R.id.btn_birthdate);
+    boolean hadBirthdate = position != -1;
+    boolean hasBirthdate = userFull != null && userFull.birthdate != null;
+    if (hadBirthdate != hasBirthdate) {
+      if (hasBirthdate) {
+        position = adapter.indexOfViewById(R.id.btn_phone);
+        adapter.addItems(position + 1,
+          new ListItem(ListItem.TYPE_SEPARATOR),
+          newBirthdateItem()
+        );
+      } else {
+        adapter.removeRange(position - 1, 2);
+      }
+    } else if (hasBirthdate) {
+      adapter.updateValuedSettingByPosition(position);
+    }
   }
 
   private void setBio (@Nullable TdApi.FormattedText about) {
@@ -824,24 +895,26 @@ public class SettingsController extends ViewController<Void> implements
   }
 
   @Override
-  public void onResult (TdApi.Object object) {
-    switch (object.getConstructor()) {
-      case TdApi.Error.CONSTRUCTOR:
-        UI.showError(object);
-        break;
-      default:
-        Log.unexpectedTdlibResponse(object, TdApi.GetUserFullInfo.class, TdApi.UserFullInfo.class, TdApi.Error.class);
-        break;
-    }
+  public void onSuggestedActionsChanged (TdApi.SuggestedAction[] addedActions, TdApi.SuggestedAction[] removedActions) {
+    executeOnUiThreadOptional(() -> {
+      for (TdApi.SuggestedAction action : addedActions) {
+        addSuggestionToList(action);
+      }
+      for (TdApi.SuggestedAction action : removedActions) {
+        removeSuggestionFromList(action);
+      }
+    });
   }
 
   @Override
   public void destroy () {
     super.destroy();
     tdlib.cache().removeMyUserListener(this);
+    setMyUserId(0);
     tdlib.listeners().unsubscribeFromConnectivityUpdates(this);
     tdlib.listeners().unsubscribeFromStickerUpdates(this);
     tdlib.listeners().unsubscribeFromSessionUpdates(this);
+    tdlib.listeners().removeOptionListener(this);
     TGLegacyManager.instance().removeEmojiListener(adapter);
     TdlibManager.instance().global().removeTokenStateListener(this);
     headerCell.performDestroy();
@@ -850,12 +923,11 @@ public class SettingsController extends ViewController<Void> implements
   private void updateHeader () {
     TdApi.User user = tdlib.myUser();
     if (headerCell != null) {
-      if (user == null || TD.isPhotoEmpty(user.profilePhoto)) {
-        headerCell.setAvatarPlaceholder(tdlib.cache().userPlaceholder(tdlib.myUserId(), user, false, ComplexHeaderView.getBaseAvatarRadiusDp(), null));
-      } else {
-        headerCell.setAvatar(user.profilePhoto);
-      }
+      long chatId = user != null ? ChatId.fromUserId(user.id) : 0;
+      headerCell.getAvatarReceiver().requestUser(tdlib, tdlib.myUserId(), AvatarReceiver.Options.FULL_SIZE);
       headerCell.setText(user != null ? TD.getUserName(user) : Lang.getString(R.string.LoadingUser), getSubtext());
+      headerCell.setEmojiStatus(user);
+      headerCell.setAllowTitleClick(chatId);
       headerCell.invalidate();
     }
   }
@@ -864,11 +936,35 @@ public class SettingsController extends ViewController<Void> implements
     if (tdlib.isConnected()) {
       return Lang.lowercase(Lang.getString(tdlib.myUser() != null ? R.string.status_Online : R.string.network_Connecting));
     } else {
-      return Lang.lowercase(Lang.getString(TdlibUi.stringForConnectionState(tdlib.connectionState())));
+      return Lang.lowercase(tdlib.connectionStateText());
     }
   }
 
   // Callbacks
+
+  private long myUserId;
+
+  private void setMyUserId (long myUserId) {
+    long oldMyUserId = this.myUserId;
+    if (oldMyUserId != myUserId) {
+      this.myUserId = myUserId;
+      if (oldMyUserId != 0) {
+        tdlib.cache().removeUserDataListener(oldMyUserId, this);
+      }
+      if (myUserId != 0) {
+        tdlib.cache().addUserDataListener(myUserId, this);
+      }
+    }
+  }
+
+  @Override
+  public void onUserFullUpdated (long userId, TdApi.UserFullInfo userFull) {
+    runOnUiThreadOptional(() -> {
+      if (myUserId == userId) {
+        processUserFull(userFull);
+      }
+    });
+  }
 
   @Override
   public void onMyUserUpdated (final TdApi.User myUser) {
@@ -876,6 +972,7 @@ public class SettingsController extends ViewController<Void> implements
       return;
     }
     runOnUiThreadOptional(() -> {
+      setMyUserId(myUser.id);
       updateHeader();
       if (setUsername(myUser)) {
         adapter.updateValuedSettingById(R.id.btn_username);
@@ -892,7 +989,7 @@ public class SettingsController extends ViewController<Void> implements
     setBio(newBio);
   }
 
-  private String myUsername;
+  private @Nullable TdApi.Usernames myUsernames;
   private String myPhone, originalPhoneNumber;
   private @Nullable TdApi.FormattedText about;
 
@@ -903,9 +1000,12 @@ public class SettingsController extends ViewController<Void> implements
   }
 
   private boolean setUsername (@Nullable TdApi.User myUser) {
-    String username = myUser != null ? myUser.username : null;
-    if ((myUsername == null && username != null) || (myUsername != null && !myUsername.equals(username))) {
-      this.myUsername = username;
+    TdApi.Usernames usernames = myUser != null ? myUser.usernames : null;
+    if (myUser != null && usernames == null) {
+      usernames = new TdApi.Usernames(new String[0], new String[0], "");
+    }
+    if ((myUsernames == null && usernames != null) || (myUsernames != null && !Td.equalsTo(myUsernames, usernames))) {
+      this.myUsernames = usernames;
       return true;
     }
     return false;
@@ -930,7 +1030,7 @@ public class SettingsController extends ViewController<Void> implements
   }
 
   @Override
-  public void onConnectionStateChanged (int newState, int oldState) {
+  public void onConnectionDisplayStatusChanged () {
     runOnUiThreadOptional(() -> {
       if (headerCell != null) {
         headerCell.setSubtitle(getSubtext());
@@ -954,13 +1054,58 @@ public class SettingsController extends ViewController<Void> implements
     
   }
 
-  private void viewGooglePlay () {
-    tdlib.ui().openUrl(this, BuildConfig.MARKET_URL, new TdlibUi.UrlOpenParameters().disableInstantView());
+  private void openInstallerPage (@Nullable AppInstallationUtil.DownloadUrl downloadUrl) {
+    String url = downloadUrl != null ? downloadUrl.url : BuildConfig.DOWNLOAD_URL;
+    tdlib.ui().openUrl(this, url, new TdlibUi.UrlOpenParameters().disableInstantView());
   }
 
-  private void viewSourceCode (boolean isTdlib) {
-    AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
-    tdlib.ui().openUrl(this, isTdlib ? appBuildInfo.tdlibCommitUrl() : appBuildInfo.commitUrl(), new TdlibUi.UrlOpenParameters().disableInstantView());
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    SourceCodeType.TELEGRAM_X,
+    SourceCodeType.TDLIB,
+    SourceCodeType.TGCALLS,
+    SourceCodeType.WEBRTC,
+    SourceCodeType.FFMPEG,
+    SourceCodeType.WEBP
+  })
+  private @interface SourceCodeType {
+    int TELEGRAM_X = 0, TDLIB = 1, TGCALLS = 2, WEBRTC = 3, FFMPEG = 4, WEBP = 5;
+  }
+
+  private void viewSourceCode (@SourceCodeType int sourceCodeType) {
+    String url;
+    switch (sourceCodeType) {
+      case SourceCodeType.TELEGRAM_X: {
+        AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
+        url = appBuildInfo.commitUrl();
+        break;
+      }
+      case SourceCodeType.TDLIB: {
+        String tdlibCommitHash = Td.tdlibCommitHashFull();
+        url = AppBuildInfo.tdlibCommitUrl(tdlibCommitHash);
+        break;
+      }
+      case SourceCodeType.TGCALLS:
+        url = BuildConfig.TGCALLS_COMMIT_URL;
+        break;
+      case SourceCodeType.WEBRTC:
+        url = BuildConfig.WEBRTC_COMMIT_URL;
+        break;
+      case SourceCodeType.FFMPEG:
+        url = BuildConfig.FFMPEG_COMMIT_URL;
+        break;
+      case SourceCodeType.WEBP:
+        url = BuildConfig.WEBP_COMMIT_URL;
+        break;
+      default:
+        throw new IllegalArgumentException(Integer.toString(sourceCodeType));
+    }
+    if (!StringUtils.isEmpty(url)) {
+      tdlib.ui().openUrl(this,
+        url,
+        new TdlibUi.UrlOpenParameters().disableInstantView()
+      );
+    }
   }
 
   @Override
@@ -969,135 +1114,127 @@ public class SettingsController extends ViewController<Void> implements
     if (tdlib.ui().handleProfileClick(this, v, v.getId(), tdlib.myUser(), true)) {
       return;
     }
-    switch (v.getId()) {
-      case R.id.btn_bio: {
-        EditBioController c = new EditBioController(context, tdlib);
-        c.setArguments(new EditBioController.Arguments(about != null ? about.text : "", 0));
-        navigateTo(c);
-        break;
-      }
-      case R.id.btn_languageSettings: {
-        navigateTo(new SettingsLanguageController(context, tdlib));
-        break;
-      }
-      case R.id.btn_notificationSettings: {
-        navigateTo(new SettingsNotificationController(context, tdlib));
-        break;
-      }
-      case R.id.btn_devices: {
-        navigateTo(new SettingsSessionsController(context, tdlib));
-        break;
-      }
-      case R.id.btn_checkUpdates: {
-        viewGooglePlay();
-        break;
-      }
-      case R.id.btn_subscribeToBeta: {
-        tdlib.ui().subscribeToBeta(this);
-        break;
-      }
-      case R.id.btn_sourceCodeChanges: {
-        // TODO provide an ability to view changes in PRs if they are present in both builds
-        AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
-        tdlib.ui().openUrl(this, appBuildInfo.changesUrlFrom(previousBuildInfo), new TdlibUi.UrlOpenParameters().disableInstantView());
-        break;
-      }
-      case R.id.btn_tdlib: {
-        viewSourceCode(true);
-        break;
-      }
-      case R.id.btn_sourceCode: {
-        AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
-        PullRequest specificPullRequest = (PullRequest) ((ListItem) v.getTag()).getData();
-        if (specificPullRequest != null) {
-          tdlib.ui().openUrl(this, specificPullRequest.getCommitUrl(), new TdlibUi.UrlOpenParameters().disableInstantView());
-        } else if (!appBuildInfo.getPullRequests().isEmpty() || appBuildInfo.getTdlibCommitFull() != null) {
-          Options.Builder b = new Options.Builder();
-          if (!appBuildInfo.getPullRequests().isEmpty()) {
-            b.info(Lang.plural(R.string.PullRequestsInfo, appBuildInfo.getPullRequests().size()));
-          }
-          b.item(new OptionItem(R.id.btn_sourceCode, Lang.getString(R.string.format_commit, Lang.getString(R.string.ViewSourceCode), appBuildInfo.getCommit()), OPTION_COLOR_NORMAL, R.drawable.baseline_github_24));
-          if (appBuildInfo.getTdlibCommitFull() != null) {
-            b.item(new OptionItem(R.id.btn_tdlib, Lang.getCharSequence(R.string.format_commit, "TDLib " + Td.tdlibVersion(), appBuildInfo.tdlibCommit()), OPTION_COLOR_NORMAL, R.drawable.baseline_tdlib_24));
-          }
-          int i = 0;
-          for (PullRequest pullRequest : appBuildInfo.getPullRequests()) {
-            b.item(new OptionItem(i++, Lang.getString(R.string.format_commit, Lang.getString(R.string.PullRequestCommit, pullRequest.getId()), pullRequest.getCommit()), OPTION_COLOR_NORMAL, R.drawable.templarian_baseline_source_merge_24));
-          }
-          showOptions(b.build(), (view, id) -> {
-            if (id == R.id.btn_sourceCode || id == R.id.btn_tdlib) {
-              viewSourceCode(id == R.id.btn_tdlib);
-            } else if (id >= 0 && id < appBuildInfo.getPullRequests().size()) {
-              PullRequest pullRequest = appBuildInfo.getPullRequests().get(id);
-              tdlib.ui().openUrl(this, pullRequest.getCommitUrl(), new TdlibUi.UrlOpenParameters().disableInstantView());
-            }
-            return true;
-          });
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_bio) {
+      EditBioController c = new EditBioController(context, tdlib);
+      c.setArguments(new EditBioController.Arguments(about != null ? about.text : "", 0));
+      navigateTo(c);
+    } else if (viewId == R.id.btn_birthdate) {
+      tdlib.ui().openBirthdateEditor(this, v, TdlibUi.BirthdateOpenOrigin.PROFILE);
+    } else if (viewId == R.id.btn_peer_id) {
+      long selfId = tdlib.myUserId(true);
+      if (selfId == 0) return;
+
+      showOptions(Long.toString(selfId), new int[]{R.id.btn_peer_id_copy}, new String[]{Lang.getString(R.string.Copy)}, null, new int[]{R.drawable.baseline_content_copy_24}, (itemView, id) -> {
+        if (id == R.id.btn_peer_id_copy) {
+          UI.copyText(Long.toString(selfId), R.string.CopiedMyUserId);
         }
-        break;
-      }
-      case R.id.btn_copyDebug: {
-        UI.copyText(U.getUsefulMetadata(tdlib), R.string.CopiedText);
-        break;
-      }
-      case R.id.btn_themeSettings: {
-        navigateTo(new SettingsThemeController(context, tdlib));
-        break;
-      }
-      case R.id.btn_tweakSettings: {
-        SettingsThemeController c = new SettingsThemeController(context, tdlib);
-        c.setArguments(new SettingsThemeController.Args(SettingsThemeController.MODE_INTERFACE_OPTIONS));
-        navigateTo(c);
-        break;
-      }
-      case R.id.btn_chatSettings: {
-        navigateTo(new SettingsDataController(context, tdlib));
-        break;
-      }
-      case R.id.btn_privacySettings: {
-        navigateTo(new SettingsPrivacyController(context, tdlib));
-        break;
-      }
-      case R.id.btn_help: {
-        supportOpen = tdlib.ui().openSupport(this);
-        break;
-      }
-      case R.id.btn_stickerSettings: {
-        SettingsStickersController c = new SettingsStickersController(context, tdlib);
-        c.setArguments(this);
-        navigateTo(c);
-        break;
-      }
-      case R.id.btn_faq: {
-        tdlib.ui().openUrl(this, Lang.getString(R.string.url_faq), new TdlibUi.UrlOpenParameters().forceInstantView());
-        break;
-      }
-      case R.id.btn_privacyPolicy: {
-        tdlib.ui().openUrl(this, Lang.getStringSecure(R.string.url_privacyPolicy), new TdlibUi.UrlOpenParameters().forceInstantView());
-        break;
-      }
-      case R.id.btn_changePhoneNumber: {
-        showSuggestionPopup(new TdApi.SuggestedActionCheckPhoneNumber());
-        break;
-      }
-      case R.id.btn_2fa: {
-        showSuggestionPopup(new TdApi.SuggestedActionCheckPassword());
-        break;
-      }
-      case R.id.btn_build: {
-        if (Settings.instance().hasLogsEnabled()) {
-          showBuildOptions(true);
-        } else {
-          tdlib.getTesterLevel(testerLevel -> runOnUiThreadOptional(() ->
-            showBuildOptions(testerLevel >= Tdlib.TESTER_LEVEL_TESTER)
-          ));
+        return true;
+      });
+    } else if (viewId == R.id.btn_languageSettings) {
+      navigateTo(new SettingsLanguageController(context, tdlib));
+    } else if (viewId == R.id.btn_notificationSettings) {
+      navigateTo(new SettingsNotificationController(context, tdlib));
+    } else if (viewId == R.id.btn_devices) {
+      navigateTo(new SettingsSessionsController(context, tdlib));
+    } else if (viewId == R.id.btn_checkUpdates) {
+      openInstallerPage(((AppInstallationUtil.DownloadUrl) ((ListItem) v.getTag()).getData()));
+    } else if (viewId == R.id.btn_subscribeToBeta) {
+      tdlib.ui().subscribeToBeta(this);
+    } else if (viewId == R.id.btn_sourceCodeChanges) {// TODO provide an ability to view changes in PRs if they are present in both builds
+      AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
+      tdlib.ui().openUrl(this, appBuildInfo.changesUrlFrom(previousBuildInfo), new TdlibUi.UrlOpenParameters().disableInstantView());
+    } else if (viewId == R.id.btn_tdlib) {
+      viewSourceCode(SourceCodeType.TDLIB);
+    } else if (viewId == R.id.btn_sourceCode) {
+      AppBuildInfo appBuildInfo = Settings.instance().getCurrentBuildInformation();
+      PullRequest specificPullRequest = (PullRequest) ((ListItem) v.getTag()).getData();
+      if (specificPullRequest != null) {
+        tdlib.ui().openUrl(this, specificPullRequest.getCommitUrl(), new TdlibUi.UrlOpenParameters().disableInstantView());
+      } else if (!appBuildInfo.getPullRequests().isEmpty() || appBuildInfo.getTdlibCommitFull() != null) {
+        Options.Builder b = new Options.Builder();
+        SpannableStringBuilder hint = new SpannableStringBuilder(Lang.getMarkdownString(this, R.string.OpenSourceGuide));
+        if (!appBuildInfo.getPullRequests().isEmpty()) {
+          hint.append("\n\n");
+          hint.append(Lang.pluralBold(R.string.PullRequestsInfo, appBuildInfo.getPullRequests().size()));
         }
-        break;
+        b.info(hint);
+        b.item(new OptionItem(R.id.btn_sourceCode, Lang.getCharSequence(R.string.format_commit, BuildConfig.PROJECT_NAME, appBuildInfo.getCommit()), OptionColor.NORMAL, R.drawable.baseline_logo_telegram_24));
+        if (appBuildInfo.getTdlibCommitFull() != null) {
+          b.item(new OptionItem(R.id.btn_tdlib, Lang.getCharSequence(R.string.format_commit, "TDLib " + Td.tdlibVersion(), Td.tdlibCommitHash()), OptionColor.NORMAL, R.drawable.baseline_tdlib_24));
+        }
+        b.item(new OptionItem(R.id.btn_tgcalls, Lang.getCharSequence(R.string.format_commit, "tgcalls", BuildConfig.TGCALLS_COMMIT), OptionColor.NORMAL, R.drawable.baseline_phone_in_talk_24));
+        b.item(new OptionItem(R.id.btn_webrtc, Lang.getCharSequence(R.string.format_commit, "WebRTC", BuildConfig.WEBRTC_COMMIT), OptionColor.NORMAL, R.drawable.baseline_webrtc_24));
+        b.item(new OptionItem(R.id.btn_ffmpeg, Lang.getCharSequence(R.string.format_commit, "FFmpeg", BuildConfig.FFMPEG_COMMIT), OptionColor.NORMAL, R.drawable.baseline_ffmpeg_24));
+        if (BuildConfig.WEBP_ENABLED && N.hasBuiltInWebpSupport()) {
+          b.item(new OptionItem(R.id.btn_webp, Lang.getCharSequence(R.string.format_commit, "WebP", BuildConfig.WEBP_COMMIT), OptionColor.NORMAL, R.drawable.dotvhs_baseline_webp_24));
+        }
+        int i = 0;
+        for (PullRequest pullRequest : appBuildInfo.getPullRequests()) {
+          b.item(new OptionItem(i++, Lang.getString(R.string.format_commit, Lang.getString(R.string.PullRequestCommit, pullRequest.getId()), pullRequest.getCommit()), OptionColor.NORMAL, R.drawable.templarian_baseline_source_merge_24));
+        }
+        showOptions(b.build(), (view, id) -> {
+          if (id == R.id.btn_sourceCode) {
+            viewSourceCode(SourceCodeType.TELEGRAM_X);
+          } else if (id == R.id.btn_tdlib) {
+            viewSourceCode(SourceCodeType.TDLIB);
+          } else if (id == R.id.btn_webrtc) {
+            viewSourceCode(SourceCodeType.WEBRTC);
+          } else if (id == R.id.btn_ffmpeg) {
+            viewSourceCode(SourceCodeType.FFMPEG);
+          } else if (id == R.id.btn_webp) {
+            viewSourceCode(SourceCodeType.WEBP);
+          } else if (id == R.id.btn_tgcalls) {
+            viewSourceCode(SourceCodeType.TGCALLS);
+          } else if (id >= 0 && id < appBuildInfo.getPullRequests().size()) {
+            PullRequest pullRequest = appBuildInfo.getPullRequests().get(id);
+            tdlib.ui().openUrl(this, pullRequest.getCommitUrl(), new TdlibUi.UrlOpenParameters().disableInstantView());
+          }
+          return true;
+        });
+      }
+    } else if (viewId == R.id.btn_copyDebug) {
+      UI.copyText(U.getUsefulMetadata(tdlib), R.string.CopiedText);
+    } else if (viewId == R.id.btn_themeSettings) {
+      navigateTo(new SettingsThemeController(context, tdlib));
+    } else if (viewId == R.id.btn_tweakSettings) {
+      SettingsThemeController c = new SettingsThemeController(context, tdlib);
+      c.setArguments(new SettingsThemeController.Args(SettingsThemeController.MODE_INTERFACE_OPTIONS));
+      navigateTo(c);
+    } else if (viewId == R.id.btn_chatSettings) {
+      navigateTo(new SettingsDataController(context, tdlib));
+    } else if (viewId == R.id.btn_privacySettings) {
+      navigateTo(new SettingsPrivacyController(context, tdlib));
+    } else if (viewId == R.id.btn_help) {
+      supportOpen = tdlib.ui().openSupport(this);
+    } else if (viewId == R.id.btn_stickerSettingsAndEmoji) {
+      SettingsStickersAndEmojiController c = new SettingsStickersAndEmojiController(context, tdlib);
+      c.setArguments(this);
+      navigateTo(c);
+    } else if (viewId == R.id.btn_chatFolders) {
+      navigateTo(new SettingsFoldersController(context, tdlib));
+    } else if (viewId == R.id.btn_faq) {
+      tdlib.ui().openUrl(this, Lang.getString(R.string.url_faq), new TdlibUi.UrlOpenParameters().forceInstantView());
+    } else if (viewId == R.id.btn_privacyPolicy) {
+      tdlib.ui().openUrl(this, Lang.getStringSecure(R.string.url_privacyPolicy), new TdlibUi.UrlOpenParameters().forceInstantView());
+    } else if (viewId == R.id.btn_suggestion) {
+      ListItem listItem = (ListItem) v.getTag();
+      showSuggestionPopup(v, (TdApi.SuggestedAction) listItem.getData());
+    } else if (viewId == R.id.btn_build) {
+      if (Settings.instance().hasLogsEnabled()) {
+        showBuildOptions(true);
+      } else {
+        tdlib.getTesterLevel(testerLevel -> runOnUiThreadOptional(() ->
+          showBuildOptions(testerLevel >= Tdlib.TesterLevel.TESTER)
+        ));
       }
     }
   }
 
-  private void showSuggestionPopup (TdApi.SuggestedAction suggestedAction) {
+  public void showSuggestionPopup (View suggestionView, TdApi.SuggestedAction suggestedAction) {
+    if (!tdlib.isSettingSuggestion(suggestedAction)) {
+      return;
+    }
     CharSequence info = null;
     IntList ids = new IntList(3);
     StringList titles = new StringList(3);
@@ -1110,17 +1247,17 @@ public class SettingsController extends ViewController<Void> implements
 
         ids.append(R.id.btn_changePhoneNumber);
         titles.append(R.string.ReminderActionChangePhoneNumber);
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_edit_24);
 
         ids.append(R.id.btn_cancel);
         titles.append(Lang.getString(R.string.ReminderCheckPhoneNumberHide, originalPhoneNumber));
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_check_24);
 
         ids.append(R.id.btn_info);
         titles.append(R.string.ReminderActionLearnMore);
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_info_24);
 
         break;
@@ -1130,74 +1267,78 @@ public class SettingsController extends ViewController<Void> implements
 
         ids.append(R.id.btn_2fa);
         titles.append(R.string.ReminderActionVerifyPassword);
-        colors.append(OPTION_COLOR_BLUE);
+        colors.append(OptionColor.BLUE);
         icons.append(R.drawable.mrgrigri_baseline_textbox_password_24);
 
         ids.append(R.id.btn_cancel);
         titles.append(R.string.ReminderCheckTfaPasswordHide);
-        colors.append(OPTION_COLOR_NORMAL);
+        colors.append(OptionColor.NORMAL);
         icons.append(R.drawable.baseline_cancel_24);
 
         break;
       }
+      case TdApi.SuggestedActionSetBirthdate.CONSTRUCTOR: {
+        tdlib.ui().openBirthdateEditor(this, suggestionView, TdlibUi.BirthdateOpenOrigin.SUGGESTED_ACTION);
+        return;
+      }
+      default: {
+        Td.assertSuggestedAction_c92fb71c();
+        throw Td.unsupported(suggestedAction);
+      }
     }
 
     showOptions(info, ids.get(), titles.get(), colors.get(), icons.get(), (view, id) -> {
-      switch (id) {
-        case R.id.btn_changePhoneNumber: {
-          navigateTo(new SettingsPhoneController(context, tdlib));
-          break;
-        }
-        case R.id.btn_2fa: {
-          tdlib.client().send(new TdApi.GetPasswordState(), result -> {
-            if (result.getConstructor() == TdApi.PasswordState.CONSTRUCTOR) {
-              runOnUiThreadOptional(() -> {
-                PasswordController controller = new PasswordController(context, tdlib);
-                controller.setArguments(new PasswordController.Args(PasswordController.MODE_CONFIRM, (TdApi.PasswordState) result).setSuccessListener((pwd) -> {
-                  dismissSuggestion(suggestedAction);
-                }));
-                navigateTo(controller);
-              });
-            } else {
-              UI.showError(result);
-            }
-          });
-          break;
-        }
-        case R.id.btn_info: {
-          tdlib.ui().openUrl(this, Lang.getStringSecure(R.string.url_faqPhoneNumber), new TdlibUi.UrlOpenParameters().forceInstantView());
-          break;
-        }
-        case R.id.btn_cancel: {
-          dismissSuggestion(suggestedAction);
-          break;
-        }
+      if (id == R.id.btn_changePhoneNumber) {
+        navigateTo(new SettingsPhoneController(context, tdlib));
+      } else if (id == R.id.btn_2fa) {
+        tdlib.client().send(new TdApi.GetPasswordState(), result -> {
+          if (result.getConstructor() == TdApi.PasswordState.CONSTRUCTOR) {
+            runOnUiThreadOptional(() -> {
+              PasswordController controller = new PasswordController(context, tdlib);
+              controller.setArguments(new PasswordController.Args(PasswordController.MODE_CONFIRM, (TdApi.PasswordState) result).setSuccessListener((pwd) -> {
+                dismissSuggestion(suggestedAction);
+              }));
+              navigateTo(controller);
+            });
+          } else {
+            UI.showError(result);
+          }
+        });
+      } else if (id == R.id.btn_info) {
+        tdlib.ui().openUrl(this, Lang.getStringSecure(R.string.url_faqPhoneNumber), new TdlibUi.UrlOpenParameters().forceInstantView());
+      } else if (id == R.id.btn_cancel) {
+        dismissSuggestion(suggestedAction);
       }
 
       return true;
     });
   }
 
-  private void dismissSuggestion (TdApi.SuggestedAction suggestedAction) {
+  private void addSuggestionToList (TdApi.SuggestedAction suggestedAction) {
+    if (!tdlib.isSettingSuggestion(suggestedAction))
+      return;
+    int index = adapter.indexOfViewByIdReverse(R.id.btn_suggestion);
+    if (index != -1) {
+      // add separator & item
+      adapter.addItems(index + 1,
+        new ListItem(ListItem.TYPE_SEPARATOR_FULL),
+        newSuggestionItem(suggestedAction)
+      );
+    } else {
+      index = adapter.indexOfViewById(R.id.btn_bio);
+      adapter.addItems(index + 2,
+        new ListItem(ListItem.TYPE_SHADOW_TOP),
+        newSuggestionItem(suggestedAction),
+        new ListItem(ListItem.TYPE_SHADOW_BOTTOM)
+      );
+    }
+  }
+
+  private void removeSuggestionFromList (TdApi.SuggestedAction suggestedAction) {
     if (!tdlib.isSettingSuggestion(suggestedAction))
       return;
 
-    int removalIndex;
-
-    switch (suggestedAction.getConstructor()) {
-      case TdApi.SuggestedActionCheckPhoneNumber.CONSTRUCTOR: {
-        removalIndex = adapter.indexOfViewById(R.id.btn_changePhoneNumber);
-        break;
-      }
-      case TdApi.SuggestedActionCheckPassword.CONSTRUCTOR: {
-        removalIndex = adapter.indexOfViewById(R.id.btn_2fa);
-        break;
-      }
-      default: {
-        return;
-      }
-    }
-
+    int removalIndex = adapter.indexOfViewByLongId(suggestedAction.getConstructor());
     if (removalIndex == -1)
       return;
     ListItem previousItem = adapter.getItem(removalIndex - 1);
@@ -1222,7 +1363,9 @@ public class SettingsController extends ViewController<Void> implements
         break;
       }
     }
+  }
 
+  private void dismissSuggestion (TdApi.SuggestedAction suggestedAction) {
     tdlib.client().send(new TdApi.HideSuggestedAction(suggestedAction), tdlib.okHandler());
   }
 
@@ -1230,120 +1373,181 @@ public class SettingsController extends ViewController<Void> implements
     final int size = allowDebug ? 3 : 2;
     IntList ids = new IntList(size);
     IntList icons = new IntList(size);
+    IntList colors = new IntList(size);
     StringList strings = new StringList(size);
 
     ids.append(R.id.btn_copyText);
     strings.append(R.string.CopyVersion);
     icons.append(R.drawable.baseline_content_copy_24);
+    colors.append(OptionColor.NORMAL);
+
+    if (!Config.SHOW_COPY_REPORT_DETAILS_IN_SETTINGS) {
+      ids.append(R.id.btn_copyDebug);
+      strings.append(R.string.CopyReportData);
+      icons.append(R.drawable.baseline_bug_report_24);
+      colors.append(OptionColor.NORMAL);
+    }
+
+    boolean notificationError = tdlib.context().getTokenState() == TdlibManager.TokenState.ERROR;
+    if (allowDebug || notificationError) {
+      ids.append(R.id.btn_pushService);
+      strings.append(R.string.PushServices);
+      icons.append(notificationError ? R.drawable.baseline_sync_problem_24 : R.drawable.baseline_sync_24);
+      colors.append(notificationError ? OptionColor.RED : OptionColor.NORMAL);
+    }
 
     if (allowDebug) {
       ids.append(R.id.btn_tdlib);
       strings.append(R.string.TdlibLogs);
       icons.append(R.drawable.baseline_build_24);
-
-      ids.append(R.id.btn_pushService);
-      strings.append(R.string.PushServices);
-      icons.append(R.drawable.baseline_build_24);
+      colors.append(OptionColor.NORMAL);
 
       ids.append(R.id.btn_build);
       strings.append(R.string.AppLogs);
       icons.append(R.drawable.baseline_build_24);
+      colors.append(OptionColor.NORMAL);
+      
+      ids.append(R.id.btn_experiment);
+      strings.append(R.string.ExperimentalSettings);
+      icons.append(R.drawable.templarian_baseline_flask_24);
+      colors.append(OptionColor.NORMAL);
     }
 
     SpannableStringBuilder b = new SpannableStringBuilder();
     b.append(Lang.getMarkdownStringSecure(this, R.string.AppSignature, BuildConfig.VERSION_NAME));
 
-    showOptions(b, ids.get(), strings.get(), null, icons.get(), (itemView, id) -> {
-      switch (id) {
-        case R.id.btn_copyText: {
-          UI.copyText(Lang.getAppBuildAndVersion(tdlib), R.string.CopiedText);
-          break;
-        }
-        case R.id.btn_pushService: {
-          SettingsBugController c = new SettingsBugController(context, tdlib);
-          c.setArguments(new SettingsBugController.Args(SettingsBugController.SECTION_PUSH));
-          navigateTo(c);
-          break;
-        }
-        case R.id.btn_build: {
-          navigateTo(new SettingsBugController(context, tdlib));
-          break;
-        }
-        case R.id.btn_tdlib: {
-          tdlib.getTesterLevel(level -> runOnUiThreadOptional(() ->
-            openTdlibLogs(level, null)
-          ));
-          break;
-        }
+    showOptions(b, ids.get(), strings.get(), colors.get(), icons.get(), (itemView, id) -> {
+      if (id == R.id.btn_copyText) {
+        UI.copyText(Lang.getAppBuildAndVersion(tdlib), R.string.CopiedText);
+      } else if (id == R.id.btn_copyDebug) {
+        UI.copyText(U.getUsefulMetadata(tdlib), R.string.CopiedText);
+      } else if (id == R.id.btn_pushService) {
+        SettingsBugController c = new SettingsBugController(context, tdlib);
+        c.setArguments(new SettingsBugController.Args(SettingsBugController.Section.PUSH));
+        navigateTo(c);
+      } else if (id == R.id.btn_build) {
+        navigateTo(new SettingsBugController(context, tdlib));
+      } else if (id == R.id.btn_tdlib || id == R.id.btn_experiment) {
+        boolean isTdlib = id == R.id.btn_tdlib;
+        tdlib.getTesterLevel(level -> runOnUiThreadOptional(() -> {
+          if (isTdlib) {
+            openTdlibLogs(level, null);
+          } else {
+            openExperimentalSettings(level);
+          }
+        }));
       }
       return true;
     });
   }
 
   @Override
-  public void onInstalledStickerSetsUpdated (long[] stickerSetIds, boolean isMasks) {
-    if (!isMasks) {
+  public void onInstalledStickerSetsUpdated (long[] stickerSetIds, TdApi.StickerType stickerType) {
+    if (stickerType.getConstructor() == TdApi.StickerTypeRegular.CONSTRUCTOR || stickerType.getConstructor() == TdApi.StickerTypeCustomEmoji.CONSTRUCTOR) {
       runOnUiThreadOptional(() -> {
-        allStickerSets = null;
-        hasPreloadedStickers = false;
-        preloadStickers();
+        stickerSetsPreloader.reloadStickersIfEqualTypes(stickerType);
+        emojiPacksPreloader.reloadStickersIfEqualTypes(stickerType);
       });
     }
   }
 
   // Stickers preloading
 
-  private @Nullable ArrayList<TGStickerSetInfo> allStickerSets;
-
-  public @Nullable ArrayList<TGStickerSetInfo> getStickerSets () {
-    return allStickerSets;
-  }
-
   public interface StickerSetLoadListener {
-    void onStickerSetsLoaded (ArrayList<TGStickerSetInfo> stickerSets);
+    void onStickerSetsLoaded (ArrayList<TGStickerSetInfo> stickerSets, TdApi.StickerType type);
   }
 
-  private @Nullable StickerSetLoadListener stickerSetListener;
 
-  public void setStickerSetListener (@Nullable StickerSetLoadListener listener) {
-    this.stickerSetListener = listener;
+  private final StickerSetsPreloader stickerSetsPreloader = new StickerSetsPreloader(this, new TdApi.StickerTypeRegular());
+  private final StickerSetsPreloader emojiPacksPreloader = new StickerSetsPreloader(this, new TdApi.StickerTypeCustomEmoji());
+
+  public void addStickerSetListener (boolean isEmoji, StickerSetLoadListener listener) {
+    (isEmoji ? emojiPacksPreloader : stickerSetsPreloader).addStickerSetListener(listener);
   }
 
-  private void setStickerSets (@Nullable ArrayList<TGStickerSetInfo> stickerSets) {
-    this.allStickerSets = stickerSets;
-    if (stickerSetListener != null) {
-      stickerSetListener.onStickerSetsLoaded(stickerSets);
+  public void removeStickerSetListener (boolean isEmoji, StickerSetLoadListener listener) {
+    (isEmoji ? emojiPacksPreloader : stickerSetsPreloader).removeStickerSetListener(listener);
+  }
+
+  public @Nullable ArrayList<TGStickerSetInfo> getStickerSets (boolean isEmoji) {
+    return (isEmoji ? emojiPacksPreloader : stickerSetsPreloader).getStickerSets();
+  }
+
+  public int getStickerSetsCount (boolean isEmoji) {
+    ArrayList<TGStickerSetInfo> sets = getStickerSets(isEmoji);
+    return sets != null ? sets.size() : -1;
+  }
+
+  private static class StickerSetsPreloader {
+    private final ReferenceList<StickerSetLoadListener> listeners = new ReferenceList<>(false);
+
+    private final ViewController<?> context;
+    private final Tdlib tdlib;
+    private final TdApi.StickerType type;
+
+    private @Nullable ArrayList<TGStickerSetInfo> allStickerSets;
+    private boolean hasPreloadedStickers;
+
+    public StickerSetsPreloader (ViewController<?> context, TdApi.StickerType type) {
+      this.context = context;
+      this.tdlib = context.tdlib();
+      this.type = type;
     }
-  }
 
-  private boolean hasPreloadedStickers;
-
-  private void preloadStickers () {
-    if (hasPreloadedStickers) {
-      return;
+    public @Nullable ArrayList<TGStickerSetInfo> getStickerSets () {
+      return allStickerSets;
     }
-    hasPreloadedStickers = true;
-    tdlib.client().send(new TdApi.GetInstalledStickerSets(false), object -> {
-      if (!isDestroyed()) {
-        switch (object.getConstructor()) {
-          case TdApi.StickerSets.CONSTRUCTOR: {
-            TdApi.StickerSetInfo[] stickerSets = ((TdApi.StickerSets) object).sets;
-            final ArrayList<TGStickerSetInfo> parsedStickerSets = new ArrayList<>(stickerSets.length);
-            for (TdApi.StickerSetInfo stickerSet : stickerSets) {
-              parsedStickerSets.add(new TGStickerSetInfo(tdlib, stickerSet));
+
+    public void reloadStickersIfEqualTypes (TdApi.StickerType type) {
+      if (this.type.getConstructor() == type.getConstructor()) {
+        allStickerSets = null;
+        hasPreloadedStickers = false;
+        preloadStickers();
+      }
+    }
+
+    public void preloadStickers () {
+      if (hasPreloadedStickers) {
+        return;
+      }
+      hasPreloadedStickers = true;
+      tdlib.client().send(new TdApi.GetInstalledStickerSets(type), object -> {
+        if (!context.isDestroyed()) {
+          switch (object.getConstructor()) {
+            case TdApi.StickerSets.CONSTRUCTOR: {
+              TdApi.StickerSetInfo[] stickerSets = ((TdApi.StickerSets) object).sets;
+              final ArrayList<TGStickerSetInfo> parsedStickerSets = new ArrayList<>(stickerSets.length);
+              for (TdApi.StickerSetInfo stickerSet : stickerSets) {
+                parsedStickerSets.add(new TGStickerSetInfo(tdlib, stickerSet));
+              }
+              parsedStickerSets.trimToSize();
+              context.runOnUiThreadOptional(() ->
+                setStickerSets(parsedStickerSets)
+              );
+              break;
             }
-            parsedStickerSets.trimToSize();
-            runOnUiThreadOptional(() ->
-              setStickerSets(parsedStickerSets)
-            );
-            break;
-          }
-          case TdApi.Error.CONSTRUCTOR: {
-            UI.showError(object);
-            break;
+            case TdApi.Error.CONSTRUCTOR: {
+              UI.showError(object);
+              break;
+            }
           }
         }
+      });
+    }
+
+    private void setStickerSets (@Nullable ArrayList<TGStickerSetInfo> stickerSets) {
+      this.allStickerSets = stickerSets;
+      for (StickerSetLoadListener listener : listeners) {
+        listener.onStickerSetsLoaded(stickerSets, type);
       }
-    });
+    }
+
+    public void addStickerSetListener (StickerSetLoadListener listener) {
+      this.listeners.add(listener);
+    }
+
+    public void removeStickerSetListener (StickerSetLoadListener listener) {
+      this.listeners.remove(listener);
+    }
   }
 }

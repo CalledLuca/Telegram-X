@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,17 +17,18 @@ package org.thunderdog.challegram.component.sticker;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Path;
+import android.graphics.drawable.Drawable;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewParent;
 import android.view.animation.Interpolator;
 import android.view.animation.OvershootInterpolator;
 
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
+import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.data.TGReaction;
 import org.thunderdog.challegram.loader.ImageFile;
@@ -35,32 +36,39 @@ import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
+import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.Drawables;
+import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.PorterDuffPaint;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
+import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.unsorted.Settings;
 
 import me.vkryl.android.ViewUtils;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.Destroyable;
+import tgx.td.Td;
 
-public class StickerSmallView extends View implements FactorAnimator.Target, Destroyable {
+public class StickerSmallView extends View implements FactorAnimator.Target, StickerPreviewView.PreviewCallback, Destroyable {
   public static final float PADDING = 8f;
   private static final Interpolator OVERSHOOT_INTERPOLATOR = new OvershootInterpolator(3.2f);
 
-  private ImageReceiver imageReceiver;
-  private GifReceiver gifReceiver;
-  private FactorAnimator animator;
+  private final ImageReceiver imageReceiver;
+  private final GifReceiver gifReceiver;
+  private final FactorAnimator animator;
   private @Nullable TGStickerObj sticker;
+  private @Nullable Drawable premiumStarDrawable;
   private Path contour;
   private Tdlib tdlib;
   private int padding;
+  private int forceHeight = -1;
 
   public StickerSmallView (Context context) {
-    super(context);
-    this.imageReceiver = new ImageReceiver(this, 0);
-    this.gifReceiver = new GifReceiver(this);
-    this.animator = new FactorAnimator(0, this, OVERSHOOT_INTERPOLATOR, 230l);
-    this.padding = Screen.dp(PADDING);
+    this(context, Screen.dp(PADDING));
   }
 
   public StickerSmallView (Context context, int padding) {
@@ -82,6 +90,10 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     measureReceivers();
   }
 
+  public void setForceHeight (int forceHeight) {
+    this.forceHeight = forceHeight;
+  }
+
   public void setSticker (@Nullable TGStickerObj sticker) {
     this.sticker = sticker;
     this.isAnimation = sticker != null && sticker.isAnimated();
@@ -94,6 +106,17 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     contour = sticker != null ? sticker.getContour(Math.min(imageReceiver.getWidth(), imageReceiver.getHeight())) : null;
     imageReceiver.requestFile(imageFile);
     gifReceiver.requestFile(gifFile);
+  }
+
+  private boolean isChosen;
+
+  public void setChosen (boolean chosen) {
+    isChosen = chosen;
+    invalidate();
+  }
+
+  public void setIsPremiumStar () {
+    premiumStarDrawable = Drawables.get(R.drawable.baseline_premium_star_28);
   }
 
   public void refreshSticker () {
@@ -116,21 +139,15 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     gifReceiver.destroy();
   }
 
-  private float factor;
-
   private void resetStickerState () {
-    animator.forceFactor(0f, true);
-    factor = 0f;
+    animator.forceFactor(0f);
   }
 
   private static final float MIN_SCALE = .82f;
 
   @Override
   public void onFactorChanged (int id, float factor, float fraction, FactorAnimator callee) {
-    if (this.factor != factor) {
-      this.factor = factor;
-      invalidate();
-    }
+    invalidate();
   }
 
   @Override
@@ -149,9 +166,16 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
   }
 
   private boolean isSuggestion;
+  private boolean isEmojiSuggestion;
 
   public void setIsSuggestion () {
     isSuggestion = true;
+    isEmojiSuggestion = false;
+  }
+
+  public void setIsSuggestion (boolean isEmoji) {
+    isSuggestion = true;
+    isEmojiSuggestion = isEmoji;
   }
 
   private boolean emojiDisabled;
@@ -163,12 +187,11 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
   @Override
   protected void onMeasure (int widthMeasureSpec, int heightMeasureSpec) {
     if (isSuggestion) {
-      super.onMeasure(MeasureSpec.makeMeasureSpec(Screen.dp(72f), MeasureSpec.EXACTLY), heightMeasureSpec);
+      super.onMeasure(MeasureSpec.makeMeasureSpec(Screen.dp(isEmojiSuggestion ? 36 : 72), MeasureSpec.EXACTLY), heightMeasureSpec);
     } else if (isTrending) {
       super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(Screen.smallestSide() / 5, MeasureSpec.EXACTLY));
     } else {
-      //noinspection SuspiciousNameCombination
-      super.onMeasure(widthMeasureSpec, widthMeasureSpec);
+      super.onMeasure(widthMeasureSpec, forceHeight > 0 ? MeasureSpec.makeMeasureSpec(forceHeight, MeasureSpec.EXACTLY) : widthMeasureSpec);
     }
     measureReceivers();
   }
@@ -181,17 +204,59 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     contour = sticker != null ? sticker.getContour(Math.min(imageReceiver.getWidth(), imageReceiver.getHeight())) : null;
   }
 
+  private @PorterDuffColorId int themedColorId = ColorId.iconActive;
+
+  public void setThemedColorId (@PorterDuffColorId int themedColorId) {
+    if (this.themedColorId != themedColorId) {
+      this.themedColorId = themedColorId;
+      invalidate();
+    }
+  }
+
+  @Override
+  public @PorterDuffColorId int getThemedColorId () {
+    return themedColorId;
+  }
+
+  private final Path tmpClipPath = new Path();
+
   @Override
   protected void onDraw (Canvas c) {
-    boolean saved = factor != 0f;
+    float factor = animator.getFactor();
+    int restoreToCountClip = -1;
+    if (isChosen) {
+      float radius = Math.min(getMeasuredWidth(), getMeasuredHeight()) / 2f;
+      c.drawCircle(getMeasuredWidth() / 2f, getMeasuredHeight() / 2f, radius, Paints.fillingPaint(Theme.getColor(ColorId.fillingPositive)));
+
+      tmpClipPath.reset();
+      tmpClipPath.addCircle(getMeasuredWidth() / 2f, getMeasuredHeight() / 2f, radius - Screen.dp(1), Path.Direction.CW);
+      tmpClipPath.close();
+      restoreToCountClip = Views.save(c);
+      c.clipPath(tmpClipPath);
+    }
+
+    float originalScale = sticker != null ? sticker.getDisplayScale() : 1f;
+    boolean saved = originalScale != 1f || factor != 0f;
+    boolean needThemedColorFilter = sticker != null && sticker.needThemedColorFilter();
+    if (needThemedColorFilter) {
+      imageReceiver.setThemedPorterDuffColorId(themedColorId);
+      gifReceiver.setThemedPorterDuffColorId(themedColorId);
+    } else {
+      imageReceiver.disablePorterDuffColorFilter();
+      gifReceiver.disablePorterDuffColorFilter();
+    }
+
+    int restoreToCount = -1;
+    int cx = imageReceiver.centerX();
+    int cy = imageReceiver.centerY();
     if (saved) {
-      c.save();
-      float scale = MIN_SCALE + (1f - MIN_SCALE) * (1f - factor);
-      int cx = getMeasuredWidth() / 2;
-      int cy = getPaddingTop() + (getMeasuredHeight() - getPaddingBottom() - getPaddingBottom()) / 2;
+      restoreToCount = Views.save(c);
+      float scale = originalScale * (MIN_SCALE + (1f - MIN_SCALE) * (1f - factor));
       c.scale(scale, scale, cx, cy);
     }
-    if (isAnimation) {
+    if (premiumStarDrawable != null) {
+      Drawables.drawCentered(c, premiumStarDrawable, cx, cy, PorterDuffPaint.get(themedColorId));
+    } else if (isAnimation) {
       if (gifReceiver.needPlaceholder()) {
         if (imageReceiver.needPlaceholder()) {
           imageReceiver.drawPlaceholderContour(c, contour);
@@ -205,9 +270,16 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
       }
       imageReceiver.draw(c);
     }
-    if (saved) {
-      c.restore();
+    if (Config.DEBUG_STICKER_OUTLINES) {
+      imageReceiver.drawPlaceholderContour(c, contour);
     }
+    if (saved) {
+      Views.restore(c, restoreToCount);
+    }
+    if (isChosen) {
+      Views.restore(c, restoreToCountClip);
+    }
+    // c.drawRect(padding, padding, getMeasuredWidth() - padding, getMeasuredHeight() - padding, Paints.strokeSmallPaint(0XFF00FF00));
   }
 
   // Touch
@@ -239,7 +311,8 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
   }
 
   public interface StickerMovementCallback {
-    boolean onStickerClick (StickerSmallView view, View clickView, TGStickerObj sticker, boolean isMenuClick, boolean forceDisableNotification, @Nullable TdApi.MessageSchedulingState schedulingState);
+    boolean onStickerClick (StickerSmallView view, View clickView, TGStickerObj sticker, boolean isMenuClick, TdApi.MessageSendOptions sendOptions);
+    default boolean onStickerLongClick (StickerSmallView view, TGStickerObj sticker) { return false; }
     long getStickerOutputChatId ();
     void setStickerPressed (StickerSmallView view, TGStickerObj sticker, boolean isPressed);
     boolean canFindChildViewUnder (StickerSmallView view, int recyclerX, int recyclerY);
@@ -254,6 +327,7 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     default int getStickerViewTop (StickerSmallView v) { return -1; }
     default StickerSmallView getStickerViewUnder (StickerSmallView v, int x, int y) { return null; }
     default TGReaction getReactionForPreview (StickerSmallView v) { return null; }
+    default void onSetEmojiStatusFromPreview (StickerSmallView view, View clickView, TGStickerObj sticker, long emojiId, long expirationDate) { }
   }
 
   private @Nullable StickerMovementCallback callback;
@@ -280,7 +354,12 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
         closePreview(e);
         if (clicked && callback != null && sticker != null) {
           ViewUtils.onClick(this);
-          callback.onStickerClick(this, this, sticker, false, false, null);
+          boolean updateOrder = false;
+          if (!sticker.isCustomEmoji()) {
+            long flag = /*sticker.isCustomEmoji() ? Settings.SETTING_FLAG_DYNAMIC_ORDER_EMOJI_PACKS :*/ Settings.SETTING_FLAG_DYNAMIC_ORDER_STICKER_PACKS;
+            updateOrder = Settings.instance().getNewSetting(flag) && !sticker.isRecent() && !sticker.isFavorite();
+          }
+          callback.onStickerClick(this, this, sticker, false, Td.newSendOptions(false, false, false, updateOrder));
         }
         return true;
       }
@@ -423,6 +502,10 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
       return;
     }
 
+    if (callback != null && callback.onStickerLongClick(this, sticker)) {
+      return;
+    }
+
     getParent().requestDisallowInterceptTouchEvent(true);
     UI.getContext(getContext()).setOrientationLockFlagEnabled(BaseActivity.ORIENTATION_FLAG_STICKER, true);
 
@@ -454,7 +537,10 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     if (callback != null) {
       TGReaction reaction = callback.getReactionForPreview(this);
       if (reaction != null) {
-        ((BaseActivity) getContext()).openReactionPreview(tdlib, this, reaction, left + width / 2, top + height / 2 + (callback != null ? callback.getStickersListTop() : 0), Math.min(width, height) - Screen.dp(PADDING) * 2, callback.getViewportHeight(), isSuggestion || emojiDisabled);
+        boolean disableEmoji = isSuggestion || emojiDisabled;
+        reaction.withEffectAnimation(effectAnimation -> {
+          ((BaseActivity) getContext()).openReactionPreview(tdlib, this, reaction, effectAnimation, left + width / 2, top + height / 2 + (callback != null ? callback.getStickersListTop() : 0), Math.min(width, height) - Screen.dp(PADDING) * 2, callback.getViewportHeight(), disableEmoji);
+        });
         return;
       }
     }
@@ -492,6 +578,7 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     return sticker;
   }
 
+  @Override
   public void closePreviewIfNeeded () {
     if (ignoreNextStickerChanges) {
       ignoreNextStickerChanges = false;
@@ -499,12 +586,29 @@ public class StickerSmallView extends View implements FactorAnimator.Target, Des
     }
   }
 
-  public boolean onSendSticker (View view, TGStickerObj sticker, boolean forceDisableNotification, TdApi.MessageSchedulingState schedulingState) {
-    return callback != null && callback.onStickerClick(this, view, sticker, true, forceDisableNotification, schedulingState);
+  public void onSetEmojiStatus (View view, TGStickerObj sticker, long emojiId, long expirationDate) {
+    if (callback != null) {
+      callback.onSetEmojiStatusFromPreview(this, view, sticker, emojiId, expirationDate);
+    }
+  }
+
+  public boolean onSendSticker (View view, TGStickerObj sticker, TdApi.MessageSendOptions sendOptions) {
+    return callback != null && callback.onStickerClick(this, view, sticker, true, sendOptions);
   }
 
   public long getStickerOutputChatId () {
     return callback != null ? callback.getStickerOutputChatId() : 0;
+  }
+
+  private StickerPreviewView.MenuStickerPreviewCallback menuStickerPreviewCallback;
+
+  @Override
+  public StickerPreviewView.MenuStickerPreviewCallback getMenuStickerPreviewCallback () {
+    return menuStickerPreviewCallback;
+  }
+
+  public void setMenuStickerPreviewCallback (StickerPreviewView.MenuStickerPreviewCallback menuStickerPreviewCallback) {
+    this.menuStickerPreviewCallback = menuStickerPreviewCallback;
   }
 
   private boolean previewDroppedButStillOpen;

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,9 +29,10 @@ import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
 
+import me.vkryl.android.util.InvalidateContentProvider;
 import me.vkryl.core.lambda.Destroyable;
 
-public class PageBlockView extends BaseView implements Destroyable {
+public class PageBlockView extends BaseView implements Destroyable, InvalidateContentProvider {
   public static final int MODE_IMAGE = 1;
   public static final int MODE_GIF = 2;
   public static final int MODE_COLLAGE = 3;
@@ -157,6 +158,23 @@ public class PageBlockView extends BaseView implements Destroyable {
     }
   }
 
+  @Override
+  public boolean invalidateContent (Object cause) {
+    if (this.block == cause || !(cause instanceof PageBlock) || (this.block != null && this.block.belongsToBlock((PageBlock) cause))) {
+      requestFiles(true);
+      return true;
+    }
+    return false;
+  }
+
+  public boolean invalidateIconsContent (PageBlock block) {
+    if (this.block == block && block != null) {
+      block.requestIcons(iconReceiver);
+      return true;
+    }
+    return false;
+  }
+
   public void requestFiles (boolean invalidate) {
     if (block != null) {
       block.requestIcons(iconReceiver);
@@ -266,7 +284,17 @@ public class PageBlockView extends BaseView implements Destroyable {
   @Override
   protected void onMeasure (int widthMeasureSpec, int heightMeasureSpec) {
     final int width = getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec);
-    setMeasuredDimension(width, MeasureSpec.makeMeasureSpec(block != null ? block.getHeight(this, width) : 0, MeasureSpec.EXACTLY));
+
+    int blockHeight = block != null ? block.getHeight(this, width) : 0;
+    int blockCustomWidth = block != null ? block.getCustomWidth() : -1;
+    int blockWidthMeasureSpec = blockCustomWidth >= 0 ?
+      MeasureSpec.makeMeasureSpec(blockCustomWidth, MeasureSpec.EXACTLY) : width;
+
+    setMeasuredDimension(blockWidthMeasureSpec, MeasureSpec.makeMeasureSpec(blockHeight, MeasureSpec.EXACTLY));
+  }
+
+  public ComplexReceiver getIconReceiver () {
+    return iconReceiver;
   }
 
   @Override

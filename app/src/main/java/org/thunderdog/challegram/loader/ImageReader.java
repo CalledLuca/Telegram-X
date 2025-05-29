@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@ import android.os.Build;
 import android.os.OperationCanceledException;
 import android.os.SystemClock;
 import android.provider.MediaStore;
-import android.util.Size;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -165,7 +164,7 @@ public class ImageReader {
     listener.onImageLoaded(bitmap != null, bitmap);
   }
 
-  private static Bitmap readImage (ImageFile file, String path) {
+  public static Bitmap readImage (ImageFile file, String path) {
     boolean needSquare = file.needDecodeSquare();
 
     ImageFile exifFile;
@@ -266,21 +265,35 @@ public class ImageReader {
 
     File cacheFile = new File(path);
 
-    Bitmap bitmap;
+    Bitmap bitmap = null;
 
     try {
-      if (file.isWebp() && Config.useBundledWebp()) {
-        RandomAccessFile f = new RandomAccessFile(cacheFile, "r");
-        ByteBuffer buffer = f.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, cacheFile.length());
+      boolean webpDecoderFailed = false;
+      boolean isWebP = file.isWebp() && Config.useBundledWebp();
+      if (isWebP) {
+        try (RandomAccessFile f = new RandomAccessFile(cacheFile, "r")) {
+          ByteBuffer buffer = f.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, cacheFile.length());
 
-        BitmapFactory.Options bmOptions = new BitmapFactory.Options();
-        bmOptions.inJustDecodeBounds = true;
-        N.loadWebpImage(null, buffer, buffer.limit(), bmOptions, true);
-        bitmap = Bitmap.createBitmap(bmOptions.outWidth, bmOptions.outHeight, Bitmap.Config.ARGB_8888);
-        N.loadWebpImage(bitmap, buffer, buffer.limit(), null, !opts.inPurgeable);
+          BitmapFactory.Options bmOptions = new BitmapFactory.Options();
+          bmOptions.inJustDecodeBounds = true;
+          N.loadWebpImage(null, buffer, buffer.limit(), bmOptions, true);
+          bitmap = Bitmap.createBitmap(bmOptions.outWidth, bmOptions.outHeight, Bitmap.Config.ARGB_8888);
+          N.loadWebpImage(bitmap, buffer, buffer.limit(), null, !opts.inPurgeable);
+        } catch (Throwable t) {
+          Log.e(Log.TAG_IMAGE_LOADER, "#%s: Cannot load bitmap, config: %s", t, file.toString(), opts.inPreferredConfig.toString());
+          webpDecoderFailed = true;
+        }
+      }
 
-        f.close();
-      } else {
+      if (webpDecoderFailed) {
+        String mimeType = ImageFormatDetector.getImageFormat(cacheFile.getPath());
+        if (mimeType != null && !"image/webp".equals(mimeType)) {
+          Log.e(Log.TAG_IMAGE_LOADER, "#%s: Not WebP, retry with system decoder: %s", file.toString(), mimeType);
+          isWebP = false;
+        }
+      }
+
+      if (!isWebP) {
         if (opts.inPurgeable) {
           RandomAccessFile f = null;
           for (int attempt = 0; attempt < 2; attempt++) { // fixme stupid fix for EACCESS on early applaunch requests
@@ -353,6 +366,7 @@ public class ImageReader {
 
     if (bitmap != null) {
       if (file.isPrivate()) {
+        // TODO: test with with hight width/height difference
         bitmap = resizeBitmap(bitmap, 36, 36, true);
         /*bitmap = resizeBitmap(bitmap, 48, 48, true);*/
       } else if (!file.needHiRes() && (file.needFitSize() || file.forceArgb8888()) && Math.max(bitmap.getWidth(), bitmap.getHeight()) > file.getSize() && file.getSize() != 0) {
@@ -519,12 +533,16 @@ public class ImageReader {
         }
       }
       if (!U.isValidBitmap(bitmap)) {
-        bitmap = MediaStore.Video.Thumbnails.getThumbnail(UI.getAppContext().getContentResolver(), imageId, MediaStore.Images.Thumbnails.MINI_KIND, opts);
+        try {
+          bitmap = MediaStore.Video.Thumbnails.getThumbnail(UI.getAppContext().getContentResolver(), imageId, MediaStore.Images.Thumbnails.MINI_KIND, opts);
+        } catch (Throwable t) {
+          t.printStackTrace();
+        }
       }
     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imageId);
       try {
-        bitmap = UI.getAppContext().getContentResolver().loadThumbnail(uri, new Size(512, 512), actor.getCancellationSignal());
+        bitmap = UI.getAppContext().getContentResolver().loadThumbnail(uri, new android.util.Size(512, 512), actor.getCancellationSignal());
       } catch (OperationCanceledException | IOException e) {
         bitmap = null;
       }
@@ -565,10 +583,16 @@ public class ImageReader {
         }
       }
     } else {
-      bitmap = MediaStore.Images.Thumbnails.getThumbnail(UI.getAppContext().getContentResolver(), imageId, MediaStore.Images.Thumbnails.MINI_KIND, opts);
+      try {
+        bitmap = MediaStore.Images.Thumbnails.getThumbnail(UI.getAppContext().getContentResolver(), imageId, MediaStore.Images.Thumbnails.MINI_KIND, opts);
+      } catch (Throwable t) {
+        t.printStackTrace();
+        bitmap = null;
+      }
     }
-    if (bitmap == null)
+    if (!U.isValidBitmap(bitmap) && !file.isVideo()) {
       bitmap = decodeFile(file.getFilePath(), opts);
+    }
 
     if (bitmap != null) {
       if (!file.isWebp() && file.shouldUseBlur() && file.needBlur()) {
@@ -632,6 +656,50 @@ public class ImageReader {
       Log.e("Error decoding file", t);
     }
     return null;
+  }
+
+  public static Bitmap decodeVideoFrame (String path, int maxSize) {
+    int[] metadata = new int[4];
+    long ptr = N.createDecoder(path, metadata, 0);
+    if (ptr == 0)
+      return null;
+    int rotation = U.getVideoRotation(path);
+    int width = metadata[0];
+    int height = metadata[1];
+    boolean error = (width <= 0 || height <= 0);
+    boolean ok = false;
+    Bitmap bitmap = null;
+    if (!error) {
+      try {
+        bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        int ret = N.getVideoFrame(ptr, bitmap, metadata);
+        ok = ret == 1 && !N.isVideoBroken(ptr);
+      } catch (Throwable t) {
+        Log.i("Unable to read video frame", t);
+      }
+    }
+    N.destroyDecoder(ptr);
+    if (ok) {
+      try {
+        if (maxSize < Math.max(bitmap.getWidth(), bitmap.getHeight())) {
+          bitmap = resizeBitmap(bitmap, maxSize, maxSize, false, true, true);
+        }
+        if (rotation != 0) {
+          bitmap = TdlibFileGenerationManager.rotateBitmap(bitmap, rotation);
+        }
+        if (U.isValidBitmap(bitmap)) {
+          return bitmap;
+        }
+      } catch (Throwable t) {
+        Log.i("Unable to post-process video frame", t);
+      }
+    }
+    U.recycle(bitmap);
+    return null;
+  }
+
+  public static Bitmap decodeVideoFrame (String path, int width, int height, int maxSize) {
+    return decodeVideoFrame(path, maxSize);
   }
 
   public static Bitmap decodeLottieFrame (String path, int maxSize) {
@@ -781,12 +849,17 @@ public class ImageReader {
       return bitmap;
     }
 
-    float ratio = Math.min((float) maxWidth / (float) width, (float) maxHeight / (float) height);
+    float ratio = Math.min(
+      (float) maxWidth / (float) width,
+      (float) maxHeight / (float) height
+    );
 
     Bitmap resized = null;
 
     try {
-      resized = Bitmap.createScaledBitmap(bitmap, (int) (width * ratio), (int) (height * ratio), true);
+      int scaledWidth = Math.max(1, (int) (width * ratio));
+      int scaledHeight = Math.max(1, (int) (height * ratio));
+      resized = Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true);
       if (resized != null) {
         if (allowRecycle && !bitmap.isRecycled()) {
           bitmap.recycle();
@@ -798,7 +871,7 @@ public class ImageReader {
     } catch (Throwable t) {
       Log.w("Cannot resize bitmap", t);
       if (!returnOriginal) {
-        if (resized != null) { try { resized.recycle();} catch (Throwable ignored) { } }
+        if (resized != null) { try { resized.recycle(); } catch (Throwable ignored) { } }
         throw t;
       }
     }

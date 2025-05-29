@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,7 @@
  */
 package org.thunderdog.challegram.navigation;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
@@ -23,29 +24,31 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.config.Config;
-import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.TGMessage;
 import org.thunderdog.challegram.support.RippleSupport;
-import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeInvalidateListener;
+import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.ui.MessageOptionsPagerController;
 import org.thunderdog.challegram.unsorted.Size;
 import org.thunderdog.challegram.widget.ReactionsSelectorRecyclerView;
 
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.MathUtils;
 
+@SuppressLint("ViewConstructor")
 public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implements PagerHeaderView, StretchyHeaderView, ViewPagerTopView.SelectionChangeListener, ThemeInvalidateListener {
   private static class VH extends RecyclerView.ViewHolder {
     public VH (View itemView) {
@@ -56,32 +59,6 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
 
   @Override
   public void checkRtl () {
-    LinearLayoutManager manager = (LinearLayoutManager) getRecyclerView().getLayoutManager();
-    if (manager.getReverseLayout() != Lang.rtl()) {
-      View view = manager.findViewByPosition(0);
-      boolean needScroll = false;
-      int scrollOffset = 0;
-      if (view != null) {
-        int parentWidth = getRecyclerView().getMeasuredWidth();
-        int viewWidth = view.getMeasuredWidth();
-        int viewOffset = view.getLeft();
-        if (viewWidth > parentWidth) {
-          int availScrollX = viewWidth - parentWidth;
-          int scrolledX;
-          if (Lang.rtl()) { // LTR -> RTL
-            scrolledX = -viewOffset;
-          } else { // RTL -> LTR
-            scrolledX = availScrollX + viewOffset;
-          }
-          scrollOffset = -scrolledX;
-          needScroll = true;
-        }
-      }
-      manager.setReverseLayout(Lang.rtl());
-      if (needScroll) {
-        manager.scrollToPositionWithOffset(0, scrollOffset);
-      }
-    }
     getTopView().checkRtl();
   }
 
@@ -93,7 +70,8 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
     }
 
     @Override
-    public VH onCreateViewHolder (ViewGroup parent, int viewType) {
+    @NonNull
+    public VH onCreateViewHolder (@NonNull ViewGroup parent, int viewType) {
       if (topView.getParent() != null) {
         Log.w("ViewPagerHeaderViewCompact: topView is already attached to another cel");
         ((ViewGroup) topView.getParent()).removeView(topView);
@@ -102,7 +80,7 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
     }
 
     @Override
-    public void onBindViewHolder (VH holder, int position) {
+    public void onBindViewHolder (@NonNull VH holder, int position) {
     }
 
     @Override
@@ -116,75 +94,78 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
   @Nullable
   private final ReactionsSelectorRecyclerView reactionsSelectorRecyclerView;
   private final BackHeaderButton backButton;
+  private final @Nullable ImageView moreButton;
   private boolean isScrollEnabled = true;
-  private int rightOffset;
+
+  private final MessageOptionsPagerController.State state;
+
   private final boolean needReactionSelector;
   private final boolean needShowReactions, needShowViews;
 
-  public ViewPagerHeaderViewReactionsCompact (Context context, Tdlib tdlib, TGMessage message, int rightOffset, boolean needReactionSelector, boolean needShowReactions, boolean needShowViews) {
+  public ViewPagerHeaderViewReactionsCompact (Context context, MessageOptionsPagerController.State state) {
     super(context);
-    this.rightOffset = rightOffset; // - (needShowReactions || needShowViews ? Screen.dp(12) : 0);
-    this.needReactionSelector = needReactionSelector;
-    this.needShowReactions = needShowReactions;
-    this.needShowViews = needShowViews;
+    this.state = state;
+
+    this.needReactionSelector = state.needShowMessageOptions;
+    this.needShowReactions = state.needShowMessageReactionSenders;
+    this.needShowViews = state.needShowMessageViews;
+
+    final boolean needShowMoreButton = state.needShowReactionsPopupPicker;
+    final int rightOffset = state.headerAlwaysVisibleCountersWidth;
 
     ViewPagerTopView topView = new ViewPagerTopView(context);
-    topView.setSelectionColorId(R.id.theme_color_headerTabActive);
-    topView.setTextFromToColorId(R.id.theme_color_headerTabInactiveText, R.id.theme_color_headerTabActiveText);
+    topView.setSelectionColorId(ColorId.headerTabActive);
+    topView.setTextFromToColorId(ColorId.headerTabInactiveText, ColorId.headerTabActiveText);
     topView.setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
     topView.setSelectionChangeListener(this);
 
     adapter = new A(topView);
 
-    if (needReactionSelector) {
-      reactionsSelectorRecyclerView = new ReactionsSelectorRecyclerView(context, message) {
-        @Override
-        protected void dispatchDraw (Canvas c) {
-          super.dispatchDraw(c);
-          if (rightOffset > 0) {
-            int width = getMeasuredWidth();
-            float s = computeHorizontalScrollRange() - computeHorizontalScrollOffset() - computeHorizontalScrollExtent();
-            int alpha = (int) (MathUtils.clamp(s / Screen.dp(20f)) * 255);
-
-            shadowPaint2.setAlpha(alpha);
-            c.save();
-            c.translate(width - shadowSize, 0);
-            c.drawRect(0, 0, shadowSize, Screen.dp(52), shadowPaint2);
-            c.restore();
-            shadowPaint2.setAlpha(255);
-          }
-        }
-
-        @Override
-        public void onScrolled (int dx, int dy) {
-          if (rightOffset > 0) {
-            invalidate();
-          }
-        }
-      };
-      reactionsSelectorRecyclerView.setOverScrollMode(Config.HAS_NICE_OVER_SCROLL_EFFECT ? OVER_SCROLL_IF_CONTENT_SCROLLS : OVER_SCROLL_NEVER);
+    if (this.needReactionSelector) {
+      final int rightOffsetR = state.headerAlwaysVisibleCountersWidth + Screen.dp(needShowMoreButton ? 56: 0);
+      reactionsSelectorRecyclerView = new ReactionsSelectorRecyclerView(context, state);
       reactionsSelectorRecyclerView.setLayoutParams(FrameLayoutFix.newParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT,
-        Gravity.CENTER_VERTICAL, 0, 0, this.rightOffset, 0));
+        Gravity.CENTER_VERTICAL, 0, 0, rightOffsetR, 0));
+      reactionsSelectorRecyclerView.setNeedDrawBorderGradient(rightOffset > 0);
       addView(reactionsSelectorRecyclerView);
+      if (state.needShowReactionsPopupPicker) {
+        reactionsSelectorRecyclerView.setVisibility(GONE);
+      }
     } else {
       reactionsSelectorRecyclerView = null;
     }
 
     backButton = new BackHeaderButton(context);
     backButton.setLayoutParams(FrameLayoutFix.newParams(Screen.dp(56f), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.TOP | Gravity.LEFT));
-    backButton.setButtonFactor(needReactionSelector ? BackHeaderButton.TYPE_BACK : BackHeaderButton.TYPE_CLOSE);
+    backButton.setButtonFactor(this.needReactionSelector ? BackHeaderButton.TYPE_BACK : BackHeaderButton.TYPE_CLOSE);
     RippleSupport.setTransparentSelector(backButton);
     Views.setClickable(backButton);
-    setBackButtonAlpha(1f);
-
     addView(backButton);
+
+    if (needShowMoreButton) {
+      moreButton = new ImageView(context);
+      moreButton.setLayoutParams(FrameLayoutFix.newParams(Screen.dp(56f), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.TOP | Gravity.LEFT));
+      moreButton.setImageResource(R.drawable.baseline_small_arrow_down_24);
+      moreButton.setScaleType(ImageView.ScaleType.CENTER);
+      moreButton.setColorFilter(Paints.getColorFilter(Theme.getColor(ColorId.icon)));
+      RippleSupport.setTransparentSelector(moreButton);
+      Views.setClickable(moreButton);
+      addView(moreButton);
+    } else {
+      moreButton = null;
+    }
+
+    setBackButtonAlpha(this.needReactionSelector ? 0f: 1f);
 
     recyclerView = new RecyclerView(context) {
       @Override
       protected void dispatchDraw (Canvas c) {
         super.dispatchDraw(c);
+        if (shadowPaint1 == null) {
+          return;
+        }
         int width = getMeasuredWidth();
         float translationX = getTranslationX();
         int alpha1 = (int) ((1f - MathUtils.clamp(translationX / (width / 2f))) * 255);
@@ -205,7 +186,12 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
       ViewGroup.LayoutParams.MATCH_PARENT,
       Gravity.TOP, Screen.dp(56), 0, 0, 0));
     recyclerView.setOverScrollMode(Config.HAS_NICE_OVER_SCROLL_EFFECT ? OVER_SCROLL_IF_CONTENT_SCROLLS : OVER_SCROLL_NEVER);
-    recyclerView.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, Lang.rtl()) {
+    recyclerView.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false) {
+      @Override
+      protected boolean isLayoutRTL () {
+        return false;
+      }
+
       @Override
       public boolean canScrollHorizontally () {
         return isScrollEnabled && super.canScrollHorizontally();
@@ -218,17 +204,23 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
     updatePaints(Theme.backgroundColor());
   }
 
-  LinearGradient shader1;
-  LinearGradient shader2;
-  private Paint shadowPaint1;
-  private Paint shadowPaint2;
-  private final int shadowSize = Screen.dp(35);
-
-  public void setReactionsSelectorDelegate (ReactionsSelectorRecyclerView.ReactionSelectDelegate delegate) {
-    if (reactionsSelectorRecyclerView != null) {
-      reactionsSelectorRecyclerView.setDelegate(delegate);
-    }
+  private float getReactionPickerHiddenZoneLeft () {
+    final int x = (int) (reactionsSelectorRecyclerView != null ? reactionsSelectorRecyclerView.getTranslationX() : 0);
+    final float width = MessageOptionsPagerController.getReactionsPickerRightHiddenWidth(state);
+    return getMeasuredWidth() - width + x;
   }
+
+  @Override
+  protected void dispatchDraw (Canvas c) {
+    if (state.needShowReactionsPopupPicker) {
+      c.drawRect(getReactionPickerHiddenZoneLeft(), 0, getMeasuredWidth(), getMeasuredHeight(), Paints.fillingPaint(Theme.backgroundColor()));
+    }
+    super.dispatchDraw(c);
+  }
+
+  LinearGradient shader1;
+  private Paint shadowPaint1;
+  private final int shadowSize = Screen.dp(35);
 
   private int oldPaintsColor = 0;
 
@@ -238,17 +230,11 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
     } else return;
 
     shader1 = new LinearGradient(0, 0, shadowSize / 2f, 0, color, 0, Shader.TileMode.CLAMP);
-    shader2 = new LinearGradient(0, 0, shadowSize, 0, 0, color, Shader.TileMode.CLAMP);
     if (shadowPaint1 == null) {
       shadowPaint1 = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
     }
-    if (shadowPaint2 == null) {
-      shadowPaint2 = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
-    }
     shadowPaint1.setShader(shader1);
-    shadowPaint2.setShader(shader2);
     if (reactionsSelectorRecyclerView != null) {
-      reactionsSelectorRecyclerView.invalidateAll();
       reactionsSelectorRecyclerView.invalidate();
     }
     recyclerView.invalidate();
@@ -261,7 +247,7 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
     if (needReactionSelector && reactionsSelectorRecyclerView != null) {
       int width = getMeasuredWidth();
       if (position == 0) {
-        float offset = (width - rightOffset - Screen.dp(56)) * (1f - positionOffset);
+        float offset = (width - state.headerAlwaysVisibleCountersWidth - Screen.dp(56)) * (1f - positionOffset);
         if (needShowReactions && needShowViews) {
           getTopView().setItemTranslationX(1, (int) (Screen.dp(-8) * (1f - positionOffset)));
           getTopView().setItemTranslationX(2, (int) (Screen.dp(-8) * (1f - positionOffset)));
@@ -271,6 +257,9 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
         recyclerView.setTranslationX(offset);
         reactionsSelectorRecyclerView.setTranslationX(-width * positionOffset);
         backButton.setTranslationX(offset);
+        if (moreButton != null) {
+          moreButton.setTranslationX(offset);
+        }
         setBackButtonAlpha(positionOffset);
         isScrollEnabled = false;
       } else {
@@ -279,10 +268,14 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
         recyclerView.setTranslationX(0);
         reactionsSelectorRecyclerView.setTranslationX(-width);
         backButton.setTranslationX(0);
+        if (moreButton != null) {
+          moreButton.setTranslationX(0);
+        }
         setBackButtonAlpha(1f);
         isScrollEnabled = true;
       }
       recyclerView.invalidate();
+      invalidate();
     }
   }
 
@@ -297,6 +290,17 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
       }
       if (alpha == 0f && backButton.getVisibility() != GONE) {
         backButton.setVisibility(View.GONE);
+      }
+
+      if (moreButton != null) {
+        final float alphaMore = 1f - alpha;
+        moreButton.setAlpha(alphaMore);
+        if (alphaMore > 0f && moreButton.getVisibility() != VISIBLE) {
+          moreButton.setVisibility(View.VISIBLE);
+        }
+        if (alphaMore == 0f && moreButton.getVisibility() != GONE) {
+          moreButton.setVisibility(View.GONE);
+        }
       }
     }
   }
@@ -327,18 +331,14 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
 
     final int availScrollX = viewWidth - parentWidth;
     final int scrolledX;
-    if (Lang.rtl()) {
-      scrolledX = availScrollX + view.getLeft();
-    } else {
-      scrolledX = -view.getLeft();
-    }
+    scrolledX = -view.getLeft();
     int viewX = -scrolledX;
 
     if ((getParent() != null && ((View) getParent()).getMeasuredWidth() > getMeasuredWidth()) || (viewWidth - parentWidth) < lastItemWidth / 2) {
       int desiredViewLeft = (int) ((float) -(viewWidth - parentWidth) * totalFactor);
       if (viewX != desiredViewLeft) {
         recyclerView.stopScroll();
-        int diff = (desiredViewLeft - viewX) * (Lang.rtl() ? 1 : -1);
+        int diff = (desiredViewLeft - viewX) * -1;
         if (animated) {
           recyclerView.smoothScrollBy(diff, 0);
         } else {
@@ -357,7 +357,7 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
         }
         if (newViewX != viewX) {
           recyclerView.stopScroll();
-          int offset = (viewX - newViewX) * (Lang.rtl() ? -1 : 1);
+          int offset = (viewX - newViewX);
           if (animated) {
             recyclerView.smoothScrollBy(offset, 0);
           } else {
@@ -407,7 +407,8 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
 
   @Override
   public boolean onTouchEvent (MotionEvent e) {
-    return !(e.getAction() == MotionEvent.ACTION_DOWN && !canTouchAt(e.getX(), e.getY())) && super.onTouchEvent(e);
+    return !(e.getAction() == MotionEvent.ACTION_DOWN && !canTouchAt(e.getX(), e.getY())) && super.onTouchEvent(e)
+      || (state.needShowReactionsPopupPicker && (e.getX() > getReactionPickerHiddenZoneLeft()));
   }
 
   private boolean canTouchAt (float x, float y) {
@@ -421,12 +422,21 @@ public class ViewPagerHeaderViewReactionsCompact extends FrameLayoutFix implemen
   }
 
   @Override
+  public View getView () {
+    return this;
+  }
+
+  @Override
   public ViewPagerTopView getTopView () {
     return adapter.topView;
   }
 
   public BackHeaderButton getBackButton () {
     return backButton;
+  }
+
+  @Nullable public ImageView getMoreButton () {
+    return moreButton;
   }
 
   private static final float TOP_SCALE_LIMIT = .25f;

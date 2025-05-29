@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.collection.SparseArrayCompat;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.theme.TGBackground;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeId;
@@ -30,7 +30,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.StringUtils;
-import me.vkryl.td.TdConstants;
 
 public class TdlibWallpaperManager {
   public interface Callback {
@@ -118,7 +117,7 @@ public class TdlibWallpaperManager {
       if (result.getConstructor() == TdApi.Background.CONSTRUCTOR) {
         TdApi.Background background = (TdApi.Background) result;
         if (background.document != null) {
-          tdlib.client().send(new TdApi.DownloadFile(background.document.document.id, 32, 0, 0, true), fileResult -> tdlib.ui().post(after));
+          tdlib.client().send(new TdApi.DownloadFile(background.document.document.id, TdlibFilesManager.PRIORITY_CHAT_WALLPAPER, 0, 0, true), fileResult -> tdlib.ui().post(after));
           return;
         }
       }
@@ -138,30 +137,25 @@ public class TdlibWallpaperManager {
   private final SparseArrayCompat<List<TGBackground>> backgrounds = new SparseArrayCompat<>();
 
   private void fetchBackgrounds (boolean forDarkTheme) {
-    tdlib.client().send(new TdApi.GetBackgrounds(forDarkTheme), result -> {
-      switch (result.getConstructor()) {
-        case TdApi.Backgrounds.CONSTRUCTOR: {
-          TdApi.Background[] rawBackgrounds = ((TdApi.Backgrounds) result).backgrounds;
-          List<TGBackground> backgrounds = new ArrayList<>(rawBackgrounds.length);
-          for (TdApi.Background rawBackground : rawBackgrounds) {
-            backgrounds.add(new TGBackground(tdlib, rawBackground));
-          }
-          List<Callback> callbacks;
-          synchronized (this.backgrounds) {
-            this.backgrounds.put(forDarkTheme ? 1 : 0, backgrounds);
-            callbacks = ArrayUtils.removeWithKey(this.callbacks, forDarkTheme ? 1 : 0);
-          }
-          if (callbacks != null) {
-            for (Callback callback : callbacks) {
-              if (callback != null)
-                callback.onReceiveWallpapers(backgrounds);
-            }
-          }
-          break;
+    tdlib.send(new TdApi.GetInstalledBackgrounds(forDarkTheme), (result, error) -> {
+      if (error != null) {
+        UI.showError(error);
+        return;
+      }
+      List<TGBackground> backgrounds = new ArrayList<>(result.backgrounds.length);
+      for (TdApi.Background rawBackground : result.backgrounds) {
+        backgrounds.add(new TGBackground(tdlib, rawBackground));
+      }
+      List<Callback> callbacks;
+      synchronized (this.backgrounds) {
+        this.backgrounds.put(forDarkTheme ? 1 : 0, backgrounds);
+        callbacks = ArrayUtils.removeWithKey(this.callbacks, forDarkTheme ? 1 : 0);
+      }
+      if (callbacks != null) {
+        for (Callback callback : callbacks) {
+          if (callback != null)
+            callback.onReceiveWallpapers(backgrounds);
         }
-        case TdApi.Error.CONSTRUCTOR:
-          UI.showError(result);
-          break;
       }
     });
   }

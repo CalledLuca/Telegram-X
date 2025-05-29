@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ import android.os.SystemClock;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.core.BaseThread;
 import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.unsorted.Settings;
 
 import java.io.File;
@@ -31,6 +32,7 @@ import me.vkryl.core.FileUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.leveldb.LevelDB;
 
+@Deprecated
 public class LottieCache {
   private static LottieCache instance;
 
@@ -45,7 +47,8 @@ public class LottieCache {
     return instance;
   }
 
-  private final BaseThread generationThread = new BaseThread("LottieGenerationThread"), generationFullThread = new BaseThread("LottieGenerationThread2");
+  private final BaseThread gcThread = new BaseThread("LottieCacheGcThread");
+  private final BaseThread[] threadPool = new BaseThread[4];
 
   private LottieCache () { }
 
@@ -86,9 +89,9 @@ public class LottieCache {
       String[] fileData = key.substring(LOTTIE_KEY_PREFIX.length()).split("/", 3);
       if (fileData.length != 3)
         return false;
-      int accountId = StringUtils.parseInt(fileData[0], -1);
+      /*int accountId = StringUtils.parseInt(fileData[0], -1);
       if (accountId == -1)
-        return false;
+        return false;*/
       String directory = fileData[1];
       String fileName = fileData[2];
       if (StringUtils.isEmpty(directory) || StringUtils.isEmpty(fileName))
@@ -107,7 +110,7 @@ public class LottieCache {
   }
 
   private void limitFileCount (int count, String key) {
-    generationThread.post(() -> {
+    gcThread.post(() -> {
       final LevelDB db = Settings.instance().pmc();
       final File cacheDir = getCacheDir();
       List<Entry> entries = new ArrayList<>();
@@ -159,7 +162,7 @@ public class LottieCache {
   }
 
   public void gc () {
-    generationThread.post(() -> {
+    gcThread.post(() -> {
       long nextTime = -1;
       final File cacheDir = getCacheDir();
 
@@ -208,41 +211,44 @@ public class LottieCache {
     }, 0);
   }
 
-  private Runnable gcRunnable = this::gc;
+  private final Runnable gcRunnable = this::gc;
 
   private void scheduleGc (long timeout, boolean force) {
     if (scheduledAt == 0 || (SystemClock.uptimeMillis() + timeout < scheduledAt) || force) {
       cancelScheduledGc();
       scheduledAt = SystemClock.uptimeMillis() + timeout;
-      generationThread.post(gcRunnable, timeout);
+      gcThread.post(gcRunnable, timeout);
     }
   }
 
   private void cancelScheduledGc () {
     if (scheduledAt != 0) {
-      generationThread.getHandler().removeCallbacks(gcRunnable);
+      gcThread.getHandler().removeCallbacks(gcRunnable);
       scheduledAt = 0;
     }
   }
 
   public static File getCacheDir (int accountId, int size, boolean optimize, String colorKey) {
     File cacheDir = getCacheDir();
-    if (!cacheDir.exists() && !cacheDir.mkdir())
+    if (!FileUtils.createDirectory(cacheDir))
       return null;
     cacheDir = new File(cacheDir, Integer.toString(accountId));
-    if (!cacheDir.exists() && !cacheDir.mkdir())
+    if (!FileUtils.createDirectory(cacheDir))
       return null;
     String folderName = optimize ? "thumbs" + size : Integer.toString(size);
     if (!StringUtils.isEmpty(colorKey))
       folderName += "_" + colorKey;
     cacheDir = new File(cacheDir, folderName);
-    if (!cacheDir.exists() && !cacheDir.mkdir())
+    if (!FileUtils.createDirectory(cacheDir))
       return null;
     return cacheDir;
   }
 
-  public BaseThread thread (boolean needOptimize) {
-    return needOptimize ? generationThread : generationFullThread;
+  public BaseThread thread (int optimizationLevel) {
+    if (threadPool[optimizationLevel] == null) {
+      threadPool[optimizationLevel] = new BaseThread("LottieCacheThread-" + optimizationLevel);
+    }
+    return threadPool[optimizationLevel];
   }
 
   private static final String LOTTIE_KEY_PREFIX = "lottie_";
@@ -252,7 +258,7 @@ public class LottieCache {
       keepAliveMs = 0;
     }
     String colorKey = fitzpatrickType != 0 ? Integer.toString(fitzpatrickType) : null;
-    int accountId = file.tdlib().id();
+    int accountId = file.tdlib() != null ? file.tdlib().id() : TdlibAccount.NO_ID;
     File cacheDir = getCacheDir(accountId, size, optimize, colorKey);
     if (cacheDir == null)
       return null;
@@ -274,12 +280,12 @@ public class LottieCache {
   }
 
   public void checkFile (GifFile file, File cacheFile, boolean optimize, int size, int fitzpatrickType) {
-    generationThread.post(() -> {
+    gcThread.post(() -> {
       if (optimize) {
         cacheFile.delete();
       } else {
         String colorKey = fitzpatrickType != 0 ? Integer.toString(fitzpatrickType) : null;
-        String key = getCacheFileKey(file.tdlib.accountId(), optimize, size, colorKey, new File(file.getFilePath()).getName());
+        String key = getCacheFileKey(file.tdlib != null ? file.tdlib.accountId() : TdlibAccount.NO_ID, optimize, size, colorKey, new File(file.getFilePath()).getName());
         long time = Settings.instance().getLong(key, 0);
         if (time == 0 || System.currentTimeMillis() >= time) {
           cacheFile.delete();

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,6 @@ public class TGRemoveReceiver extends BroadcastReceiver {
   @Override
   public void onReceive (Context context, Intent intent) {
     TdlibNotificationExtras extras = TdlibNotificationExtras.parse(intent.getExtras());
-    TdlibManager.performExternalAction(context, TdlibManager.EXTERNAL_ACTION_MARK_AS_HIDDEN, extras);
+    TdlibManager.performExternalAction(context, TdlibManager.ExternalAction.MARK_AS_HIDDEN, extras);
   }
 }

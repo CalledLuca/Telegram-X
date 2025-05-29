@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,6 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.RelativeLayout;
-import android.widget.TextView;
 
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
@@ -30,35 +29,40 @@ import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.AvatarPlaceholder;
 import org.thunderdog.challegram.data.TGStickerSetInfo;
-import org.thunderdog.challegram.emoji.Emoji;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.AvatarReceiver;
+import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.navigation.RtlCheckListener;
 import org.thunderdog.challegram.navigation.ViewController;
-import org.thunderdog.challegram.telegram.TGLegacyManager;
+import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
+import org.thunderdog.challegram.util.text.Highlight;
+import org.thunderdog.challegram.util.text.TextColorSets;
 
 import me.vkryl.core.lambda.Destroyable;
 
-public class DoubleTextView extends RelativeLayout implements RtlCheckListener, Destroyable, TGLegacyManager.EmojiLoadListener {
-  private TextView titleView;
-  private TextView subtitleView;
-  private final ImageReceiver imageReceiver;
-  private final GifReceiver gifReceiver;
+public class DoubleTextView extends RelativeLayout implements RtlCheckListener, Destroyable {
+  private final TextView titleView, subtitleView;
+  private final ComplexReceiver receiver;
+  private final EmojiStatusHelper emojiStatusHelper;
   private @Nullable NonMaterialButton button;
 
   private boolean ignoreStartOffset;
   private int currentStartOffset;
+  private float textWidth;
 
   @Override
   public void checkRtl () {
@@ -67,7 +71,7 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
     if (subtitleView.getGravity() != Lang.gravity())
       subtitleView.setGravity(Lang.gravity());
     int leftMargin = Screen.dp(72f) - (ignoreStartOffset ? currentStartOffset / 2 : 0);
-    int rightMargin = Screen.dp(16f);
+    int rightMargin = Screen.dp(16f) + emojiStatusHelper.getWidth(Screen.dp(6));
     updateLayoutParams(titleView, leftMargin, rightMargin, Screen.dp(15f));
     updateLayoutParams(subtitleView, leftMargin, rightMargin, Screen.dp(38f));
   }
@@ -90,6 +94,8 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
   public DoubleTextView (Context context) {
     super(context);
 
+    this.emojiStatusHelper = new EmojiStatusHelper(null, this, null);
+
     int viewHeight = Screen.dp(72f);
     setPadding(0, Math.max(1, Screen.dp(.5f)), 0, 0);
     setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, viewHeight));
@@ -108,7 +114,8 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
       params.addRule(RelativeLayout.LEFT_OF, R.id.btn_double);
     }
 
-    titleView = new NoScrollTextView(context);
+    titleView = new EmojiTextView(context);
+    titleView.setScrollDisabled(true);
     titleView.setId(R.id.text_title);
     titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16f);
     titleView.setTypeface(Fonts.getRobotoMedium());
@@ -130,7 +137,8 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
       params.addRule(RelativeLayout.LEFT_OF, R.id.btn_double);
     }
 
-    subtitleView = new NoScrollTextView(context);
+    subtitleView = new EmojiTextView(context);
+    subtitleView.setScrollDisabled(true);
     subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13f);
     subtitleView.setTextColor(Theme.textDecentColor());
     subtitleView.setTypeface(Fonts.getRobotoRegular());
@@ -139,16 +147,10 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
     subtitleView.setGravity(Lang.gravity());
     subtitleView.setLayoutParams(params);
 
-    TGLegacyManager.instance().addEmojiListener(this);
-
     int imageSize = viewHeight - Screen.dp(12f) * 2;
     int offset = currentStartOffset = viewHeight / 2 - imageSize / 2;
 
-    imageReceiver = new ImageReceiver(this, 0);
-    imageReceiver.setBounds(offset, offset, offset + imageSize, offset + imageSize);
-
-    gifReceiver = new GifReceiver(this);
-    gifReceiver.setBounds(offset, offset, offset + imageSize, offset + imageSize);
+    this.receiver = new ComplexReceiver(this);
 
     addView(titleView);
     addView(subtitleView);
@@ -156,26 +158,23 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
   }
 
   @Override
-  public void onEmojiPartLoaded () {
-    titleView.invalidate();
-    subtitleView.invalidate();
-    invalidate();
-  }
-
-  @Override
   protected void onMeasure (int widthMeasureSpec, int heightMeasureSpec) {
     super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    layoutReceiver(receiver.getImageReceiver(0));
+    layoutReceiver(receiver.getGifReceiver(0));
+    layoutReceiver(receiver.getAvatarReceiver(0));
+  }
+
+  private void layoutReceiver (Receiver receiver) {
     int viewHeight = Screen.dp(72f);
     int imageSize = viewHeight - Screen.dp(12f) * 2;
     int offset = currentStartOffset = viewHeight / 2 - imageSize / 2;
     int startOffset = ignoreStartOffset ? offset / 2 : offset;
     if (Lang.rtl()) {
       int x = getMeasuredWidth() - startOffset - imageSize;
-      imageReceiver.setBounds(x, offset, x + imageSize, offset + imageSize);
-      gifReceiver.setBounds(x, offset, x + imageSize, offset + imageSize);
+      receiver.setBounds(x, offset, x + imageSize, offset + imageSize);
     } else {
-      imageReceiver.setBounds(startOffset, offset, startOffset + imageSize, offset + imageSize);
-      gifReceiver.setBounds(startOffset, offset, startOffset + imageSize, offset + imageSize);
+      receiver.setBounds(startOffset, offset, startOffset + imageSize, offset + imageSize);
     }
   }
 
@@ -193,14 +192,14 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
   public void setIsRounded (boolean isRounded) {
     if (this.isRounded != isRounded) {
       this.isRounded = isRounded;
-      imageReceiver.setRadius(isRounded ? imageReceiver.getWidth() / 2 : 0);
+      receiver.getAvatarReceiver(0).setFullScreen(!isRounded, false);
     }
   }
 
   private void checkButton () {
     if (button == null) {
       RelativeLayout.LayoutParams params;
-      params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Screen.dp(28f));
+      params = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Screen.dp(28f));
       params.addRule(Lang.rtl() ? RelativeLayout.ALIGN_PARENT_LEFT : RelativeLayout.ALIGN_PARENT_RIGHT);
       params.addRule(RelativeLayout.CENTER_VERTICAL);
       params.rightMargin = params.leftMargin = Screen.dp(19f);
@@ -232,30 +231,31 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
 
   @Override
   public void performDestroy () {
-    imageReceiver.destroy();
-    gifReceiver.destroy();
-    TGLegacyManager.instance().removeEmojiListener(this);
+    receiver.performDestroy();
+    emojiStatusHelper.performDestroy();
   }
 
   public void attach () {
-    imageReceiver.attach();
-    gifReceiver.attach();
+    receiver.attach();
+    emojiStatusHelper.attach();
   }
 
   public void detach () {
-    imageReceiver.detach();
-    gifReceiver.detach();
+    receiver.detach();
+    emojiStatusHelper.detach();
   }
 
   private @Nullable TGStickerSetInfo stickerSetInfo;
   private @Nullable Path stickerSetContour;
+  private boolean useAvatarReceiver;
 
-  public void setStickerSet (@NonNull TGStickerSetInfo stickerSet) {
+  public void setStickerSet (@NonNull TGStickerSetInfo stickerSet, String highlight) {
     needPlaceholder = false;
-    titleView.setText(Emoji.instance().replaceEmoji(stickerSet.getTitle()));
-    subtitleView.setText(Lang.plural(stickerSet.isMasks() ? R.string.xMasks : R.string.xStickers, stickerSet.getSize()));
-    imageReceiver.requestFile(stickerSet.getPreviewImage());
-    gifReceiver.requestFile(stickerSet.getPreviewAnimation());
+    titleView.setText(Highlight.toSpannable(stickerSet.getTitle(), highlight));
+    subtitleView.setText(Lang.plural(stickerSet.isMasks() ? R.string.xMasks : stickerSet.isEmoji() ? R.string.xEmoji : R.string.xStickers, stickerSet.getSize()));
+    receiver.getImageReceiver(0).requestFile(stickerSet.getPreviewImage());
+    receiver.getGifReceiver(0).requestFile(stickerSet.getPreviewAnimation());
+    receiver.getAvatarReceiver(0).clear();
     stickerSetContour = stickerSet.getPreviewContour(Screen.dp(72f) - Screen.dp(12f) * 2);
     stickerSetInfo = stickerSet;
   }
@@ -263,41 +263,75 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
   private boolean needPlaceholder;
 
   public void setText (CharSequence title, CharSequence subtitle) {
-    titleView.setText(Emoji.instance().replaceEmoji(title));
-    subtitleView.setText(Emoji.instance().replaceEmoji(subtitle));
+    titleView.setText(title);
+    subtitleView.setText(subtitle);
+    textWidth = U.measureText(titleView.getText(), Paints.getMediumTextPaint(16, false));
+    checkRtl();
   }
 
-  public void setTitleColorId (@ThemeColorId int colorId) {
+  public void setEmojiStatus (Tdlib tdlib, @Nullable TdApi.User user) {
+    emojiStatusHelper.updateEmoji(tdlib, user, TextColorSets.Regular.NORMAL);
+    checkRtl();
+  }
+
+  public void setTitleColorId (@ColorId int colorId) {
     titleView.setTextColor(Theme.getColor(colorId));
   }
 
-  public void setAvatar (ImageFile avatar, AvatarPlaceholder.Metadata avatarPlaceholder) {
-    imageReceiver.requestFile(avatar);
-    gifReceiver.clear();
-    setAvatarPlaceholder(avatarPlaceholder);
+  public void setUserAvatar (Tdlib tdlib, long userId) {
+    useAvatarReceiver = true;
+    receiver.getAvatarReceiver(0).requestUser(tdlib, userId, AvatarReceiver.Options.SHOW_ONLINE);
+    receiver.getGifReceiver(0).clear();
+    receiver.getImageReceiver(0).clear();
   }
 
-  private AvatarPlaceholder avatarPlaceholder;
+  public void setSenderAvatar (Tdlib tdlib, TdApi.MessageSender sender) {
+    useAvatarReceiver = true;
+    receiver.getAvatarReceiver(0).requestMessageSender(tdlib, sender, AvatarReceiver.Options.SHOW_ONLINE);
+    receiver.getGifReceiver(0).clear();
+    receiver.getImageReceiver(0).clear();
+  }
 
-  public void setAvatarPlaceholder (AvatarPlaceholder.Metadata metadata) {
-    this.avatarPlaceholder = metadata != null ? new AvatarPlaceholder(Screen.px(imageReceiver.getWidth() / 2f), metadata, null) : null;
+  public void setChatAvatar (Tdlib tdlib, long chatId) {
+    useAvatarReceiver = true;
+    receiver.getAvatarReceiver(0).requestChat(tdlib, chatId, AvatarReceiver.Options.SHOW_ONLINE);
+    receiver.getGifReceiver(0).clear();
+    receiver.getImageReceiver(0).clear();
   }
 
   @Override
   protected void onDraw (Canvas c) {
-    if (avatarPlaceholder != null) {
-      avatarPlaceholder.draw(c, imageReceiver.centerX(), imageReceiver.centerY());
-    } else if (stickerSetInfo != null && stickerSetInfo.isAnimated()) {
+    final boolean needThemedColorFilter = stickerSetInfo != null && stickerSetInfo.needThemedColorFilter();
+
+    if (useAvatarReceiver) {
+      AvatarReceiver avatarReceiver = receiver.getAvatarReceiver(0);
+      if (avatarReceiver.needPlaceholder()) {
+        avatarReceiver.drawPlaceholder(c);
+      }
+      avatarReceiver.draw(c);
+    } else if (stickerSetInfo != null && stickerSetInfo.isPreviewAnimated()) {
+      GifReceiver gifReceiver = receiver.getGifReceiver(0);
+      if (needThemedColorFilter) {
+        gifReceiver.setThemedPorterDuffColorId(ColorId.iconActive);
+      } else {
+        gifReceiver.disablePorterDuffColorFilter();
+      }
       if (gifReceiver.needPlaceholder()) {
         gifReceiver.drawPlaceholderContour(c, stickerSetContour);
       }
       gifReceiver.draw(c);
     } else {
+      ImageReceiver imageReceiver = receiver.getImageReceiver(0);
+      if (needThemedColorFilter) {
+        imageReceiver.setThemedPorterDuffColorId(ColorId.iconActive);
+      } else {
+        imageReceiver.disablePorterDuffColorFilter();
+      }
       if (imageReceiver.needPlaceholder()) {
         if (stickerSetContour != null) {
           imageReceiver.drawPlaceholderContour(c, stickerSetContour);
         } else if (needPlaceholder) {
-          imageReceiver.drawPlaceholderRounded(c, imageReceiver.getWidth() / 2);
+          imageReceiver.drawPlaceholderRounded(c, imageReceiver.getWidth() / 2f);
         }
       }
       imageReceiver.draw(c);
@@ -314,5 +348,8 @@ public class DoubleTextView extends RelativeLayout implements RtlCheckListener, 
         c.drawRect(offset, 0, getMeasuredWidth(), height, Paints.fillingPaint(Theme.separatorColor()));
       }
     }
+
+    int x = (int) (titleView.getX() + Math.min((textWidth) + Screen.dp(6), titleView.getMeasuredWidth() + Screen.dp(6)));
+    emojiStatusHelper.draw(c, x, (int) titleView.getY());
   }
 }

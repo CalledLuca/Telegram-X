@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,7 @@
  */
 package org.thunderdog.challegram.theme;
 
+import android.content.res.ColorStateList;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
@@ -22,7 +23,9 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.IntDef;
+import androidx.core.widget.TextViewCompat;
 
 import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ComplexHeaderView;
@@ -34,8 +37,8 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
 
-import me.vkryl.core.ColorUtils;
 import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.ColorUtils;
 
 public class ThemeListenerEntry {
   public static final int MODE_INVALIDATE = 0;
@@ -48,6 +51,7 @@ public class ThemeListenerEntry {
   public static final int MODE_SPECIAL_FILTER = 7;
   public static final int MODE_DOUBLE_TEXT_COLOR = 8;
   public static final int MODE_LINK_TEXT_COLOR = 9;
+  public static final int MODE_COMPOUND_DRAWABLE_COLOR = 10;
 
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({
@@ -62,12 +66,13 @@ public class ThemeListenerEntry {
     // MODE_SELECTION,
     // MODE_FROM_TO,
     MODE_SPECIAL_FILTER,
-    MODE_DOUBLE_TEXT_COLOR
+    MODE_DOUBLE_TEXT_COLOR,
+    MODE_COMPOUND_DRAWABLE_COLOR
   })
   public @interface EntryMode {}
 
   private final @EntryMode int mode;
-  private @ThemeColorId
+  private @ColorId
   int targetColor;
   private final WeakReference<Object> target;
 
@@ -84,7 +89,7 @@ public class ThemeListenerEntry {
     this.flags = BitwiseUtils.setFlag(flags, FLAG_SUBTITLE, isSubtitle);
   }
 
-  public ThemeListenerEntry (@EntryMode int mode, @ThemeColorId int targetColor, Object target) {
+  public ThemeListenerEntry (@EntryMode int mode, @ColorId int targetColor, Object target) {
     this.mode = mode;
     this.targetColor = targetColor;
     this.target = new WeakReference<>(target);
@@ -95,7 +100,7 @@ public class ThemeListenerEntry {
     return this;
   }
 
-  public void setTargetColorId (@ThemeColorId int colorId) {
+  public void setTargetColorId (@ColorId int colorId) {
     this.targetColor = colorId;
   }
 
@@ -130,6 +135,7 @@ public class ThemeListenerEntry {
     return target != null && target.equals(this.target.get()) && this.mode == mode;
   }
 
+  @ColorInt
   private int getTargetColor () {
     int color = Theme.getColor(targetColor);
     if ((flags & FLAG_SUBTITLE) != 0)
@@ -177,6 +183,12 @@ public class ThemeListenerEntry {
           }
           break;
         }
+        case MODE_COMPOUND_DRAWABLE_COLOR:
+          if (hasTargetColorChanged() && target instanceof TextView) {
+            ColorStateList tint = ColorStateList.valueOf(getTargetColor());
+            TextViewCompat.setCompoundDrawableTintList((TextView) target, tint);
+          }
+          break;
         case MODE_HINT_TEXT_COLOR: {
           if (hasTargetColorChanged()) {
             if (target instanceof TextView) {

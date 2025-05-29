@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,19 +21,19 @@ import android.view.View;
 import androidx.annotation.Nullable;
 
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.theme.ThemeDelegate;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 
 public class LineDrawModifier implements DrawModifier {
-  @ThemeColorId
+  @ColorId
   private final int colorId;
 
   private ThemeDelegate forcedTheme;
 
-  public LineDrawModifier (@ThemeColorId int colorId, @Nullable ThemeDelegate forcedTheme) {
+  public LineDrawModifier (@ColorId int colorId, @Nullable ThemeDelegate forcedTheme) {
     this.colorId = colorId;
     this.forcedTheme = forcedTheme;
   }

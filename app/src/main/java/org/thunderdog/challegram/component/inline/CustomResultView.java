@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +21,15 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.user.RemoveHelper;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.data.InlineResult;
 import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.support.RippleSupport;
+import org.thunderdog.challegram.telegram.TdlibMessageViewer;
+import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.DrawableProvider;
 import org.thunderdog.challegram.util.SelectableItemDelegate;
@@ -34,15 +38,16 @@ import org.thunderdog.challegram.widget.SparseDrawableView;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
+import me.vkryl.android.util.InvalidateContentProvider;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class CustomResultView extends SparseDrawableView implements Destroyable, SelectableItemDelegate, FactorAnimator.Target, RemoveHelper.RemoveDelegate, DrawableProvider {
+public class CustomResultView extends SparseDrawableView implements Destroyable, SelectableItemDelegate, FactorAnimator.Target, RemoveHelper.RemoveDelegate, DrawableProvider, InvalidateContentProvider, TdlibUi.MessageProvider {
   private static final int FLAG_DETACHED = 1;
   private static final int FLAG_CAUGHT = 1 << 1;
   private static final int FLAG_SELECTED = 1 << 2;
 
-  private final ComplexReceiver receiver;
+  private final ComplexReceiver receiver, textMediaReceiver;
 
   private int flags;
   private int selectionIndex = -1;
@@ -50,8 +55,13 @@ public class CustomResultView extends SparseDrawableView implements Destroyable,
   public CustomResultView (Context context) {
     super(context);
     this.receiver = new ComplexReceiver(this);
+    this.textMediaReceiver = new ComplexReceiver(this, Config.MAX_ANIMATED_EMOJI_REFRESH_RATE);
     Views.setClickable(this);
     RippleSupport.setTransparentSelector(this);
+  }
+
+  public ComplexReceiver getTextMediaReceiver () {
+    return textMediaReceiver;
   }
 
   private @Nullable InlineResult<?> result;
@@ -79,13 +89,26 @@ public class CustomResultView extends SparseDrawableView implements Destroyable,
       }
     } else {
       this.receiver.clear();
+      this.textMediaReceiver.clear();
     }
   }
 
-  public void invalidateContent (InlineResult<?> result) {
+  public boolean invalidateTextMedia (InlineResult<?> result) {
     if (this.result == result && result != null) {
-      this.result.requestContent(receiver, true);
+      this.result.requestTextMedia(textMediaReceiver);
+      return true;
     }
+    return false;
+  }
+
+  @Override
+  public boolean invalidateContent (Object cause) {
+    if (this.result == cause && cause != null) {
+      this.result.requestContent(receiver, true);
+      this.result.requestTextMedia(textMediaReceiver);
+      return true;
+    }
+    return false;
   }
 
   public void attach () {
@@ -93,6 +116,7 @@ public class CustomResultView extends SparseDrawableView implements Destroyable,
     if (!isAttached) {
       flags &= ~FLAG_DETACHED;
       receiver.attach();
+      textMediaReceiver.attach();
       if (result != null) {
         result.attachToView(this);
       }
@@ -104,6 +128,7 @@ public class CustomResultView extends SparseDrawableView implements Destroyable,
     if (isAttached) {
       flags |= FLAG_DETACHED;
       receiver.detach();
+      textMediaReceiver.detach();
       if (result != null) {
         result.detachFromView(this);
       }
@@ -249,5 +274,15 @@ public class CustomResultView extends SparseDrawableView implements Destroyable,
       helper = new RemoveHelper(this, R.drawable.baseline_remove_circle_24);
     }
     helper.onSwipe();
+  }
+
+  @Override
+  public TdApi.Message getVisibleMessage () {
+    return result != null ? result.getMessage() : null;
+  }
+
+  @Override
+  public int getVisibleMessageFlags () {
+    return TdlibMessageViewer.Flags.NO_SENSITIVE_SCREENSHOT_NOTIFICATION;
   }
 }

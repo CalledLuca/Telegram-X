@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,12 +24,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.UiThread;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.Log;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.base.SettingView;
 import org.thunderdog.challegram.core.Lang;
@@ -37,6 +36,7 @@ import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Screen;
@@ -50,7 +50,7 @@ import java.util.ArrayList;
 
 import me.vkryl.android.widget.FrameLayoutFix;
 
-public class InviteLinkController extends ViewController<InviteLinkController.Arguments> implements View.OnClickListener, Client.ResultHandler, Unlockable {
+public class InviteLinkController extends ViewController<InviteLinkController.Arguments> implements View.OnClickListener, Unlockable {
   private static final int FLAG_GETTING_LINK = 0x01;
 
   private long chatId;
@@ -98,12 +98,14 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
   @Override
   protected View onCreateView (Context context) {
     contentView = new RecyclerView(context);
-    ViewSupport.setThemedBackground(contentView, R.id.theme_color_background, this);
+    ViewSupport.setThemedBackground(contentView, ColorId.background, this);
     contentView.setLayoutManager(new LinearLayoutManager(context, RecyclerView.VERTICAL, false));
     contentView.setAdapter(adapter = new LinkAdapter(context, this));
 
     if (inviteLink == null) {
-      tdlib.getPrimaryChatInviteLink(chatId, this);
+      tdlib.getPrimaryChatInviteLink(chatId, (inviteLink, error) -> runOnUiThread(() ->
+        processInviteLink(inviteLink, error)
+      ));
     }
 
     FrameLayoutFix wrapper = new FrameLayoutFix(context);
@@ -111,6 +113,25 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
     wrapper.addView(contentView);
 
     return wrapper;
+  }
+
+  @UiThread
+  private void processInviteLink (TdApi.ChatInviteLink newInviteLink, @Nullable TdApi.Error error) {
+    if (error != null) {
+      UI.showError(error);
+      if (!isDestroyed()) {
+        UI.unlock(this);
+      }
+      return;
+    }
+    if (callback != null) {
+      callback.onInviteLinkChanged(newInviteLink);
+    }
+    if (!isDestroyed()) {
+      inviteLink = newInviteLink;
+      adapter.notifyItemChanged(0);
+      flags &= ~FLAG_GETTING_LINK;
+    }
   }
 
   @Override
@@ -121,7 +142,9 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
   private void exportLink () {
     if ((flags & FLAG_GETTING_LINK) == 0) {
       flags |= FLAG_GETTING_LINK;
-      tdlib.client().send(new TdApi.ReplacePrimaryChatInviteLink(chatId), this);
+      tdlib.send(new TdApi.ReplacePrimaryChatInviteLink(chatId), (newInviteLink, error) -> runOnUiThread(() ->
+        processInviteLink(newInviteLink, error)
+      ));
     }
   }
 
@@ -131,64 +154,29 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
   }
 
   @Override
-  public void onResult (TdApi.Object object) {
-    switch (object.getConstructor()) {
-      case TdApi.ChatInviteLink.CONSTRUCTOR: {
-        final TdApi.ChatInviteLink newInviteLink = (TdApi.ChatInviteLink) object;
-        UI.post(() -> {
-          if (callback != null) {
-            callback.onInviteLinkChanged(newInviteLink);
-          }
-          if (!isDestroyed()) {
-            inviteLink = newInviteLink;
-            adapter.notifyItemChanged(0);
-            flags &= ~FLAG_GETTING_LINK;
-          }
-        });
-        break;
-      }
-      case TdApi.Error.CONSTRUCTOR: {
-        UI.showError(object);
-        UI.unlock(this);
-        break;
-      }
-      default: {
-        Log.unexpectedTdlibResponse(object, TdApi.ReplacePrimaryChatInviteLink.class, TdApi.ChatInviteLink.class);
-        break;
-      }
-    }
-  }
-
-  @Override
   public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_copyLink: {
-        if (inviteLink != null) {
-          UI.copyText(inviteLink.inviteLink, R.string.CopiedLink);
-        } else {
-          UI.showToast(R.string.GeneratingLink, Toast.LENGTH_SHORT);
-        }
-        break;
+    final int viewId = v.getId();
+    if (viewId == R.id.btn_copyLink) {
+      if (inviteLink != null) {
+        UI.copyText(inviteLink.inviteLink, R.string.CopiedLink);
+      } else {
+        UI.showToast(R.string.GeneratingLink, Toast.LENGTH_SHORT);
       }
-      case R.id.btn_revokeLink: {
-        exportLink();
-        break;
-      }
-      case R.id.btn_share: {
-        if (inviteLink != null) {
-          String url = inviteLink.inviteLink;
-          String chatName = tdlib.chatTitle(chatId);
+    } else if (viewId == R.id.btn_revokeLink) {
+      exportLink();
+    } else if (viewId == R.id.btn_share) {
+      if (inviteLink != null) {
+        String url = inviteLink.inviteLink;
+        String chatName = tdlib.chatTitle(chatId);
 
-          String exportText = Lang.getString(tdlib.isChannel(chatId) ? R.string.ShareTextChannelLink : R.string.ShareTextChatLink, chatName, url);
-          String text = Lang.getString(R.string.ShareTextLink, chatName, url);
+        String exportText = Lang.getString(tdlib.isChannel(chatId) ? R.string.ShareTextChannelLink : R.string.ShareTextChatLink, chatName, url);
+        String text = Lang.getString(R.string.ShareTextLink, chatName, url);
 
-          ShareController c = new ShareController(context, tdlib);
-          c.setArguments(new ShareController.Args(text).setShare(exportText, null));
-          c.show();
-        } else {
-          UI.showToast(R.string.GeneratingLink, Toast.LENGTH_SHORT);
-        }
-        break;
+        ShareController c = new ShareController(context, tdlib);
+        c.setArguments(new ShareController.Args(text).setShare(exportText, null));
+        c.show();
+      } else {
+        UI.showToast(R.string.GeneratingLink, Toast.LENGTH_SHORT);
       }
     }
   }
@@ -311,7 +299,7 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
           view.setGravity(Lang.gravity());
           view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15f);
           view.setPadding(Screen.dp(16f), Screen.dp(4f), Screen.dp(16f), Screen.dp(9f));
-          controller.addThemeTextColorListener(view, R.id.theme_color_background_textLight);
+          controller.addThemeTextColorListener(view, ColorId.background_textLight);
 
           return new LinkHolder(view);
         }
@@ -336,7 +324,7 @@ public class InviteLinkController extends ViewController<InviteLinkController.Ar
           view.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16f);
           view.setTextColor(Theme.textAccentColor());
           controller.addThemeTextAccentColorListener(view);
-          ViewSupport.setThemedBackground(view, R.id.theme_color_filling, controller);
+          ViewSupport.setThemedBackground(view, ColorId.filling, controller);
           view.setPadding(Screen.dp(16f), Screen.dp(17f), Screen.dp(16f), Screen.dp(17f));
           view.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 

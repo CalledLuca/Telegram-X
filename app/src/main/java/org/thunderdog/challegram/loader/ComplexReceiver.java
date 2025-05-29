@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,29 +16,83 @@ package org.thunderdog.challegram.loader;
 
 import android.view.View;
 
+import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import androidx.collection.LongSparseArray;
 
 import org.thunderdog.challegram.loader.gif.GifReceiver;
+import org.thunderdog.challegram.receiver.RefreshRateLimiter;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+
+import me.vkryl.android.util.InvalidateDelegate;
 import me.vkryl.core.lambda.Destroyable;
 import me.vkryl.core.lambda.RunnableData;
 
-public class ComplexReceiver implements Destroyable {
+public class ComplexReceiver implements Destroyable, InvalidateDelegate {
   public interface KeyFilter {
-    boolean filterKey (int receiverType, Receiver receiver, long key);
+    boolean filterKey (@ReceiverType int receiverType, Receiver receiver, long key);
   }
 
   private final View view;
+  private ComplexReceiverUpdateListener updateListener;
   private final LongSparseArray<ImageReceiver> imageReceivers;
+  private final LongSparseArray<AvatarReceiver> avatarReceivers;
   private final LongSparseArray<GifReceiver> gifReceivers;
   private final LongSparseArray<DoubleImageReceiver> previews;
 
-  public ComplexReceiver(View view) {
+  public ComplexReceiver (View view) {
     this.view = view;
     this.imageReceivers = new LongSparseArray<>(10);
+    this.avatarReceivers = new LongSparseArray<>(10);
     this.gifReceivers = new LongSparseArray<>(10);
     this.previews = new LongSparseArray<>(10);
+  }
+
+  public ComplexReceiver () {
+    this(null);
+  }
+
+  public ComplexReceiver (View view, float maxRefreshRate) {
+    this();
+    setUpdateListener(new RefreshRateLimiter(view, maxRefreshRate));
+  }
+
+  public ComplexReceiver setUpdateListener (ComplexReceiverUpdateListener listener) {
+    this.updateListener = listener;
+    setUpdateListener(imageReceivers, listener);
+    setUpdateListener(avatarReceivers, listener);
+    setUpdateListener(gifReceivers, listener);
+    setUpdateListener(previews, listener);
+    return this;
+  }
+
+  private static <T extends Receiver> void setUpdateListener (LongSparseArray<T> receivers, ComplexReceiverUpdateListener listener) {
+    if (listener != null) {
+      for (int i = 0; i < receivers.size(); i++) {
+        long key = receivers.keyAt(i);
+        receivers.valueAt(i).setUpdateListener(receiver ->
+          listener.onRequestInvalidate(receiver, key)
+        );
+      }
+    } else {
+      for (int i = 0; i < receivers.size(); i++) {
+        receivers.valueAt(i).setUpdateListener(null);
+      }
+    }
+  }
+
+  private static <T extends Receiver> void clearReceiversRange (LongSparseArray<T> receivers, long startKey, long endKey) {
+    final int size = receivers.size();
+    for (int i = 0; i < size; i++) {
+      long sparseKey = receivers.keyAt(i);
+      if (sparseKey < startKey)
+        continue;
+      if (sparseKey >= endKey)
+        break;
+      receivers.valueAt(i).clear();
+    }
   }
 
   private static <T extends Receiver> void clearReceiversWithHigherKey (LongSparseArray<T> receivers, long key) {
@@ -58,7 +112,7 @@ public class ComplexReceiver implements Destroyable {
     }
   }
 
-  private static <T extends Receiver> void clearReceivers (LongSparseArray<T> target, int receiverType, @Nullable KeyFilter filter) {
+  private static <T extends Receiver> void clearReceivers (LongSparseArray<T> target, @ReceiverType int receiverType, @Nullable KeyFilter filter) {
     int size = target.size();
     for (int i = 0; i < size; i++) {
       Receiver receiver = target.valueAt(i);
@@ -68,43 +122,65 @@ public class ComplexReceiver implements Destroyable {
     }
   }
 
-  public static final int RECEIVER_TYPE_PREVIEW = 0;
-  public static final int RECEIVER_TYPE_IMAGE = 1;
-  public static final int RECEIVER_TYPE_GIF = 2;
-
-  public void clearReceivers (@Nullable KeyFilter filter) {
-    clearReceivers(imageReceivers, RECEIVER_TYPE_IMAGE, filter);
-    clearReceivers(gifReceivers, RECEIVER_TYPE_GIF, filter);
-    clearReceivers(previews, RECEIVER_TYPE_PREVIEW, filter);
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    ReceiverType.PREVIEW,
+    ReceiverType.IMAGE,
+    ReceiverType.GIF,
+    ReceiverType.AVATAR
+  })
+  public @interface ReceiverType {
+    int PREVIEW = 0, IMAGE = 1, GIF = 2, AVATAR = 3;
   }
 
-  public void clearReceivers (int key) {
+  public void clearReceivers (@Nullable KeyFilter filter) {
+    clearReceivers(imageReceivers, ReceiverType.IMAGE, filter);
+    clearReceivers(gifReceivers, ReceiverType.GIF, filter);
+    clearReceivers(previews, ReceiverType.PREVIEW, filter);
+    clearReceivers(avatarReceivers, ReceiverType.AVATAR, filter);
+  }
+
+  public void clearReceivers (long key) {
     clearReceiver(imageReceivers, key);
+    clearReceiver(avatarReceivers, key);
     clearReceiver(gifReceivers, key);
     clearReceiver(previews, key);
   }
 
-  public void clearReceiversWithHigherKey (int key) {
+  public void clearReceiversWithHigherKey (long key) {
     clearReceiversWithHigherKey(imageReceivers, key);
+    clearReceiversWithHigherKey(avatarReceivers, key);
     clearReceiversWithHigherKey(gifReceivers, key);
     clearReceiversWithHigherKey(previews, key);
   }
 
-  public DoubleImageReceiver getPreviewReceiver (int key) {
-    return getReceiver(previews, view, isAttached, animationsDisabled, key, TYPE_DOUBLE);
+  public void clearReceiversRange (long startKey, long endKey) {
+    clearReceiversRange(imageReceivers, startKey, endKey);
+    clearReceiversRange(avatarReceivers, startKey, endKey);
+    clearReceiversRange(gifReceivers, startKey, endKey);
+    clearReceiversRange(previews, startKey, endKey);
+  }
+
+  public DoubleImageReceiver getPreviewReceiver (long key) {
+    return getReceiver(previews, view, updateListener, isAttached, animationsDisabled, key, TYPE_DOUBLE);
   }
 
   private static final int TYPE_DOUBLE = 1;
   private static final int TYPE_IMAGE = 2;
   private static final int TYPE_GIF = 3;
+  private static final int TYPE_AVATAR = 4;
 
-  private static <T extends Receiver> T getReceiver (LongSparseArray<T> target, View view, boolean isAttached, boolean animationsDisabled, long key, int type) {
+  @SuppressWarnings("unchecked")
+  private static <T extends Receiver> T getReceiver (LongSparseArray<T> target, View view, @Nullable ComplexReceiverUpdateListener updateListener, boolean isAttached, boolean animationsDisabled, long key, int type) {
     int i = target.indexOfKey(key);
     if (i >= 0) {
       return target.valueAt(i);
     }
     T receiver;
     switch (type) {
+      case TYPE_AVATAR:
+        receiver = (T) new AvatarReceiver(view);
+        break;
       case TYPE_DOUBLE:
         receiver = (T) new DoubleImageReceiver(view, 0);
         break;
@@ -123,6 +199,11 @@ public class ComplexReceiver implements Destroyable {
     if (animationsDisabled) {
       receiver.setAnimationDisabled(animationsDisabled);
     }
+    if (updateListener != null) {
+      receiver.setUpdateListener((r) ->
+        updateListener.onRequestInvalidate(r, key)
+      );
+    }
     target.append(key, receiver);
     return receiver;
   }
@@ -135,11 +216,15 @@ public class ComplexReceiver implements Destroyable {
   }
 
   public ImageReceiver getImageReceiver (long key) {
-    return getReceiver(imageReceivers, view, isAttached, animationsDisabled, key, TYPE_IMAGE);
+    return getReceiver(imageReceivers, view, updateListener, isAttached, animationsDisabled, key, TYPE_IMAGE);
   }
 
   public GifReceiver getGifReceiver (long key) {
-    return getReceiver(gifReceivers, view, isAttached, animationsDisabled, key, TYPE_GIF);
+    return getReceiver(gifReceivers, view, updateListener, isAttached, animationsDisabled, key, TYPE_GIF);
+  }
+
+  public AvatarReceiver getAvatarReceiver (long key) {
+    return getReceiver(avatarReceivers, view, updateListener, isAttached, animationsDisabled, key, TYPE_AVATAR);
   }
 
   private boolean isAttached = true;
@@ -157,6 +242,7 @@ public class ComplexReceiver implements Destroyable {
 
   private void iterate (RunnableData<Receiver> callback) {
     iterate(imageReceivers, callback);
+    iterate(avatarReceivers, callback);
     iterate(gifReceivers, callback);
     iterate(previews, callback);
   }
@@ -190,6 +276,7 @@ public class ComplexReceiver implements Destroyable {
   public void attach () {
     isAttached = true;
     attachDetach(imageReceivers, true);
+    attachDetach(avatarReceivers, true);
     attachDetach(gifReceivers, true);
     attachDetach(previews, true);
   }
@@ -197,6 +284,7 @@ public class ComplexReceiver implements Destroyable {
   public void detach () {
     isAttached = false;
     attachDetach(imageReceivers, false);
+    attachDetach(avatarReceivers, false);
     attachDetach(gifReceivers, false);
     attachDetach(previews, false);
   }
@@ -208,5 +296,10 @@ public class ComplexReceiver implements Destroyable {
   @Override
   public void performDestroy () {
     clear();
+  }
+
+  @Override
+  public void invalidate () {
+    view.invalidate();
   }
 }

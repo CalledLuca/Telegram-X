@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ import android.view.MotionEvent;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.chat.MessageView;
@@ -41,7 +41,9 @@ import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.LiveLocationManager;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Icons;
@@ -50,6 +52,7 @@ import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
+import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.ui.MapController;
 import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.util.text.Letters;
@@ -63,6 +66,7 @@ import me.vkryl.android.ViewUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
+import tgx.td.Td;
 
 public class TGMessageLocation extends TGMessage implements LiveLocationManager.UserLocationChangeListener {
   private final TdApi.Location point;
@@ -76,7 +80,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
   private ImageFile previewFile;
   private Letters previewLetters;
   private float previewLettersWidth;
-  private int previewAvatarColorId;
+  private TdlibAccentColor previewAccentColor;
 
   private int previewWidth;
   private int previewHeight;
@@ -120,7 +124,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
       updateTimer();
     }
     if (!isInitial) {
-      if (msg.content.getConstructor() == TdApi.MessageLocation.CONSTRUCTOR) {
+      if (Td.isLocation(msg.content)) {
         ((TdApi.MessageLocation) msg.content).expiresIn = expiresInSeconds;
       }
       checkAlive(true);
@@ -131,7 +135,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
   }
 
   private void updatePreviewUser (long userId, TdApi.User user) {
-    this.previewAvatarColorId = tdlib.cache().userAvatarColorId(user);
+    this.previewAccentColor = tdlib.cache().userAccentColor(userId);
     if (user != null) {
       this.previewFile = TD.getAvatar(tdlib, user);
       this.previewLetters = TD.getLetters(user);
@@ -144,7 +148,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
 
   private void updatePreviewChat (long chatId, TdApi.Chat chat) {
     this.previewFile = tdlib.chatAvatar(chatId);
-    this.previewAvatarColorId = tdlib.chatAvatarColorId(chatId);
+    this.previewAccentColor = tdlib.chatAccentColor(chatId);
     this.previewLetters = tdlib.chatLetters(chatId);
     this.previewLettersWidth = Paints.measureLetters(previewLetters, 18f);
   }
@@ -435,12 +439,12 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
   }*/
 
   public boolean canStopAlive () {
-    return msg.canBeEdited && livePeriod > 0 && checkAlive(true);
+    return lastMessageProperties().canBeEdited && livePeriod > 0 && checkAlive(true);
   }
 
   public void stopLiveLocation () {
     if (canStopAlive()) {
-      tdlib.client().send(new TdApi.EditMessageLiveLocation(msg.chatId, msg.id, msg.replyMarkup, null, 0, 0), tdlib.silentHandler());
+      tdlib.client().send(new TdApi.EditMessageLiveLocation(msg.chatId, msg.id, msg.replyMarkup, null, 0, 0, 0), tdlib.silentHandler());
     }
   }
 
@@ -717,7 +721,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
 
     int mapCenterX = startX + previewWidth / 2;
     int mapCenterY = startY + previewHeight / 2;
-    c.save();
+    final int restoreToCount = Views.save(c);
     c.scale(.85f, .85f, mapCenterX, mapCenterY);
 
     Bitmap pinBgIcon = Icons.getLivePin();
@@ -746,7 +750,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
       float step = .35f;
       float alpha = .45f * (pulseFactor < step ? 1f : 1f - (pulseFactor - step) / (1f - step));
       float radius = (float) maxPulseRadius * pulseFactor;
-      int color = ColorUtils.alphaColor(alpha, Theme.getColor(R.id.theme_color_file));
+      int color = ColorUtils.alphaColor(alpha, Theme.getColor(ColorId.file));
       c.drawCircle(mapCenterX, mapCenterY + Screen.dp(1f), radius, Paints.fillingPaint(color));
     }
 
@@ -756,27 +760,27 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
       scheduleUpdate(SCHEDULE_FLAG_PULSE, false, pulseUpdateDelay);
     }
 
-    c.drawBitmap(pinBgIcon, mapCenterX - pinBgIcon.getWidth() / 2, pinTop, Paints.getBitmapPaint());
+    c.drawBitmap(pinBgIcon, mapCenterX - pinBgIcon.getWidth() / 2f, pinTop, Paints.getBitmapPaint());
 
     int iconSize;
     if (livePeriod > 0) {
       iconSize = pinRadius;
       if (previewFile == null && previewLetters != null) {
-        c.drawCircle(mapCenterX, pinCenterY, pinRadius, Paints.fillingPaint(Theme.getColor(previewAvatarColorId)));
+        c.drawCircle(mapCenterX, pinCenterY, pinRadius, Paints.fillingPaint(previewAccentColor.getPrimaryColor()));
         Paints.drawLetters(c, previewLetters, mapCenterX - previewLettersWidth / 2, pinCenterY + Screen.dp(7f), 18f);
       }
     } else {
       iconSize = Screen.dp(16f);
-      c.drawCircle(mapCenterX, pinCenterY, pinRadius, Paints.fillingPaint(Theme.getColor(R.id.theme_color_file)));
+      c.drawCircle(mapCenterX, pinCenterY, pinRadius, Paints.fillingPaint(Theme.getColor(ColorId.file)));
 
       if (iconReceiver.needPlaceholder()) {
         float iconAlpha = 1f - ((ImageReceiver) iconReceiver).getDisplayAlpha();
-        Paint paint = Paints.getPorterDuffPaint(0xffffffff);
+        Paint paint = Paints.whitePorterDuffPaint();
         if (iconAlpha != 1f) {
           paint.setAlpha((int) (255f * iconAlpha));
         }
-        Drawable pinIcon = view.getSparseDrawable(R.drawable.baseline_location_on_24, 0);
-        Drawables.draw(c, pinIcon, mapCenterX - pinIcon.getMinimumWidth() / 2, pinCenterY - pinIcon.getMinimumHeight() / 2, paint);
+        Drawable pinIcon = view.getSparseDrawable(R.drawable.baseline_location_on_24, ColorId.NONE);
+        Drawables.draw(c, pinIcon, mapCenterX - pinIcon.getMinimumWidth() / 2f, pinCenterY - pinIcon.getMinimumHeight() / 2f, paint);
         if (iconAlpha != 1f) {
           paint.setAlpha(255);
         }
@@ -790,7 +794,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
       c.drawCircle(mapCenterX, pinCenterY, pinRadius, Paints.fillingPaint(ColorUtils.alphaColor(.75f, 0xffffffff)));
     }
 
-    c.restore();
+    Views.restore(c, restoreToCount);
 
 
     if (!useBubbles && !useFullWidth) {
@@ -819,7 +823,7 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
       }/* else if (NEED_VENUE_CIRCLE && venue != null) {
         int circleRadius = Screen.dp(20f);
         int centerY = venueContentY + paddingTop + circleRadius;
-        c.drawCircle(venueContentX + circleRadius, centerY, circleRadius, Paints.fillingPaint(Theme.getColor(R.id.theme_color_circleButtonRegular)));
+        c.drawCircle(venueContentX + circleRadius, centerY, circleRadius, Paints.fillingPaint(Theme.getColor(ColorId.circleButtonRegular)));
         final Bitmap icon = Icons.getLocationIcon();
         c.drawBitmap(icon, venueContentX + circleRadius - icon.getWidth() / 2, centerY - icon.getHeight() / 2, Paints.getBitmapPaint());
         textX += circleRadius * 2 + Screen.dp(11f);
@@ -937,20 +941,16 @@ public class TGMessageLocation extends TGMessage implements LiveLocationManager.
                 double latitude = point.latitude;
                 double longitude = point.longitude;
                 controller().showOptions(latitudeStr(latitude) + " " + longitudeStr(longitude), new int[] {R.id.btn_open, R.id.btn_copyText, R.id.btn_openIn}, new String[] {Lang.getString(R.string.OpenMap), Lang.getString(R.string.CopyCoordinates), Lang.getString(R.string.OpenInExternalApp)}, null, new int[] {R.drawable.baseline_map_24, R.drawable.baseline_content_copy_24, R.drawable.baseline_open_in_browser_24}, (itemView, id) -> {
-                  switch (id) {
-                    case R.id.btn_copyText:
-                      UI.copyText(String.format(Locale.US, "%f,%f", latitude, longitude), R.string.CopiedCoordinates);
-                      break;
-                    case R.id.btn_open:
-                      if (tdlib.ui().openMap(TGMessageLocation.this, args)) {
-                        readContent();
-                      }
-                      break;
-                    case R.id.btn_openIn:
-                      if (Intents.openMap(latitude, longitude, args.title, args.address)) {
-                        readContent();
-                      }
-                      break;
+                  if (id == R.id.btn_copyText) {
+                    UI.copyText(String.format(Locale.US, "%f,%f", latitude, longitude), R.string.CopiedCoordinates);
+                  } else if (id == R.id.btn_open) {
+                    if (tdlib.ui().openMap(TGMessageLocation.this, args)) {
+                      readContent();
+                    }
+                  } else if (id == R.id.btn_openIn) {
+                    if (Intents.openMap(latitude, longitude, args.title, args.address)) {
+                      readContent();
+                    }
                   }
                   return true;
                 });

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,19 +16,23 @@ package org.thunderdog.challegram.loader.gif;
 
 import android.os.SystemClock;
 
+import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.emoji.Emoji;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibAccount;
 import org.thunderdog.challegram.unsorted.Settings;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 
 import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.StringUtils;
 
 public class GifFile {
   public static final int TYPE_GIF = 1;
@@ -41,25 +45,62 @@ public class GifFile {
 
   public static final int FLAG_ROUND_VIDEO = 1;
   public static final int FLAG_STILL = 1 << 1;
-  public static final int FLAG_OPTIMIZE = 1 << 2;
-  public static final int FLAG_PLAY_ONCE = 1 << 3;
-  public static final int FLAG_UNIQUE = 1 << 4;
-  public static final int FLAG_DECODE_LAST_FRAME = 1 << 5;
+  public static final int FLAG_PLAY_ONCE = 1 << 2;
+  public static final int FLAG_UNIQUE = 1 << 3;
+  public static final int FLAG_DECODE_LAST_FRAME = 1 << 4;
+  public static final int FLAG_HIGH_PRIORITY_FOR_DECODE = 1 << 5;
+
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    OptimizationMode.NONE,
+    OptimizationMode.STICKER_PREVIEW,
+    OptimizationMode.EMOJI,
+    OptimizationMode.EMOJI_PREVIEW
+  })
+  public @interface OptimizationMode {
+    int NONE = 0, STICKER_PREVIEW = 1,
+      EMOJI = 2,          // for text media
+      EMOJI_PREVIEW = 3;  // for emoji keyboard
+  }
 
   protected final Tdlib tdlib;
   protected final TdApi.File file;
-  private int type;
+  private final int type;
   private int scaleType;
   private int flags;
+  private String playOnceId;
+  private @OptimizationMode int optimizationMode;
   private long chatId, messageId;
   private boolean isLooped, isFrozen;
   private int vibrationPattern = Emoji.VIBRATION_PATTERN_NONE;
   private int fitzpatrickType;
+  private double startMediaTimestamp;
 
   private final long creationTime;
 
   public GifFile (Tdlib tdlib, TdApi.Animation gif) {
-    this(tdlib, gif.animation, "video/mp4".equals(gif.mimeType) ? GifFile.TYPE_MPEG4 : "image/gif".equals(gif.mimeType) ? GifFile.TYPE_GIF : TD.isAnimatedSticker(gif.mimeType) ? GifFile.TYPE_TG_LOTTIE : 0);
+    this(tdlib, gif.animation,
+      "video/webm".equals(gif.mimeType) ? GifFile.TYPE_WEBM :
+      "video/mp4".equals(gif.mimeType) ? GifFile.TYPE_MPEG4 :
+      "image/gif".equals(gif.mimeType) ? GifFile.TYPE_GIF :
+      TD.isAnimatedSticker(gif.mimeType) ? GifFile.TYPE_TG_LOTTIE :
+      0
+    );
+  }
+
+  public GifFile (Tdlib tdlib, TdApi.AnimatedChatPhoto animatedChatPhoto) {
+    this(tdlib, animatedChatPhoto.file, GifFile.TYPE_MPEG4);
+    if (animatedChatPhoto.mainFrameTimestamp != 0) {
+      this.startMediaTimestamp = animatedChatPhoto.mainFrameTimestamp;
+    }
+  }
+
+  public GifFile (Tdlib tdlib, TdApi.Sticker sticker) {
+    this(tdlib, sticker.sticker, sticker.format);
+  }
+
+  public GifFile (Tdlib tdlib, TdApi.File file, TdApi.StickerFormat format) {
+    this(tdlib, file, toFileType(format));
   }
 
   public GifFile (Tdlib tdlib, TdApi.File file, int type) {
@@ -69,29 +110,20 @@ public class GifFile {
     this.creationTime = SystemClock.uptimeMillis();
   }
 
-  public GifFile (Tdlib tdlib, TdApi.Sticker sticker) {
-    this(tdlib, sticker.sticker, sticker.type);
-  }
-
-  public GifFile (Tdlib tdlib, TdApi.File file, TdApi.StickerType type) {
-    this(tdlib, file, toFileType(type));
-  }
-
   public boolean isLottie () {
     return type == TYPE_TG_LOTTIE;
   }
 
-  private static int toFileType (TdApi.StickerType type) {
-    switch (type.getConstructor()) {
-      case TdApi.StickerTypeAnimated.CONSTRUCTOR:
+  private static int toFileType (TdApi.StickerFormat format) {
+    switch (format.getConstructor()) {
+      case TdApi.StickerFormatTgs.CONSTRUCTOR:
         return TYPE_TG_LOTTIE;
-      case TdApi.StickerTypeVideo.CONSTRUCTOR:
+      case TdApi.StickerFormatWebm.CONSTRUCTOR:
         return TYPE_MPEG4;
-      case TdApi.StickerTypeMask.CONSTRUCTOR:
-      case TdApi.StickerTypeStatic.CONSTRUCTOR:
+      case TdApi.StickerFormatWebp.CONSTRUCTOR:
         break;
     }
-    throw new IllegalArgumentException(type.toString());
+    throw new IllegalArgumentException(format.toString());
   }
 
   public int getFitzpatrickType () {
@@ -102,14 +134,31 @@ public class GifFile {
     this.fitzpatrickType = fitzpatrickType;
   }
 
+  public double getStartMediaTimestamp () {
+    return startMediaTimestamp;
+  }
+
   public interface FrameChangeListener {
-    void onFrameChanged (GifFile file, long frameNo, long frameDelta);
+    void onFrameChanged (GifFile file, double frameNo, double frameDelta);
   }
 
   private long totalFrameCount;
 
   public void setTotalFrameCount (long totalFrameCount) {
     this.totalFrameCount = totalFrameCount;
+    if (onTotalFrameCountLoadListener != null) {
+      tdlib.ui().post(() -> {
+        if (onTotalFrameCountLoadListener != null) {
+          onTotalFrameCountLoadListener.run();
+        }
+      });
+    }
+  }
+
+  private Runnable onTotalFrameCountLoadListener;
+
+  public void setOnTotalFrameCountLoadListener (Runnable onTotalFrameCountLoadListener) {
+    this.onTotalFrameCountLoadListener = onTotalFrameCountLoadListener;
   }
 
   public boolean hasFrame (long frameNo) {
@@ -122,7 +171,7 @@ public class GifFile {
     this.frameChangeListener = listener;
   }
 
-  public void onFrameChange (long frameNo, long frameDelta) {
+  public void onFrameChange (double frameNo, double frameDelta) {
     if (frameChangeListener != null) {
       frameChangeListener.onFrameChanged(this, frameNo, frameDelta);
     }
@@ -160,16 +209,37 @@ public class GifFile {
     return false;
   }
 
-  public void setOptimize (boolean needOptimize) {
-    this.flags = BitwiseUtils.setFlag(flags, FLAG_OPTIMIZE, needOptimize);
+  public void setHighPriorityForDecode () {
+    flags = BitwiseUtils.setFlag(flags, FLAG_HIGH_PRIORITY_FOR_DECODE, true);
   }
 
-  public boolean needOptimize () {
-    return BitwiseUtils.getFlag(flags, FLAG_OPTIMIZE);
+  public boolean isHighPriorityForDecode () {
+    return BitwiseUtils.hasFlag(flags, FLAG_HIGH_PRIORITY_FOR_DECODE);
+  }
+
+  public void setOptimizationMode (@OptimizationMode int optimizationMode) {
+    this.optimizationMode = optimizationMode;
+  }
+
+  public @OptimizationMode int getOptimizationMode () {
+    return optimizationMode;
+  }
+
+  public boolean isOneTimeCache () { // Delete cache file as soon as file no longer displayed
+    return optimizationMode == OptimizationMode.EMOJI || optimizationMode == OptimizationMode.STICKER_PREVIEW || optimizationMode == OptimizationMode.EMOJI_PREVIEW;
+  }
+
+  @Deprecated()
+  public boolean hasOptimizations () {
+    return optimizationMode != OptimizationMode.NONE;
   }
 
   public void setPlayOnce (boolean playOnce) {
     this.flags = BitwiseUtils.setFlag(flags, FLAG_PLAY_ONCE, playOnce);
+  }
+
+  public void setPlayOnceId (String playOnceId) {
+    this.playOnceId = playOnceId;
   }
 
   public void setPlayOnce () {
@@ -177,7 +247,7 @@ public class GifFile {
   }
 
   public boolean isPlayOnce () {
-    return BitwiseUtils.getFlag(flags, FLAG_PLAY_ONCE);
+    return BitwiseUtils.hasFlag(flags, FLAG_PLAY_ONCE);
   }
 
   public void setDecodeLastFrame (boolean decodeLastFrame) {
@@ -197,7 +267,23 @@ public class GifFile {
     loopListeners.add(callback);
   }
 
+
+  private int repeatsCounter = -1;
+
+  public void setRepeatCount (int count) {
+    setPlayOnce(true);
+    setLooped(false);
+    repeatsCounter = count;
+  }
+
   public void onLoop () {
+    if (repeatsCounter >= 0) {
+      repeatsCounter -= 1;
+      if (repeatsCounter > 0) {
+        setLooped(false);
+      }
+    }
+
     if (loopListeners != null) {
       tdlib.ui().post(() -> {
         if (loopListeners != null) {
@@ -211,7 +297,7 @@ public class GifFile {
   }
 
   public boolean needDecodeLastFrame () {
-    return BitwiseUtils.getFlag(flags, FLAG_DECODE_LAST_FRAME);
+    return BitwiseUtils.hasFlag(flags, FLAG_DECODE_LAST_FRAME);
   }
 
   public boolean hasLooped () {
@@ -223,7 +309,7 @@ public class GifFile {
   }
 
   public boolean isUnique () {
-    return BitwiseUtils.getFlag(flags, FLAG_UNIQUE);
+    return BitwiseUtils.hasFlag(flags, FLAG_UNIQUE);
   }
 
   public boolean isStill () {
@@ -242,8 +328,14 @@ public class GifFile {
     this.scaleType = scaleType;
   }
 
-  public void setSize (int size) {
-    // todo?
+  private int requestedSize;
+
+  public void setRequestedSize (int size) {
+    this.requestedSize = size;
+  }
+
+  public int getRequestedSize () {
+    return requestedSize;
   }
 
   public TdApi.File getFile () {
@@ -282,16 +374,21 @@ public class GifFile {
     b.append('_');
     b.append(getFileId());
     if (flags != 0) {
-      b.append(',');
-      b.append(flags);
+      b.append(',').append(flags);
+    }
+    if (optimizationMode != OptimizationMode.NONE) {
+      b.append(",o").append(optimizationMode);
     }
     if (fitzpatrickType != 0) {
-      b.append(",f");
-      b.append(fitzpatrickType);
+      b.append(",f").append(fitzpatrickType);
     }
-    if (isUnique() || isPlayOnce()) {
-      b.append(',');
-      b.append(creationTime);
+    if (isUnique() || (isPlayOnce() && StringUtils.isEmpty(playOnceId))) {
+      b.append(",o").append(creationTime);
+    } else if (isPlayOnce()) {
+      b.append(",p").append(playOnceId);
+    }
+    if (startMediaTimestamp != 0) {
+      b.append(",t").append(startMediaTimestamp);
     }
     return b;
   }

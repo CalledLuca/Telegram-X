@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,8 @@ import android.view.MotionEvent;
 import org.thunderdog.challegram.data.MediaWrapper;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
 import org.thunderdog.challegram.tool.Paints;
 
 import me.vkryl.android.util.SingleViewProvider;
@@ -39,7 +39,7 @@ public class SimpleMediaWrapperView extends SparseDrawableView {
     this.receiver = new ImageReceiver(this, 0);
     this.provider = new SingleViewProvider(this) {
       @Override
-      public boolean invalidateContent () {
+      public boolean invalidateContent (Object cause) {
         if (wrapper != null) {
           wrapper.requestImage(receiver);
         }
@@ -48,10 +48,10 @@ public class SimpleMediaWrapperView extends SparseDrawableView {
     };
   }
 
-  private @ThemeColorId
+  private @ColorId
   int backgroundColorId;
 
-  public void setBackgroundColorId (@ThemeColorId int backgroundColorId) {
+  public void setBackgroundColorId (@ColorId int backgroundColorId) {
     this.backgroundColorId = backgroundColorId;
   }
 

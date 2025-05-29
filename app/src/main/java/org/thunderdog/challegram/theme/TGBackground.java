@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,15 +19,15 @@ import android.graphics.Color;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageFileLocal;
 import org.thunderdog.challegram.loader.ImageFileRemote;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.unsorted.Settings;
@@ -38,8 +38,8 @@ import java.util.Map;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.leveldb.LevelDB;
-import me.vkryl.td.Td;
-import me.vkryl.td.TdConstants;
+import tgx.td.Td;
+import tgx.td.TdConstants;
 
 public class TGBackground {
   private final int accountId;
@@ -141,10 +141,11 @@ public class TGBackground {
           needImages = true;
           break;
         case TdApi.BackgroundTypeFill.CONSTRUCTOR:
+        case TdApi.BackgroundTypeChatTheme.CONSTRUCTOR:
           needImages = false;
           break;
         default:
-          throw new UnsupportedOperationException(type.toString());
+          throw Td.unsupported(type);
       }
     } else {
       needImages = true;
@@ -542,7 +543,7 @@ public class TGBackground {
     if (target instanceof ImageFileRemote) {
       ((ImageFileRemote) target).extractFile(result -> {
         if (result instanceof TdApi.File) {
-          tdlib.client().send(new TdApi.DownloadFile(((TdApi.File) result).id, 32, 0, 0, false), tdlib.okHandler());
+          tdlib.client().send(new TdApi.DownloadFile(((TdApi.File) result).id, TdlibFilesManager.PRIORITY_CHAT_WALLPAPER, 0, 0, false), tdlib.okHandler());
         }
       });
     }
@@ -551,6 +552,7 @@ public class TGBackground {
   private static final int BACKGROUND_TYPE_FILL = 1;
   private static final int BACKGROUND_TYPE_WALLPAPER = 2;
   private static final int BACKGROUND_TYPE_PATTERN = 3;
+  private static final int BACKGROUND_TYPE_CHAT_THEME = 4;
 
   private static final int FILL_TYPE_SOLID = 1;
   private static final int FILL_TYPE_GRADIENT = 2;
@@ -597,8 +599,10 @@ public class TGBackground {
           .remove(key + "_rotation_angle");
         break;
       }
-      default:
-        throw new UnsupportedOperationException(fill.toString());
+      default: {
+        Td.assertBackgroundFill_6086fe10();
+        throw Td.unsupported(fill);
+      }
     }
   }
 
@@ -669,8 +673,16 @@ public class TGBackground {
           putFill(editor, key, pattern.fill);
           break;
         }
-        default:
-          throw new UnsupportedOperationException(type.toString());
+        case TdApi.BackgroundTypeChatTheme.CONSTRUCTOR: {
+          TdApi.BackgroundTypeChatTheme chatTheme = (TdApi.BackgroundTypeChatTheme) type;
+          editor.putInt(key + "_type", BACKGROUND_TYPE_CHAT_THEME);
+          editor.putString(key + "_theme", chatTheme.themeName);
+          break;
+        }
+        default: {
+          Td.assertBackgroundType_eedb1e16();
+          throw Td.unsupported(type);
+        }
       }
     } else {
       editor
@@ -684,7 +696,8 @@ public class TGBackground {
         .remove(key + "_color_top")
         .remove(key + "_color_bottom")
         .remove(key + "_colors")
-        .remove(key + "_rotation_angle");
+        .remove(key + "_rotation_angle")
+        .remove(key + "_theme");
     }
     editor.apply();
   }
@@ -704,6 +717,7 @@ public class TGBackground {
       }
       case FILL_TYPE_SOLID:
       default: {
+        Td.assertBackgroundFill_6086fe10();
         int color = prefs.getInt(key + "_color", 0);
         return new TdApi.BackgroundFillSolid(color);
       }
@@ -742,6 +756,11 @@ public class TGBackground {
           isInverted,
           prefs.getBoolean(key + "_moving", false)
         );
+        break;
+      }
+      case BACKGROUND_TYPE_CHAT_THEME: {
+        String themeName = prefs.getString(key + "_theme", null);
+        type = new TdApi.BackgroundTypeChatTheme(themeName);
         break;
       }
       default:
@@ -924,8 +943,11 @@ public class TGBackground {
       case TdApi.BackgroundFillFreeformGradient.CONSTRUCTOR: {
         return getPatternColorFreeform((TdApi.BackgroundFillFreeformGradient) fill);
       }
+      default: {
+        Td.assertBackgroundFill_6086fe10();
+        throw Td.unsupported(fill);
+      }
     }
-    throw new UnsupportedOperationException(fill.toString());
   }
 
   private static int getPatternColorFreeform (TdApi.BackgroundFillFreeformGradient gradient) {
@@ -1041,17 +1063,17 @@ public class TGBackground {
     switch (legacyWallpaperId) {
       case ID_SOLID_BLUE: // solid blue
       case ID_CATS_BLUE: // cats
-        return Theme.getColorFast(R.id.theme_color_wp_cats);
+        return Theme.getColorFast(ColorId.wp_cats);
       case ID_BLUE_CIRCLES:
-        return Theme.getColorFast(R.id.theme_color_wp_circlesBlue);
+        return Theme.getColorFast(ColorId.wp_circlesBlue);
       case ID_CATS_PINK: // pink cats
-        return Theme.getColorFast(R.id.theme_color_wp_catsPink);
+        return Theme.getColorFast(ColorId.wp_catsPink);
       case ID_CATS_GREEN: // green cats
-        return Theme.getColorFast(R.id.theme_color_wp_catsGreen);
+        return Theme.getColorFast(ColorId.wp_catsGreen);
       case ID_CATS_ORANGE: // orange cats
-        return Theme.getColorFast(R.id.theme_color_wp_catsOrange);
+        return Theme.getColorFast(ColorId.wp_catsOrange);
       case ID_CATS_BEIGE: // beige cats
-        return Theme.getColorFast(R.id.theme_color_wp_catsBeige);
+        return Theme.getColorFast(ColorId.wp_catsBeige);
     }
     int legacyColor = getLegacyWallpaperColor(legacyWallpaperId);
     if ((legacyColor & 0xffffff) != 0)
@@ -1094,8 +1116,11 @@ public class TGBackground {
         TdApi.BackgroundFillFreeformGradient gradient = (TdApi.BackgroundFillFreeformGradient) fill;
         return getNameForColor(gradient.colors);
       }
+      default: {
+        Td.assertBackgroundFill_6086fe10();
+        throw Td.unsupported(fill);
+      }
     }
-    throw new UnsupportedOperationException(fill.toString());
   }
 
   public static String getBackgroundForLegacyWallpaperId (int wallpaperId) {

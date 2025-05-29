@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,8 +16,9 @@ package org.thunderdog.challegram.data;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.dialogs.ChatView;
@@ -25,16 +26,19 @@ import org.thunderdog.challegram.component.user.UserView;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.util.UserProvider;
 import org.thunderdog.challegram.util.text.Text;
 
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 
-import me.vkryl.core.StringUtils;
 import me.vkryl.core.BitwiseUtils;
-import me.vkryl.td.ChatId;
+import me.vkryl.core.StringUtils;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class TGUser implements UserProvider {
   private static final int FLAG_LOCAL = 0x01;
@@ -138,7 +142,7 @@ public class TGUser implements UserProvider {
   }
 
   private void buildContact () {
-    avatarPlaceholderMetadata = new AvatarPlaceholder.Metadata(TD.getAvatarColorId(rawContactId, tdlib.myUserId()), TD.getLetters(firstName, lastName));
+    avatarPlaceholderMetadata = new AvatarPlaceholder.Metadata(TdlibAccentColor.defaultAccentColorForUserId(tdlib, rawContactId), TD.getLetters(firstName, lastName));
     updateName();
     updateStatus();
   }
@@ -159,6 +163,47 @@ public class TGUser implements UserProvider {
     }
   }
 
+  public static String getActionDateStatus (Tdlib tdlib, int actionDateSeconds, TdApi.Message viewedMessage) {
+    int stringRes = R.string.viewed;
+    if (viewedMessage != null) {
+      //noinspection SwitchIntDef
+      switch (viewedMessage.content.getConstructor()) {
+        case TdApi.MessageVoiceNote.CONSTRUCTOR:
+          stringRes = R.string.opened_voice;
+          break;
+        case TdApi.MessageVideoNote.CONSTRUCTOR:
+          stringRes = R.string.opened_round;
+          break;
+      }
+    }
+    return getActionDateStatus(tdlib, actionDateSeconds, stringRes);
+  }
+
+  public static String getActionDateStatus (Tdlib tdlib, int actionDateSeconds, @StringRes int stringRes) {
+    long elapsedSeconds = tdlib.currentTime(TimeUnit.SECONDS) - actionDateSeconds;
+    // Allow "X minutes ago"
+    boolean allowDuration =
+      elapsedSeconds < TimeUnit.MINUTES.toSeconds(60) &&
+      elapsedSeconds >= -TimeUnit.MINUTES.toSeconds(1);
+    return Lang.getRelativeDate(
+      actionDateSeconds, TimeUnit.SECONDS,
+      tdlib.currentTimeMillis(), TimeUnit.MILLISECONDS,
+      allowDuration, 60, stringRes, false
+    );
+  }
+
+  public void setActionDateStatus (int actionDateSeconds, TdApi.Message viewedMessage) {
+    if (actionDateSeconds != 0) {
+      setCustomStatus(getActionDateStatus(tdlib, actionDateSeconds, viewedMessage));
+    }
+  }
+
+  public void setActionDateStatus (int actionDateSeconds, @StringRes int stringRes) {
+    if (actionDateSeconds != 0) {
+      setCustomStatus(getActionDateStatus(tdlib, actionDateSeconds, stringRes));
+    }
+  }
+
   public void setCustomStatus (String statusText) {
     if (!StringUtils.equalsOrBothEmpty(this.statusText, statusText)) {
       if (StringUtils.isEmpty(statusText)) {
@@ -166,6 +211,7 @@ public class TGUser implements UserProvider {
         updateStatus();
       } else {
         this.statusText = statusText;
+        this.statusWidth = U.measureText(statusText, UserView.getStatusPaint());
         this.flags |= FLAG_CUSTOM_STATUS_TEXT;
         this.flags &= ~FLAG_ONLINE;
       }
@@ -196,15 +242,21 @@ public class TGUser implements UserProvider {
     }
   }
 
+  public boolean belongsToSenderId (@NonNull TdApi.MessageSender senderId) {
+    return getChatId() == Td.getSenderId(senderId);
+  }
+
   public void setChat (long chatId, @Nullable TdApi.Chat chat) {
     this.user = null;
     this.chatId = chatId;
     avatarPlaceholderMetadata = tdlib.chatPlaceholderMetadata(chatId, chat, false);
     imageFile = tdlib.chatAvatar(chatId);
-    this.nameText = tdlib.chatTitle(chat);
-    this.nameFake = Text.needFakeBold(nameText);
-    this.nameWidth = U.measureText(nameText, Paints.getTitleBigPaint());
+    updateName();
     updateStatus();
+  }
+
+  public boolean isChat () {
+    return user == null && chatId != 0;
   }
 
   public void setUser (@Nullable TdApi.User user, int creatorId) {
@@ -215,7 +267,7 @@ public class TGUser implements UserProvider {
       flags &= ~FLAG_GROUP_CREATOR;
     }
     if (user == null || TD.isPhotoEmpty(user.profilePhoto)) {
-      avatarPlaceholderMetadata = new AvatarPlaceholder.Metadata(TD.getAvatarColorId(user, tdlib.myUserId()), TD.getLetters(user));
+      avatarPlaceholderMetadata = new AvatarPlaceholder.Metadata(tdlib.cache().userAccentColor(user), TD.getLetters(user));
     } else {
       imageFile = new ImageFile(tdlib, user.profilePhoto.small);
       imageFile.setSize(ChatView.getDefaultAvatarCacheSize());
@@ -233,7 +285,14 @@ public class TGUser implements UserProvider {
 
   public boolean updateName () {
     if ((flags & FLAG_CHAT_TITLE_AS_USER_NAME) != 0) return false;
-    String nameText = (flags & FLAG_LOCAL) != 0 ? TD.getUserName(firstName, lastName) : TD.getUserName(userId, user);
+    String nameText;
+    if (BitwiseUtils.hasFlag(flags, FLAG_LOCAL)) {
+      nameText = TD.getUserName(firstName, lastName);
+    } else if (user != null || userId != 0) {
+      nameText = TD.getUserName(userId, user);
+    } else {
+      nameText = tdlib.chatTitle(chatId);
+    }
     if (!StringUtils.equalsOrBothEmpty(this.nameText, nameText)) {
       this.nameText = nameText;
       this.nameFake = Text.needFakeBold(nameText);
@@ -254,8 +313,9 @@ public class TGUser implements UserProvider {
       return true;
     } else if (((flags & FLAG_CONTACT) != 0 || (flags & FLAG_SHOW_PHONE_NUMBER) != 0) && user != null) {
       statusText = Strings.formatPhone(user.phoneNumber);
-    } else if ((flags & FLAG_USERNAME) != 0 && user != null) {
-      statusText = "@" + user.username;
+    } else if ((flags & FLAG_USERNAME) != 0 && user != null && !Td.isEmpty(user.usernames)) {
+      TdApi.Usernames usernames = user.usernames;
+      statusText = Td.isEmpty(user.usernames) ? Strings.join(Lang.getConcatSeparator(), usernames.activeUsernames, username -> "@" + username) : null;
     } else {
       statusText = role != 0 ? TD.getRoleName(user, role) : null;
     }
@@ -289,6 +349,10 @@ public class TGUser implements UserProvider {
 
   public String getName () {
     return nameText;
+  }
+
+  public String getShorterName () {
+    return TD.getShorterUserNameOrNull(getFirstName(), getLastName());
   }
 
   public float getNameWidth () {
@@ -340,8 +404,12 @@ public class TGUser implements UserProvider {
     return (flags & FLAG_LOCAL) != 0 ? lastName : user == null ? "" : user.lastName;
   }
 
-  public @Nullable String getUsername () {
-    return (flags & FLAG_LOCAL) == 0 && user != null ? user.username : null;
+  public String getUsername () {
+    return Td.primaryUsername(getUsernames());
+  }
+
+  public @Nullable TdApi.Usernames getUsernames () {
+    return (flags & FLAG_LOCAL) == 0 && user != null ? user.usernames : null;
   }
 
   public ImageFile getAvatar () {

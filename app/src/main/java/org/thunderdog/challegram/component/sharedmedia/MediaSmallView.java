@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@ import android.view.MotionEvent;
 
 import androidx.annotation.Nullable;
 
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.config.Config;
@@ -28,7 +29,11 @@ import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.mediaview.data.MediaItem;
+import org.thunderdog.challegram.telegram.TdlibMessageViewer;
+import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Strings;
@@ -47,7 +52,7 @@ import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class MediaSmallView extends SparseDrawableView implements Destroyable, FactorAnimator.Target, SelectableItemDelegate {
+public class MediaSmallView extends SparseDrawableView implements Destroyable, FactorAnimator.Target, SelectableItemDelegate, TdlibUi.MessageProvider {
   private final ImageReceiver miniThumbnail;
   private final ImageReceiver preview, imageReceiver;
   private final GifReceiver gifReceiver;
@@ -101,10 +106,16 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
     }
     this.item = item;
     if (item != null) {
-      miniThumbnail.requestFile(item.getMiniThumbnail());;
-      preview.requestFile(item.isLoaded() && item.getTargetGifFile() == null ? null : item.getPreviewImageFile());
-      imageReceiver.requestFile(item.isLoaded() ? item.getTargetImageFile(false) : null);
-      gifReceiver.requestFile(item.isLoaded() ? item.getTargetGifFile() : null);
+      miniThumbnail.requestFile(item.getMiniThumbnail());
+      if (item.hasSpoiler()) {
+        imageReceiver.clear();
+        gifReceiver.clear();
+        preview.requestFile(item.getBlurredPreviewImageFile());
+      } else {
+        preview.requestFile(item.isLoaded() && item.getTargetGifFile() == null ? null : item.getPreviewImageFile());
+        imageReceiver.requestFile(item.isLoaded() ? item.getTargetImageFile(false) : null);
+        gifReceiver.requestFile(item.isLoaded() ? item.getTargetGifFile() : null);
+      }
       downloadedAnimator.setValue(item.isLoaded(), false);
       item.attachToView(this);
       item.setSimpleListener(listener);
@@ -207,8 +218,8 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
 
   public void invalidateContent (MediaItem item) {
     if (this.item == item) {
-      this.imageReceiver.requestFile(item != null ? item.getTargetImage() : null);
-      this.gifReceiver.requestFile(item != null ? item.getTargetGifFile() : null);
+      this.imageReceiver.requestFile(item != null && !item.hasSpoiler() ? item.getTargetImage() : null);
+      this.gifReceiver.requestFile(item != null && !item.hasSpoiler() ? item.getTargetGifFile() : null);
     }
   }
 
@@ -236,6 +247,10 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
 
   private static final float SCALE = .24f;
 
+  private Receiver findTargetReceiver () {
+    return item == null ? null : imageReceiver.getCurrentFile() != null ? imageReceiver : gifReceiver;
+  }
+
   @Override
   protected void onDraw (Canvas c) {
     if (item == null) {
@@ -252,7 +267,7 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
       c.scale(scale, scale, preview.centerX(), preview.centerY());
     }
 
-    Receiver receiver = imageReceiver.getCurrentFile() != null ? imageReceiver : gifReceiver;
+    Receiver receiver = findTargetReceiver();
     final boolean scaled = receiver == gifReceiver && item != null && item.getType() == MediaItem.TYPE_VIDEO_MESSAGE;
     if (scaled) {
       c.save();
@@ -272,6 +287,11 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
     receiver.draw(c);
     if (scaled) {
       c.restore();
+    }
+
+    if (item.hasSpoiler()) {
+      DrawAlgorithms.drawRoundRect(c, 0, preview.getLeft(), preview.getTop(), preview.getRight(), preview.getBottom(), Paints.fillingPaint(Theme.getColor(ColorId.spoilerMediaOverlay)));
+      DrawAlgorithms.drawParticles(c, 0, preview.getLeft(), preview.getTop(), preview.getRight(), preview.getBottom(), 1f);
     }
 
     boolean isStreamingUI = item.isVideo() && Config.VIDEO_CLOUD_PLAYBACK_AVAILABLE;
@@ -331,5 +351,22 @@ public class MediaSmallView extends SparseDrawableView implements Destroyable, F
 
   public void initWithClickDelegate (ClickHelper.Delegate delegate) {
     helper = new ClickHelper(delegate);
+  }
+
+  // MessageProvider
+
+
+  @Override
+  public TdApi.Message getVisibleMessage () {
+    return item != null ? item.getMessage() : null;
+  }
+
+  @Override
+  public int getVisibleMessageFlags () {
+    Receiver receiver = findTargetReceiver();
+    if (item.hasSpoiler() || receiver == null || receiver.needPlaceholder()) {
+      return TdlibMessageViewer.Flags.NO_SCREENSHOT_NOTIFICATION;
+    }
+    return 0;
   }
 }

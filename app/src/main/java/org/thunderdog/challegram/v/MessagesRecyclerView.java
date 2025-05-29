@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@ import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 
-import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -43,7 +42,7 @@ import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.MathUtils;
 
 public class MessagesRecyclerView extends RecyclerView implements FactorAnimator.Target {
-  public static final long ITEM_ANIMATOR_DURATION = 140L;
+  public static final long ITEM_ANIMATOR_DURATION = Config.DEBUG_REACTIONS_ANIMATIONS ? 1400l : 140L;
 
   private MessagesManager manager;
   private CustomTouchHelper touchHelper;
@@ -120,7 +119,15 @@ public class MessagesRecyclerView extends RecyclerView implements FactorAnimator
   }
 
   public void startSwipe (View view) {
-    RecyclerView.ViewHolder holder = getChildViewHolder(view);
+    if (view == null) {
+      return;
+    }
+    RecyclerView.ViewHolder holder;
+    try {
+      holder = getChildViewHolder(view);
+    } catch (IllegalArgumentException ignored) {
+      return;
+    }
     if (holder != null && holder.getItemViewType() != MessagesHolder.TYPE_EMPTY) {
       touchHelper.startSwipe(holder);
     }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -170,7 +170,7 @@ public class WatchDogObserver {
 
   private void onChange (boolean isProbablyImage, boolean isExternal) {
     synchronized (this) {
-      if (isProbablyImage && UI.getUiState() == UI.STATE_RESUMED) {
+      if (isProbablyImage && UI.getUiState() == UI.State.RESUMED) {
         checkScreenshots(isExternal);
       }
     }
@@ -179,7 +179,7 @@ public class WatchDogObserver {
   private void checkScreenshots (final boolean isExternal) {
     // UI.showToast("Check screenshots", Toast.LENGTH_SHORT);
     final Tdlib tdlib = TdlibManager.instance().current();
-    if (!tdlib.hasOpenChats() || !UI.wasResumedRecently(1000)) {
+    if (!tdlib.hasPotentiallyVisibleMessages() || !UI.wasResumedRecently(1000)) {
       return;
     }
 

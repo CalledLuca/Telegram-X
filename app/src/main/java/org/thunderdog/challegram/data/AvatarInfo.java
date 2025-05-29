@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,9 +14,10 @@
  */
 package org.thunderdog.challegram.data;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.util.text.Letters;
 
@@ -25,7 +26,7 @@ public class AvatarInfo {
   public final long userId;
   public ImageFile imageFile;
 
-  public int avatarColorId;
+  public TdlibAccentColor accentColor;
   public Letters letters;
 
   public float lettersWidth15dp;
@@ -39,7 +40,7 @@ public class AvatarInfo {
   public void updateUser () {
     TdApi.User user = tdlib.cache().user(userId);
     letters = TD.getLetters(user);
-    avatarColorId = TD.getAvatarColorId(user, tdlib.myUserId());
+    accentColor = tdlib.cache().userAccentColor(user);
     imageFile = TD.getAvatar(tdlib, user);
     lettersWidth15dp = Paints.measureLetters(letters, 15f);
   }

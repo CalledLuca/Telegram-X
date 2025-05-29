@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,11 +14,7 @@
  */
 package org.thunderdog.challegram;
 
-import android.Manifest;
 import android.animation.ValueAnimator;
-import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
-import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.Service;
@@ -28,6 +24,7 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -36,6 +33,7 @@ import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.location.Location;
 import android.location.LocationManager;
 import android.media.AudioManager;
@@ -54,6 +52,7 @@ import android.opengl.GLES20;
 import android.opengl.GLUtils;
 import android.os.Build;
 import android.os.Environment;
+import android.os.LocaleList;
 import android.os.Parcelable;
 import android.os.PowerManager;
 import android.os.StatFs;
@@ -64,6 +63,7 @@ import android.provider.Settings;
 import android.text.BoringLayout;
 import android.text.Layout;
 import android.text.Spannable;
+import android.text.Spanned;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.format.DateUtils;
@@ -71,57 +71,75 @@ import android.util.TypedValue;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.webkit.MimeTypeMap;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.CheckResult;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.os.EnvironmentCompat;
 import androidx.exifinterface.media.ExifInterface;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.util.TimestampAdjuster;
+import androidx.media3.datasource.ByteArrayDataSource;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.FileDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.ExoPlaybackException;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.RenderersFactory;
+import androidx.media3.exoplayer.analytics.PlayerId;
+import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory;
+import androidx.media3.exoplayer.hls.HlsExtractorFactory;
+import androidx.media3.exoplayer.hls.HlsMediaChunkExtractor;
+import androidx.media3.exoplayer.hls.HlsMediaSource;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.ProgressiveMediaSource;
+import androidx.media3.exoplayer.source.UnrecognizedInputFormatException;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.extractor.ExtractorInput;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.exoplayer2.DefaultLoadControl;
-import com.google.android.exoplayer2.DefaultRenderersFactory;
-import com.google.android.exoplayer2.ExoPlaybackException;
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.PlaybackException;
-import com.google.android.exoplayer2.RenderersFactory;
-import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
-import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.MediaSourceFactory;
-import com.google.android.exoplayer2.source.ProgressiveMediaSource;
-import com.google.android.exoplayer2.source.UnrecognizedInputFormatException;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.upstream.FileDataSource;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.config.Device;
 import org.thunderdog.challegram.core.Background;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
-import org.thunderdog.challegram.emoji.EmojiSpan;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
 import org.thunderdog.challegram.loader.ImageLoader;
 import org.thunderdog.challegram.loader.ImageReader;
 import org.thunderdog.challegram.loader.ImageStrictCache;
 import org.thunderdog.challegram.mediaview.data.MediaItem;
+import org.thunderdog.challegram.telegram.RandomAccessDataSource;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibDataSource;
 import org.thunderdog.challegram.telegram.TdlibDelegate;
+import org.thunderdog.challegram.telegram.TdlibFilesManager;
+import org.thunderdog.challegram.telegram.TdlibNotificationChannelGroup;
 import org.thunderdog.challegram.telegram.TdlibNotificationManager;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Screen;
-import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.TGMimeType;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.ui.TextController;
 import org.thunderdog.challegram.util.AppBuildInfo;
+import org.thunderdog.challegram.util.Permissions;
+import org.thunderdog.challegram.util.text.TextReplacementSpan;
+import org.thunderdog.challegram.util.text.bidi.BiDiUtils;
 import org.thunderdog.challegram.widget.NoScrollTextView;
 
 import java.io.BufferedReader;
@@ -141,6 +159,8 @@ import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
@@ -149,29 +169,37 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.zip.GZIPInputStream;
 
 import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGL11;
 
+import me.vkryl.android.AppInstallationUtil;
+import me.vkryl.android.LocaleUtils;
 import me.vkryl.android.SdkVersion;
 import me.vkryl.core.ArrayUtils;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.FileUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.IntList;
+import me.vkryl.core.collection.LongList;
 import me.vkryl.core.lambda.RunnableBool;
 import me.vkryl.core.lambda.RunnableData;
-import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.util.LocalVar;
-import me.vkryl.td.Td;
 import okio.BufferedSink;
 import okio.BufferedSource;
 import okio.Okio;
 import okio.Sink;
 import okio.Source;
+import tgx.td.Td;
+import tgx.td.data.HlsPath;
+import tgx.td.data.HlsVideo;
 
 @SuppressWarnings ("JniMissingFunction")
 public class U {
@@ -180,33 +208,12 @@ public class U {
     return U.isValidBitmap(bitmap) && N.blurBitmap(bitmap, radius, unpin, 0) == 0;
   }
 
-  private static Boolean isAppSideLoaded;
-
-  public static boolean isAppSideLoaded () {
-    return (isAppSideLoaded != null ? isAppSideLoaded : (isAppSideLoaded = isAppSideLoadedImpl()));
-  }
-
   public static int getHeading (Location location) {
     if (location.hasBearing()) {
       int heading = MathUtils.modulo(Math.round(location.getBearing()), 360);
       return heading != 0 ? heading : 360;
     }
     return 0;
-  }
-
-  private static boolean isAppSideLoadedImpl () {
-    try {
-      String packageName = UI.getAppContext().getPackageName();
-      String installerPackageName = UI.getAppContext().getPackageManager().getInstallerPackageName(packageName);
-      if (StringUtils.isEmpty(installerPackageName)) {
-        return true;
-      }
-      Log.v("Installer package: %s", installerPackageName);
-      return !"com.android.vending".equals(installerPackageName);
-    } catch (Throwable t) {
-      Log.v("Unable to determine installer package", t);
-    }
-    return false;
   }
 
   public static String gzipFileToString (String path) {
@@ -405,7 +412,7 @@ public class U {
       String output = out.toString();
       if (!output.trim().isEmpty()) {
         String[] devicePoints = output.split("\n");
-        for (String voldPoint: devicePoints) {
+        for (String voldPoint : devicePoints) {
           String path = voldPoint.split(" ")[2];
           if (!StringUtils.equalsOrBothEmpty(ignorePath, path)) {
             if (results == null) {
@@ -501,9 +508,20 @@ public class U {
         case TdlibNotificationManager.ID_ONGOING_CALL_NOTIFICATION:
         case TdlibNotificationManager.ID_INCOMING_CALL_NOTIFICATION:
           knownType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (UI.getAppContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+              knownType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+          }
+          knownType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
           break;
         case TdlibNotificationManager.ID_PENDING_TASK:
-          knownType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            knownType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE;
+          } else {
+            // FOREGROUND_SERVICE_TYPE_SHORT_SERVICE was added in Android 14.
+            knownType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST;
+          }
           break;
       }
       if (knownType != android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE) {
@@ -696,8 +714,10 @@ public class U {
   public static void recycle (@Nullable Bitmap bitmap) {
     if (bitmap != null) {
       try {
-        if (!bitmap.isRecycled())
-          bitmap.recycle();
+        synchronized (bitmap) {
+          if (!bitmap.isRecycled())
+            bitmap.recycle();
+        }
       } catch (Throwable ignored) { }
     }
   }
@@ -721,7 +741,7 @@ public class U {
     // DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
     final int extensionMode = preferExtensions || org.thunderdog.challegram.unsorted.Settings.instance().getNewSetting(org.thunderdog.challegram.unsorted.Settings.SETTING_FLAG_FORCE_EXO_PLAYER_EXTENSIONS) ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON;
     final RenderersFactory renderersFactory = new DefaultRenderersFactory(context).setExtensionRendererMode(extensionMode);
-    final MediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(context, new DefaultExtractorsFactory().setConstantBitrateSeekingEnabled(true));
+    final MediaSource.Factory mediaSourceFactory = new DefaultMediaSourceFactory(context, new DefaultExtractorsFactory().setConstantBitrateSeekingEnabled(true));
     return new ExoPlayer.Builder(context, renderersFactory, mediaSourceFactory)
       .setTrackSelector(new DefaultTrackSelector(context))
       .setLoadControl(new DefaultLoadControl())
@@ -740,26 +760,112 @@ public class U {
     return new ProgressiveMediaSource.Factory(new FileDataSource.Factory()).createMediaSource(newMediaItem(Uri.fromFile(file)));
   }
 
-  public static com.google.android.exoplayer2.MediaItem newMediaItem (Uri uri) {
-    return new com.google.android.exoplayer2.MediaItem.Builder().setUri(uri).build();
+  public static androidx.media3.common.MediaItem newMediaItem (Uri uri) {
+    return androidx.media3.common.MediaItem.fromUri(uri);
   }
 
-  public static MediaSource newMediaSource (int accountId, TdApi.Message message) {
-    return newMediaSource(accountId, TD.getFile(message));
+  public static MediaSource newAudioMediaSource (int accountId, TdApi.Message message) {
+    TdApi.File file = TD.getFile(message);
+    long durationMs = TD.getDurationMs(message);
+    return newMediaSource(accountId, file, TdlibFilesManager.PRIORITY_STREAMING_AUDIO, TdlibDataSource.Flag.DOWNLOAD_FULLY, durationMs);
   }
 
-  public static MediaSource newMediaSource (int accountId, @Nullable TdApi.File file) {
+  public static MediaSource newMediaSource (int accountId, @Nullable HlsVideo hlsVideo) {
+    if (hlsVideo == null) {
+      throw new IllegalArgumentException();
+    }
+
+    Uri manifestUri = TdlibDataSource.UriFactory.create(accountId, -1);
+
+    TdlibDataSource.Factory factory = new TdlibDataSource.Factory(accountId, TdlibFilesManager.PRIORITY_STREAMING_VIDEO, new TdlibDataSource.RequestModifier() {
+      @Override
+      public Uri modifyUri (Uri sourceUri) {
+        String scheme = sourceUri.getScheme();
+        if (scheme == null) {
+          throw new IllegalArgumentException(sourceUri.toString());
+        }
+        switch (scheme) {
+          case HlsVideo.MTPROTO_SCHEME: {
+            long streamId = HlsVideo.extractStreamId(sourceUri);
+            int videoFileId = hlsVideo.findVideoFileIdByStreamId(streamId);
+            return TdlibDataSource.UriFactory.create(accountId, videoFileId, TdlibFilesManager.PRIORITY_STREAMING_HLS_VIDEO, TdlibDataSource.Flag.DOWNLOAD_PRECISELY, TimeUnit.SECONDS.toMillis(hlsVideo.video.duration));
+          }
+          case HlsVideo.SCHEME: {
+            HlsPath hlsPath = HlsPath.fromUri(sourceUri);
+            return TdlibDataSource.UriFactory.create(accountId, hlsPath.hlsFileId, TdlibFilesManager.PRIORITY_STREAMING_HLS_PLAYLIST, TdlibDataSource.Flag.DOWNLOAD_FULLY, 0);
+          }
+          default: {
+            return sourceUri;
+          }
+        }
+      }
+
+      @Nullable
+      @Override
+      public DataSource redirectDataSource (Uri uri) {
+        if (uri.equals(manifestUri)) {
+          String playlistData = hlsVideo.multivariantPlaylistData();
+          return new ByteArrayDataSource(playlistData.getBytes());
+        }
+        return null;
+      }
+    });
+
+    return new HlsMediaSource.Factory(factory)
+      .setAllowChunklessPreparation(false)
+      .setExtractorFactory(newHlsExtractorFactory(hlsVideo))
+      .createMediaSource(newMediaItem(manifestUri));
+  }
+
+  @NonNull private static HlsExtractorFactory newHlsExtractorFactory (@NonNull HlsVideo hlsVideo) {
+    DefaultHlsExtractorFactory defaultHlsExtractorFactory = new DefaultHlsExtractorFactory();
+    return new HlsExtractorFactory() {
+      @Override
+      @NonNull
+      public HlsMediaChunkExtractor createExtractor (@NonNull Uri uri, @NonNull Format format, @Nullable List<Format> muxedCaptionFormats, @NonNull TimestampAdjuster timestampAdjuster, @NonNull Map<String, List<String>> responseHeaders, @NonNull ExtractorInput sniffingExtractorInput, @NonNull PlayerId playerId) throws IOException {
+        if (HlsVideo.MTPROTO_SCHEME.equals(uri.getScheme())) {
+          long streamId = HlsVideo.extractStreamId(uri);
+          TdApi.AlternativeVideo alternativeVideo = hlsVideo.findVideoByStreamId(streamId);
+          format = format.buildUpon()
+            .setCodecs(alternativeVideo.codec)
+            .setWidth(alternativeVideo.width)
+            .setHeight(alternativeVideo.height)
+            .setContainerMimeType(MimeTypes.VIDEO_MP4)
+            .setCryptoType(C.CRYPTO_TYPE_UNSUPPORTED)
+            .build();
+          if (!timestampAdjuster.isInitialized()) {
+            try {
+              timestampAdjuster.sharedInitializeOrWait(true, 0, 0);
+            } catch (TimeoutException | InterruptedException ignored) { }
+          }
+        }
+        return defaultHlsExtractorFactory.createExtractor(uri, format, muxedCaptionFormats, timestampAdjuster, responseHeaders, sniffingExtractorInput, playerId);
+      }
+    };
+  }
+
+  public static MediaSource newMediaSource (int accountId, @Nullable TdApi.File file, int priority, @TdlibDataSource.Flag int flags, long durationMs) {
     if (file == null)
       throw new IllegalArgumentException();
+    Uri uri;
+    DataSource.Factory factory;
     if (file.id == -1 && !StringUtils.isEmpty(file.local.path)) {
-      return newMediaSource(new File(file.local.path));
+      uri = Uri.fromFile(new File(file.local.path));
+      factory = new FileDataSource.Factory();
     } else {
-      return new ProgressiveMediaSource.Factory(new TdlibDataSource.Factory()).createMediaSource(newMediaItem(TdlibDataSource.UriFactory.create(accountId, file)));
+      uri = TdlibDataSource.UriFactory.create(accountId, file, priority, flags, durationMs);
+      factory = new TdlibDataSource.Factory();
     }
+    androidx.media3.common.MediaItem media = newMediaItem(uri);
+    return new ProgressiveMediaSource.Factory(factory).createMediaSource(media);
+  }
+
+  public static MediaSource newMediaSource (RandomAccessFile file) {
+    return new ProgressiveMediaSource.Factory(new RandomAccessDataSource.Factory(file)).createMediaSource(newMediaItem(Uri.EMPTY));
   }
 
   public static MediaSource newMediaSource (int accountId, int fileId) {
-    return new ProgressiveMediaSource.Factory(new TdlibDataSource.Factory()).createMediaSource(newMediaItem(TdlibDataSource.UriFactory.create(accountId, fileId)));
+    return new ProgressiveMediaSource.Factory(new TdlibDataSource.Factory(accountId)).createMediaSource(newMediaItem(TdlibDataSource.UriFactory.create(accountId, fileId)));
   }
 
   public static boolean isGooglePlayServicesAvailable (Context context) {
@@ -816,33 +922,23 @@ public class U {
     return Environment.MEDIA_MOUNTED.equals(state) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
   }
 
-  public static long getFreeMemorySize (StatFs statFs) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-      return statFs.getBlockSizeLong() * statFs.getAvailableBlocksLong();
-    } else {
-      //noinspection deprecation
-      return (long) statFs.getBlockSize() * (long) statFs.getAvailableBlocks();
-    }
-  }
-
-  public static String getMarketUrl () {
-    String url = Lang.getStringSecure(R.string.MarketUrl);
-    return Strings.isValidLink(url) ? url : BuildConfig.MARKET_URL;
-  }
-
-  /*public static boolean isAfter (int hour, int minute, int second, int afterHour, int afterMinute, int afterSecond) {
-    return hour > afterHour || (hour == afterHour && (minute > afterMinute || (minute == afterMinute && second > afterSecond)));
-  }*/
-
   public static String getOtherNotificationChannel () {
     return getNotificationChannel("other", R.string.NotificationChannelOther);
+  }
+
+  public static String getMaybeNotificationChannel () {
+    return getNotificationChannel("maybe", R.string.NotificationChannelMaybe);
   }
 
   public static String getNotificationChannel (String id, int stringRes) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       android.app.NotificationChannel channel = new android.app.NotificationChannel(id, Lang.getString(stringRes), NotificationManager.IMPORTANCE_LOW);
       NotificationManager manager = (NotificationManager) UI.getAppContext().getSystemService(Context.NOTIFICATION_SERVICE);
-      manager.createNotificationChannel(channel);
+      try {
+        manager.createNotificationChannel(channel);
+      } catch (Throwable t) {
+        Log.v("Unable to create notification channel for id: %s", new TdlibNotificationChannelGroup.ChannelCreationFailureException(t), id);
+      }
     }
     return id;
   }
@@ -950,15 +1046,6 @@ public class U {
       b.append(hourOfDay < 12 ? " AM" : " PM");
     }
     return b.toString();
-  }
-
-  public static long getTotalMemorySize (StatFs statFs) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-      return statFs.getBlockSizeLong() * statFs.getBlockCountLong();
-    } else {
-      //noinspection deprecation
-      return (long) statFs.getBlockSize() * (long) statFs.getBlockCount();
-    }
   }
 
   private static final String MAP_DARK_STYLE = "&style=element:geometry%7Ccolor:0x212121&style=element:labels.icon%7Cvisibility:off&style=element:labels.text.fill%7Ccolor:0x757575&style=element:labels.text.stroke%7Ccolor:0x212121&style=feature:administrative%7Celement:geometry%7Ccolor:0x757575&style=feature:administrative.country%7Celement:labels.text.fill%7Ccolor:0x9e9e9e&style=feature:administrative.land_parcel%7Cvisibility:off&style=feature:administrative.locality%7Celement:labels.text.fill%7Ccolor:0xbdbdbd&style=feature:poi%7Celement:labels.text.fill%7Ccolor:0x757575&style=feature:poi.park%7Celement:geometry%7Ccolor:0x181818&style=feature:poi.park%7Celement:labels.text.fill%7Ccolor:0x616161&style=feature:poi.park%7Celement:labels.text.stroke%7Ccolor:0x1b1b1b&style=feature:road%7Celement:geometry.fill%7Ccolor:0x2c2c2c&style=feature:road%7Celement:labels.text.fill%7Ccolor:0x8a8a8a&style=feature:road.arterial%7Celement:geometry%7Ccolor:0x373737&style=feature:road.highway%7Celement:geometry%7Ccolor:0x3c3c3c&style=feature:road.highway.controlled_access%7Celement:geometry%7Ccolor:0x4e4e4e&style=feature:road.local%7Celement:labels.text.fill%7Ccolor:0x616161&style=feature:transit%7Celement:labels.text.fill%7Ccolor:0x757575&style=feature:water%7Celement:geometry%7Ccolor:0x000000&style=feature:water%7Celement:labels.text.fill%7Ccolor:0x3d3d3d";
@@ -1130,7 +1217,7 @@ public class U {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && DocumentsContract.isDocumentUri(UI.getContext(), uri)) {
         if (isExternalStorageDocument(uri)) {
           final String docId = DocumentsContract.getDocumentId(uri);
-          final String[] split = docId.split(":");
+          final String[] split = docId.split(":", 2);
           final String type = split[0];
           if ("primary".equalsIgnoreCase(type)) {
             result = Environment.getExternalStorageDirectory() + "/" + split[1];
@@ -1141,7 +1228,7 @@ public class U {
           result = getDataColumn(UI.getContext(), contentUri, null, null);
         } else if (isMediaDocument(uri)) {
           final String docId = DocumentsContract.getDocumentId(uri);
-          final String[] split = docId.split(":");
+          final String[] split = docId.split(":", 2);
           final String type = split[0];
 
           Uri contentUri = null;
@@ -1197,7 +1284,7 @@ public class U {
       return;
     }
 
-    if (Intents.openFile(file, mimeType)) {
+    if (Intents.openFile(context.context(), file, mimeType)) {
       return;
     }
 
@@ -1210,6 +1297,17 @@ public class U {
     UI.showToast(R.string.NoAppToOpen, Toast.LENGTH_SHORT);
   }
 
+  public static float getAnimationScale (Context context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      return ValueAnimator.getDurationScale();
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+      try {
+        return Settings.Global.getFloat(context.getContentResolver(), Settings.Global.ANIMATOR_DURATION_SCALE, 1.0f);
+      } catch (Throwable ignored) { }
+    }
+    return 1.0f;
+  }
   public static String getDataColumn(Context context, Uri uri, String selection, String[] selectionArgs) {
     final String column = "_data";
     final String[] projection = {
@@ -1239,7 +1337,7 @@ public class U {
     return "com.android.providers.media.documents".equals(uri.getAuthority());
   }
 
-  public static boolean isGoogleDriveDocument(Uri uri) {
+  public static boolean isGoogleDriveDocument (Uri uri) {
     return "com.google.android.apps.docs.storage".equals(uri.getAuthority());
   }
 
@@ -1314,6 +1412,10 @@ public class U {
 
     public long getDuration (TimeUnit unit) {
       return unit.convert(durationMs, TimeUnit.MILLISECONDS);
+    }
+
+    public boolean isRotated () {
+      return U.isExifRotated(rotation);
     }
   }
 
@@ -1416,6 +1518,23 @@ public class U {
         UI.post(() -> callback.runWithData(null));
       }
     });
+  }
+
+  public static boolean toGalleryFile (TdApi.Message message, RunnableData<ImageGalleryFile> callback) {
+    final TdApi.File file = TD.getFile(message);
+    if (!TD.isFileLoaded(file)) {
+      return false;
+    }
+
+    final boolean isVideo = message.content.getConstructor() == TdApi.MessageVideo.CONSTRUCTOR;
+    toGalleryFile(new File(file.local.path), isVideo, imageGalleryFile -> {
+      if (imageGalleryFile != null) {
+        imageGalleryFile.setCaption(Td.textOrCaption(message.content));
+      }
+      callback.runWithData(imageGalleryFile);
+    });
+
+    return true;
   }
 
   public static String getFileName (String path) {
@@ -1665,72 +1784,9 @@ public class U {
     return orientation;
   }
 
-  public static boolean requestPermissionsIfNeeded (Runnable onDone, String... permissions) {
-    if (permissions == null || permissions.length == 0)
-      return false;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      if (U.needsPermissionRequest(permissions)) {
-        BaseActivity activity = UI.getUiContext();
-        if (activity != null) {
-          activity.requestCustomPermissions(permissions, (code, granted) -> {
-            if (granted) {
-              onDone.run();
-            }
-          });
-        }
-        return true;
-      }
-    }
-    return false;
-  }
-
-  public static boolean needsPermissionRequest (final String... permissions) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      BaseActivity context = UI.getUiContext();
-      if (context != null) {
-        for (String permission : permissions) {
-          if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
   public static void run (Runnable runnable) {
     if (runnable != null) {
       runnable.run();
-    }
-  }
-
-  public static boolean needsPermissionRequest (final String permission) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      BaseActivity context = UI.getUiContext();
-      return context != null && context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED;
-    }
-    return false;
-  }
-
-  public static boolean shouldShowPermissionRationale (final String permission) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      BaseActivity context = UI.getUiContext();
-      return context != null && context.shouldShowRequestPermissionRationale(permission);
-    }
-    return false;
-  }
-
-  public static void requestPermissions (final String[] permissions, final RunnableBool after) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      BaseActivity context = UI.getUiContext();
-      if (context == null) {
-        return;
-      }
-      context.requestCustomPermissions(permissions, (code, granted) -> {
-        if (after != null) {
-          after.runWithBool(granted);
-        }
-      });
     }
   }
 
@@ -1739,13 +1795,15 @@ public class U {
   public static final int TYPE_GIF = 2;
   public static final int TYPE_FILE = 3;
 
-  public static void savePhotoToGallery (final Bitmap bitmap, boolean transparent) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && needsPermissionRequest(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE)) {
-      requestPermissions(new String[] {Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, result -> {
-        if (result) {
-          savePhotoToGallery(bitmap, transparent);
-        }
-      });
+  public static void savePhotoToGallery (final BaseActivity activity, final Bitmap bitmap, boolean transparent) {
+    if (!UI.isValid(activity)) {
+      return;
+    }
+    if (activity.permissions().requestWriteExternalStorage(Permissions.WriteType.GALLERY, granted -> {
+      if (granted) {
+        savePhotoToGallery(activity, bitmap, transparent);
+      }
+    })) {
       return;
     }
     Background.instance().post(() -> {
@@ -1767,8 +1825,8 @@ public class U {
     });
   }
 
-  public static void copyToGallery (final String fromPath, final int type) {
-    copyToGallery(fromPath, type, true, null);
+  public static void copyToGallery (final BaseActivity context, final String fromPath, final int type) {
+    copyToGallery(context, fromPath, type, true, null);
   }
 
   public static boolean copyToGalleryImpl (final String fromPath, int type, RunnableData<File> onSaved) {
@@ -1791,13 +1849,12 @@ public class U {
     return false;
   }
 
-  public static void copyToGallery (final String fromPath, final int type, boolean needAlert, RunnableData<File> onSaved) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && needsPermissionRequest(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-      requestPermissions(new String[] {Manifest.permission.WRITE_EXTERNAL_STORAGE}, result -> {
-        if (result) {
-          copyToGallery(fromPath, type, needAlert, onSaved);
-        }
-      });
+  public static void copyToGallery (final BaseActivity context, final String fromPath, final int type, boolean needAlert, RunnableData<File> onSaved) {
+    if (context.permissions().requestWriteExternalStorage(Permissions.WriteType.GALLERY, granted -> {
+      if (granted) {
+        copyToGallery(context, fromPath, type, needAlert, onSaved);
+      }
+    })) {
       return;
     }
     if (fromPath != null && !fromPath.isEmpty()) {
@@ -1821,7 +1878,8 @@ public class U {
     }
   }
 
-  public static File getAppDir (boolean allowExternal) {
+  @Deprecated
+  public static File getFilesDir (boolean allowExternal) {
     File file = null;
     if (allowExternal) {
       file = UI.getContext().getExternalFilesDir(null);
@@ -1830,8 +1888,8 @@ public class U {
   }
 
   public static File getRingtonesDir () {
-    File ringtonesDir = new File(getAppDir(false), "ringtones");
-    if (!ringtonesDir.exists() && !ringtonesDir.mkdir())
+    File ringtonesDir = new File(getFilesDir(false), "ringtones");
+    if (!FileUtils.createDirectory(ringtonesDir))
       throw new IllegalStateException();
     return ringtonesDir;
   }
@@ -1873,38 +1931,38 @@ public class U {
     return path.startsWith(privateDir);
   }
 
-  private static boolean moveFiles (File fromDirectory, File toDirectory) {
-    File[] mediaFiles = fromDirectory.listFiles();
-    if (mediaFiles == null || mediaFiles.length == 0) {
-      if (!fromDirectory.delete()) {
+  private static boolean moveDir (File fromDir, File toDir) {
+    if (!fromDir.exists() || !fromDir.isDirectory()) {
+      Log.w("Source directory does not exist or is not a directory");
+      return false;
+    }
+    File[] innerFiles = fromDir.listFiles();
+    if (innerFiles == null || innerFiles.length == 0) {
+      if (!fromDir.delete()) {
         Log.w("Unable to delete media directory");
         return false;
       }
       return true;
     }
-    if (!toDirectory.mkdirs() && !toDirectory.exists()) {
+    if (!FileUtils.createDirectory(toDir)) {
       Log.w("Failed to create output directory");
       return false;
     }
-    if (!toDirectory.isDirectory()) {
-      Log.w("Output directory is not a directory");
-      return false;
-    }
     int successCount = 0;
-    for (File fromFile : mediaFiles) {
-      File toFile = new File(toDirectory, fromFile.getName());
+    for (File fromFile : innerFiles) {
+      File toFile = new File(toDir, fromFile.getName());
       if (moveFile(fromFile, toFile))
         successCount++;
     }
-    return successCount == mediaFiles.length && fromDirectory.delete();
+    return successCount == innerFiles.length && fromDir.delete();
   }
 
-  private static boolean moveFile (File fromFile, File toFile) {
+  public static boolean moveFile (File fromFile, File toFile) {
     if (fromFile.renameTo(toFile)) {
       return true;
     }
     if (fromFile.isDirectory()) {
-      return moveFiles(fromFile, toFile);
+      return moveDir(fromFile, toFile);
     }
     if (!FileUtils.copy(fromFile, toFile)) {
       Log.w("Cannot copy file");
@@ -1921,11 +1979,11 @@ public class U {
     if (toDirectory == null || toDirectory.equals(fromDirectory)) {
       return;
     }
-    moveFiles(fromDirectory, toDirectory);
+    moveDir(fromDirectory, toDirectory);
   }
 
   private static File getUnsecurePrivateAlbumDir () {
-    return new File(getAppDir(true), "media");
+    return new File(getFilesDir(true), "media");
   }
 
   public static File getAlbumDir (boolean isPrivate) {
@@ -1938,9 +1996,9 @@ public class U {
       }
     }
     if (isPrivate || storageDir == null) {
-      storageDir = new File(getAppDir(!isPrivate), "media");
+      storageDir = new File(getFilesDir(!isPrivate), "media");
     }
-    if (!storageDir.mkdirs() && !storageDir.exists()) {
+    if (!FileUtils.createDirectory(storageDir)) {
       Log.w("Failed to create album directory");
       // return null;
     }
@@ -2115,7 +2173,7 @@ public class U {
     }
 
     final Spannable s = (Spannable) in;
-    EmojiSpan[] spans = s.getSpans(start, end, EmojiSpan.class);
+    TextReplacementSpan[] spans = s.getSpans(start, end, TextReplacementSpan.class);
     if (spans == null || spans.length == 0) {
       return measureText(in, start, end, p);
     }
@@ -2128,7 +2186,7 @@ public class U {
 
     float textWidth = 0;
     int startIndex = start;
-    for (EmojiSpan span : spans) {
+    for (TextReplacementSpan span : spans) {
       int spanStart = s.getSpanStart(span);
       if (startIndex < spanStart) {
         textWidth += measureText(in, startIndex, spanStart, p);
@@ -2200,7 +2258,7 @@ public class U {
       return 0;
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    if (Config.USE_TEXT_ADVANCE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !BiDiUtils.requiresBidi(in, start, end)) {
       /*
       getTextRunAdvances(char[] chars, int index, int count,
             int contextIndex, int contextCount, boolean isRtl, float[] advances,
@@ -2329,6 +2387,34 @@ public class U {
     }
   }*/
 
+  public static float measureTextRun (@Nullable CharSequence in, @NonNull Paint p, boolean isRtl) {
+    final int count;
+    if (in == null || (count = in.length()) == 0) {
+      return 0;
+    }
+
+    if (Config.USE_TEXT_ADVANCE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      return p.getRunAdvance(in, 0, count, 0, in.length(), isRtl, count);
+    }
+
+    return measureText(in, p);
+  }
+
+  public static float measureTextRun (@Nullable CharSequence in, int start, int end, @NonNull Paint p, boolean isRtl) {
+    final int count = end - start;
+
+    if (in == null || in.length() == 0 || count <= 0) {
+      return 0;
+    }
+
+    if (Config.USE_TEXT_ADVANCE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      return p.getRunAdvance(in, start, end, 0, in.length(), isRtl, end);
+    }
+
+    return measureText(in, start, end, p);
+  }
+
+  @Deprecated
   public static float measureText (@Nullable CharSequence in, int start, int end, @NonNull Paint p) {
     final int count = end - start;
 
@@ -2339,7 +2425,7 @@ public class U {
     if (p == null)
       throw new IllegalArgumentException();
 
-    if (Config.USE_TEXT_ADVANCE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Strings.getTextDirection(in, start, end) != Strings.DIRECTION_RTL) {
+    if (Config.USE_TEXT_ADVANCE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !BiDiUtils.requiresBidi(in, start, end)) {
       return p.getRunAdvance(in, start, end, 0, in.length(), false, end);
     } else {
       float[] widths = pickWidths(count, true);
@@ -2429,38 +2515,81 @@ public class U {
     return i * -1 - 1;
   }
 
-  public static CharSequence getUsefulMetadata (@Nullable Tdlib tdlib) {
+  public static int getVideoRotation (String path) {
+    int rotation = 0;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+      MediaMetadataRetriever retriever = null;
+      try {
+        retriever = U.openRetriever(path);
+        String rotationString = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+        rotation = StringUtils.parseInt(rotationString);
+      } catch (Throwable ignored) { }
+      U.closeRetriever(retriever);
+    }
+    return rotation;
+  }
+
+  public static String getUsefulMetadata (@Nullable Tdlib tdlib) {
     AppBuildInfo buildInfo = org.thunderdog.challegram.unsorted.Settings.instance().getCurrentBuildInformation();
-    return Lang.getAppBuildAndVersion(tdlib) + " (" + BuildConfig.COMMIT + ")\n" +
+    String locale = UI.getAppContext().getResources().getConfiguration().locale.toString();
+    String appLocale = Lang.locale().toString();
+    String metadata = Lang.getAppBuildAndVersion(tdlib) + " (" + BuildConfig.COMMIT + ")\n" +
       (!buildInfo.getPullRequests().isEmpty() ? "PRs: " + buildInfo.pullRequestsList() + "\n" : "") +
       "TDLib: " + Td.tdlibVersion() + " (tdlib/td@" + Td.tdlibCommitHash() + ")\n" +
+      "tgcalls: TGX-Android/tgcalls@" + BuildConfig.TGCALLS_COMMIT + "\n" +
+      "WebRTC: TGX-Android/webrtc@" + BuildConfig.WEBRTC_COMMIT + "\n" +
       "Android: " + SdkVersion.getPrettyName() + " (" + Build.VERSION.SDK_INT + ")" + "\n" +
-      "Device: " + Build.BRAND + " " + Build.MODEL + " (" + Build.DISPLAY + ")";
+      "Device: " + Build.MANUFACTURER + " " + Build.BRAND + " " + Build.MODEL + " (" + Build.DISPLAY + ")\n" +
+      "Screen: " + Screen.widestSide() + "x" + Screen.smallestSide() + " (density: " + Screen.density() + ", fps: " + Screen.refreshRate() + ")" + "\n" +
+      "Build: `" + Build.FINGERPRINT + "`\n" +
+      "Package: " + UI.getAppContext().getPackageName() + "\n" +
+      "Locale: " + locale + (!locale.equals(appLocale) ? " (app: " + appLocale + ")" : "");
+    String installerName = AppInstallationUtil.getInstallerPackageName(UI.getAppContext());
+    if (!StringUtils.isEmpty(installerName)) {
+      metadata += "\nInstaller: " + AppInstallationUtil.prettifyPackageName(installerName);
+    }
+    String initiatorName = AppInstallationUtil.getInitiatorPackageName(UI.getAppContext());
+    if (!StringUtils.isEmpty(initiatorName)) {
+      metadata += "\nInitiator: " + AppInstallationUtil.prettifyPackageName(initiatorName);
+    }
+    String fingerprint = U.getApkFingerprint("SHA1");
+    if (!StringUtils.isEmpty(fingerprint)) {
+      metadata += "\nAPK Fingerprint: `" + fingerprint + "`";
+    }
+    return metadata;
+  }
+
+  public static String getApkFingerprint (String algorithm) {
+    return getApkFingerprint(algorithm, true);
   }
 
   /**
    * @param algorithm string like: SHA1, SHA256, MD5.
    */
   @SuppressWarnings("PackageManagerGetSignatures")
-  public static String getApkFingerprint (String algorithm) {
+  @Nullable
+  public static String getApkFingerprint (String algorithm, boolean needSeparator) {
     try {
       final PackageInfo info = UI.getAppContext().getPackageManager()
         .getPackageInfo(BuildConfig.APPLICATION_ID, PackageManager.GET_SIGNATURES);
-
       for (Signature signature : info.signatures) {
         final MessageDigest md = MessageDigest.getInstance(algorithm);
         md.update(signature.toByteArray());
 
         final byte[] digest = md.digest();
-        final StringBuilder toRet = new StringBuilder();
+        final StringBuilder fingerprint = new StringBuilder(digest.length * 2 + (digest.length - 1));
         for (int i = 0; i < digest.length; i++) {
-          if (i != 0) toRet.append(":");
+          if (i != 0 && needSeparator) {
+            fingerprint.append(":");
+          }
           int b = digest[i] & 0xff;
           String hex = Integer.toHexString(b);
-          if (hex.length() == 1) toRet.append("0");
-          toRet.append(hex);
+          if (hex.length() == 1) {
+            fingerprint.append("0");
+          }
+          fingerprint.append(hex);
         }
-        return toRet.toString();
+        return fingerprint.toString();
       }
     } catch (Throwable e) {
       Log.e("Unable to get app fingerprint");
@@ -2507,42 +2636,27 @@ public class U {
   }
 
   public static void notifyItemsReplaced (final RecyclerView.Adapter<?> adapter, final int oldItemCount) {
-    int newItemCount = adapter.getItemCount();
-    if (oldItemCount == newItemCount) {
-      if (oldItemCount != 0) {
-        adapter.notifyItemRangeChanged(0, newItemCount);
-      }
-    } else if (oldItemCount == 0) {
-      adapter.notifyItemRangeInserted(0, newItemCount);
-    } else if (newItemCount == 0) {
-      adapter.notifyItemRangeRemoved(0, oldItemCount);
-    } else {
-      adapter.notifyItemRangeRemoved(0, oldItemCount);
-      adapter.notifyItemRangeRemoved(0, newItemCount);
-    }
-    /* else if (oldItemCount > newItemCount) {
-      adapter.notifyItemRangeChanged(0, newItemCount);
-      adapter.notifyItemRangeRemoved(newItemCount, oldItemCount - newItemCount);
-    } else {
-      adapter.notifyItemRangeChanged(0, oldItemCount);
-      adapter.notifyItemRangeRemoved(oldItemCount, newItemCount - oldItemCount);
-    }*/
+    notifyItemsReplaced(adapter, oldItemCount, 0);
   }
 
   public static void notifyItemsReplaced (final RecyclerView.Adapter<?> adapter, final int oldItemCount, final int headerItemCount) {
     int newItemCount = adapter.getItemCount();
-    int changedItemCount = Math.max(0, newItemCount - headerItemCount);
+    if (newItemCount < headerItemCount)
+      throw new IllegalStateException();
     if (oldItemCount == newItemCount) {
       if (oldItemCount != 0) {
-        adapter.notifyItemRangeChanged(headerItemCount, changedItemCount);
+        adapter.notifyItemRangeChanged(headerItemCount, newItemCount - headerItemCount);
       }
     } else if (oldItemCount == 0) {
       adapter.notifyItemRangeInserted(0, newItemCount);
     } else if (newItemCount == 0) {
       adapter.notifyItemRangeRemoved(0, oldItemCount);
     } else {
-      adapter.notifyItemRangeRemoved(Math.min(headerItemCount, changedItemCount), oldItemCount);
-      adapter.notifyItemRangeInserted(headerItemCount, changedItemCount);
+      // note: do not call notifyItemRangeChanged here
+      if (oldItemCount > headerItemCount) {
+        adapter.notifyItemRangeRemoved(headerItemCount, oldItemCount - headerItemCount);
+      }
+      adapter.notifyItemRangeInserted(headerItemCount, newItemCount - headerItemCount);
     }
   }
 
@@ -2648,13 +2762,6 @@ public class U {
     }
     if (decoder != null) { try { decoder.recycle(); } catch (Throwable ignored) { } }
     return bitmap;
-  }
-
-  public static boolean checkLocationPermission (Context context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      return context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-    }
-    return true;
   }
 
   // Array utils
@@ -3492,23 +3599,17 @@ public class U {
     }
   }
 
+  public static int getStreamVolume (int stream) {
+    final AudioManager audioManager = (AudioManager) UI.getContext().getSystemService(Context.AUDIO_SERVICE);
+    return audioManager.getStreamVolume(stream);
+  }
+
+  public static void adjustStreamVolume (int stream, int volume, int flags) {
+    final AudioManager audioManager = (AudioManager) UI.getContext().getSystemService(Context.AUDIO_SERVICE);
+    audioManager.adjustStreamVolume(stream, volume, flags);
+  }
+
   // ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION opened, but the permission is still not granted. Ignore until the app restarts.
-
-  public static boolean canManageStorage () {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      return Environment.isExternalStorageLegacy() || Environment.isExternalStorageManager();
-    }
-    return true; // Q allows for requestExternalStorage
-  }
-
-  @TargetApi(Build.VERSION_CODES.R)
-  public static void requestManageStorage (Context context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-      intent.setData(Uri.parse("package:" + context.getPackageName()));
-      ((Activity) context).startActivityForResult(intent, Intents.ACTIVITY_RESULT_MANAGE_STORAGE);
-    }
-  }
 
   public static boolean canReadFile (String url) {
     try {
@@ -3529,5 +3630,239 @@ public class U {
 
   public static String getCpuArchitecture () {
     return System.getProperty("os.arch");
+  }
+
+  public static void copyText (CharSequence text) {
+    //noinspection ObsoleteSdkInt
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+      android.content.ClipboardManager clipboard = (android.content.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+      if (clipboard != null) {
+        android.content.ClipData clip = null;
+        if (text instanceof Spanned) {
+          String htmlText = TD.toHtmlCopyText((Spanned) text);
+          if (!StringUtils.isEmpty(htmlText)) {
+            clip = android.content.ClipData.newHtmlText(BuildConfig.PROJECT_NAME, text, htmlText);
+          }
+        }
+        if (clip == null) {
+          clip = android.content.ClipData.newPlainText(BuildConfig.PROJECT_NAME, text);
+        }
+        clipboard.setPrimaryClip(clip);
+      }
+    } else {
+      copyTextLegacy(text);
+    }
+  }
+
+  @SuppressWarnings("deprecation")
+  private static void copyTextLegacy (CharSequence text) {
+    android.text.ClipboardManager clipboard = (android.text.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+    if (clipboard != null) {
+      clipboard.setText(text);
+    }
+  }
+
+  public static CharSequence getPasteText (Context context) {
+    //noinspection ObsoleteSdkInt
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+      android.content.ClipboardManager clipboard = (android.content.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+      if (clipboard != null) {
+        android.content.ClipData clipData = clipboard.getPrimaryClip();
+        if (clipData == null || clipData.getItemCount() != 1) {
+          return null;
+        }
+        android.content.ClipData.Item clipItem = clipData.getItemAt(0);
+        if (clipData.getDescription().hasMimeType("text/html")) {
+          String htmlText = clipItem.getHtmlText();
+          return TD.htmlToCharSequence(htmlText);
+        } else if (clipData.getDescription().hasMimeType("text/plain")) {
+          return clipItem.getText();
+        }
+        return null;
+      }
+    } else {
+      return getCopyTextLegacy();
+    }
+    return null;
+  }
+
+  @SuppressWarnings("deprecation")
+  private static CharSequence getCopyTextLegacy () {
+    android.text.ClipboardManager clipboard = (android.text.ClipboardManager) UI.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+    if (clipboard != null) {
+      return clipboard.getText();
+    }
+    return null;
+  }
+
+  public static boolean setRect (RectF rectF, float left, float top, float right, float bottom) {
+    if (rectF.left != left || rectF.top != top || rectF.right != right || rectF.bottom != bottom) {
+      rectF.set(left, top, right, bottom);
+      return true;
+    }
+    return false;
+  }
+
+  public static String[] getInputLanguages () {
+    final List<String> inputLanguages = new ArrayList<>();
+    InputMethodManager imm = (InputMethodManager) UI.getAppContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (imm != null) {
+      String inputLanguageCode = null;
+      try {
+        inputLanguageCode = toLanguageCode(imm.getCurrentInputMethodSubtype());
+      } catch (Throwable ignored) { }
+      if (StringUtils.isEmpty(inputLanguageCode)) {
+        try {
+          inputLanguageCode = toLanguageCode(imm.getLastInputMethodSubtype());
+        } catch (Throwable ignored) { }
+      }
+      if (!StringUtils.isEmpty(inputLanguageCode)) {
+        inputLanguages.add(inputLanguageCode);
+      }
+
+      /*if (Strings.isEmpty(inputLanguageCode)) {
+        try {
+          String id = android.provider.Settings.Secure.getString(
+            UI.getAppContext().getContentResolver(),
+            android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
+          );
+          if (!Strings.isEmpty(id)) {
+            List<InputMethodInfo> list = imm.getInputMethodList();
+            lookup:
+            for (InputMethodInfo info : list) {
+              if (id.equals(info.getId())) {
+                List<InputMethodSubtype> subtypes = imm.getEnabledInputMethodSubtypeList(info, true);
+                for (InputMethodSubtype subtype : subtypes) {
+                  String languageCode = toLanguageCode(subtype);
+                  if (!Strings.isEmpty(languageCode)) {
+                    inputLanguageCode = languageCode;
+                    break lookup;
+                  }
+                }
+              }
+            }
+          }
+        } catch (Throwable ignored) { }
+      }
+      if (Strings.isEmpty(inputLanguageCode) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        try {
+          LocaleList localeList = ((InputView) callback).getImeHintLocales();
+          if (localeList != null) {
+            for (int i = 0; i < localeList.size(); i++) {
+              inputLanguageCode = U.toBcp47Language(localeList.get(i));
+              if (!Strings.isEmpty(inputLanguageCode))
+                break;
+            }
+          }
+        } catch (Throwable ignored) { }
+      }*/
+    }
+    if (inputLanguages.isEmpty()) {
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+          LocaleList locales = Resources.getSystem().getConfiguration().getLocales();
+          for (int i = 0; i < locales.size(); i++) {
+            String code = LocaleUtils.toBcp47Language(locales.get(i));
+            if (!StringUtils.isEmpty(code) && !inputLanguages.contains(code))
+              inputLanguages.add(code);
+          }
+        } else {
+          String code = LocaleUtils.toBcp47Language(Resources.getSystem().getConfiguration().locale);
+          if (!StringUtils.isEmpty(code)) {
+            inputLanguages.add(code);
+          }
+        }
+      } catch (Throwable ignored) { }
+    }
+    if (!inputLanguages.isEmpty()) {
+      return inputLanguages.toArray(new String[0]);
+    } else {
+      return null;
+    }
+  }
+
+  private static String toLanguageCode (InputMethodSubtype ims) {
+    if (ims != null) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        String languageTag = ims.getLanguageTag();
+        if (!StringUtils.isEmpty(languageTag)) {
+          return languageTag;
+        }
+      }
+      String locale = ims.getLocale();
+      if (!StringUtils.isEmpty(locale)) {
+        Locale l = U.getDisplayLocaleOfSubtypeLocale(locale);
+        if (l != null) {
+          return LocaleUtils.toBcp47Language(l);
+        }
+      }
+    }
+    return null;
+  }
+
+  @CheckResult
+  public static long[] removeAll (long[] items, Set<Long> itemsToRemove) {
+    if (itemsToRemove.isEmpty() || items.length == 0) {
+      return items;
+    }
+    LongList itemList = new LongList(items.length);
+    for (long item : items) {
+      if (!itemsToRemove.contains(item)) {
+        itemList.append(item);
+      }
+    }
+    return itemList.get();
+  }
+
+  @CheckResult
+  public static long[] toArray(Collection<Long> collection) {
+    if (collection.isEmpty()) {
+      return ArrayUtils.EMPTY_LONGS;
+    }
+    int index = 0;
+    long[] array = new long[collection.size()];
+    for (long element : collection) {
+      array[index++] = element;
+    }
+    return array;
+  }
+
+  public static Set<Integer> unmodifiableTreeSetOf (int[] array) {
+    if (array.length == 0)
+      return Collections.emptySet();
+    if (array.length == 1)
+      return Collections.singleton(array[0]);
+    Set<Integer> set = new TreeSet<>();
+    for (int value : array) {
+      set.add(value);
+    }
+    return Collections.unmodifiableSet(set);
+  }
+
+  public static Set<Long> unmodifiableTreeSetOf (long[] array) {
+    if (array.length == 0)
+      return Collections.emptySet();
+    if (array.length == 1)
+      return Collections.singleton(array[0]);
+    Set<Long> set = new TreeSet<>();
+    for (long value : array) {
+      set.add(value);
+    }
+    return Collections.unmodifiableSet(set);
+  }
+
+  public static long[] concat (long[] first, long[] second) {
+    long[] result = Arrays.copyOf(first, first.length + second.length);
+    System.arraycopy(second, 0, result, first.length, second.length);
+    return result;
+  }
+
+  @SuppressWarnings("deprecation")
+  public static String getCpuAbi () {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      return Build.SUPPORTED_ABIS[0];
+    } else {
+      return Build.CPU_ABI;
+    }
   }
 }

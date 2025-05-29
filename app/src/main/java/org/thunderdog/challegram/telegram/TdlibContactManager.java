@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,7 +14,6 @@
  */
 package org.thunderdog.challegram.telegram;
 
-import android.Manifest;
 import android.app.AlertDialog;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -31,8 +30,8 @@ import android.text.TextUtils;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
@@ -46,6 +45,7 @@ import org.thunderdog.challegram.tool.Intents;
 import org.thunderdog.challegram.tool.Strings;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.unsorted.Settings;
+import org.thunderdog.challegram.util.RateLimiter;
 import org.thunderdog.challegram.util.text.Letters;
 
 import java.lang.ref.Reference;
@@ -120,6 +120,9 @@ public class TdlibContactManager implements CleanupStartupDelegate {
 
   TdlibContactManager (Tdlib tdlib) {
     this.tdlib = tdlib;
+    this.checkLimiter = new RateLimiter(() -> {
+      tdlib.searchContacts(null, 5, newHandler());
+    }, 200L, null);
     this.handler = new ContactHandler(this);
     tdlib.listeners().addCleanupListener(this);
   }
@@ -402,8 +405,15 @@ public class TdlibContactManager implements CleanupStartupDelegate {
     }
   }
 
+  private final RateLimiter checkLimiter;
+
   private void checkRegisteredCount () {
-    tdlib.searchContacts(null, 5, newHandler());
+    checkLimiter.run();
+  }
+
+  @TdlibThread
+  void notifyContactStatusChanged (long userId, boolean isContact) {
+    checkRegisteredCount();
   }
 
   private Client.ResultHandler newHandler () {
@@ -423,7 +433,7 @@ public class TdlibContactManager implements CleanupStartupDelegate {
               userIds[i] = user.id;
               if (user.profilePhoto != null && needDownload) {
                 if (!Config.DEBUG_DISABLE_DOWNLOAD) {
-                  tdlib.client().send(new TdApi.DownloadFile(user.profilePhoto.small.id, 1, 0, 0, false), tdlib.silentHandler());
+                  tdlib.client().send(new TdApi.DownloadFile(user.profilePhoto.small.id, TdlibFilesManager.PRIORITY_IMAGE, 0, 0, false), tdlib.silentHandler());
                 }
               }
             }
@@ -561,28 +571,27 @@ public class TdlibContactManager implements CleanupStartupDelegate {
       return;
     }
 
-    if ((getStatus() != STATUS_INACTIVE /*|| (!force && canShowAlert(false))*/) && U.needsPermissionRequest(Manifest.permission.READ_CONTACTS)) {
-      U.requestPermissions(new String[] {Manifest.permission.READ_CONTACTS}, result -> {
-        if (result) {
-          if (getStatus() == STATUS_INACTIVE) {
-            setStatus(STATUS_IN_FIRST_PROGRESS);
-          }
-          startSyncIfNeeded(context, force, callback);
-        } else {
-          setStatus(STATUS_INACTIVE);
-          if (canShowAlert(force)) {
-            if (U.shouldShowPermissionRationale(Manifest.permission.READ_CONTACTS)) {
-              showAlert(context, (force ? FLAG_NEED_NEVER : 0), callback);
-            } else {
-              showAlert(context, FLAG_NEED_NEVER | FLAG_PERMISSION_DISABLED, callback);
-            }
+    if ((getStatus() != STATUS_INACTIVE /*|| (!force && canShowAlert(false))*/) && context.permissions().requestReadContacts(granted -> {
+      if (granted) {
+        if (getStatus() == STATUS_INACTIVE) {
+          setStatus(STATUS_IN_FIRST_PROGRESS);
+        }
+        startSyncIfNeeded(context, force, callback);
+      } else {
+        setStatus(STATUS_INACTIVE);
+        if (canShowAlert(force)) {
+          if (context.permissions().shouldShowReadContactsRationale()) {
+            showAlert(context, (force ? FLAG_NEED_NEVER : 0), callback);
           } else {
-            if (callback != null) {
-              callback.run();
-            }
+            showAlert(context, FLAG_NEED_NEVER | FLAG_PERMISSION_DISABLED, callback);
+          }
+        } else {
+          if (callback != null) {
+            callback.run();
           }
         }
-      });
+      }
+    })) {
       return;
     }
 
@@ -634,7 +643,7 @@ public class TdlibContactManager implements CleanupStartupDelegate {
   }
 
   public void makeSilentPermissionCheck (BaseActivity context) {
-    boolean hasPermission = !U.needsPermissionRequest(Manifest.permission.READ_CONTACTS);
+    boolean hasPermission = context.permissions().canReadContacts();
     if (pendingRetryDialog != null && pendingRetryDialog.getContext() == context && hasPermission) {
       DialogInterface dialog = pendingRetryDialog;
       Runnable callback = pendingRetryCallback;
@@ -691,28 +700,26 @@ public class TdlibContactManager implements CleanupStartupDelegate {
     AlertDialog.Builder b = new AlertDialog.Builder(context, Theme.dialogTheme());
     b.setTitle(Lang.getString(title));
     b.setMessage(message);
-    b.setPositiveButton(Lang.getString(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && U.needsPermissionRequest(Manifest.permission.READ_CONTACTS) ? (isRetry ? R.string.Settings : R.string.Continue) : R.string.Allow), (dialog, which) -> {
+    b.setPositiveButton(Lang.getString(!context.permissions().canReadContacts() ? (isRetry ? R.string.Settings : R.string.Continue) : R.string.Allow), (dialog, which) -> {
       if (isRetry) {
         Intents.openPermissionSettings();
         return;
       }
       dialog.dismiss();
       setHideOption(HIDE_OPTION_DEFAULT);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        U.requestPermissions(new String[] {Manifest.permission.READ_CONTACTS}, result -> {
-          if (result) {
-            if (getStatus() == STATUS_INACTIVE) {
-              setStatus(STATUS_IN_FIRST_PROGRESS);
-            }
-            startSyncIfNeeded(context, allowNever, callback);
-          } else if (U.shouldShowPermissionRationale(Manifest.permission.READ_CONTACTS)) {
-            showAlert(context, flags | FLAG_NOT_FIRST_TIME, callback);
-          } else {
-            // User has checked "Never ask again" or something like that
-            showAlert(context, flags | FLAG_NOT_FIRST_TIME | FLAG_PERMISSION_DISABLED, callback);
+      if (!context.permissions().requestReadContacts(granted -> {
+        if (granted) {
+          if (getStatus() == STATUS_INACTIVE) {
+            setStatus(STATUS_IN_FIRST_PROGRESS);
           }
-        });
-      } else {
+          startSyncIfNeeded(context, allowNever, callback);
+        } else if (context.permissions().shouldShowReadContactsRationale()) {
+          showAlert(context, flags | FLAG_NOT_FIRST_TIME, callback);
+        } else {
+          // User has checked "Never ask again" or something like that
+          showAlert(context, flags | FLAG_NOT_FIRST_TIME | FLAG_PERMISSION_DISABLED, callback);
+        }
+      })) {
         setStatus(STATUS_IN_FIRST_PROGRESS);
         startSyncIfNeeded(context, allowNever, callback);
       }

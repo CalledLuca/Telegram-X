@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,37 +14,23 @@
  */
 package org.thunderdog.challegram.data;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.emoji.Emoji;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.tool.Strings;
-
-import me.vkryl.core.StringUtils;
+import org.thunderdog.challegram.util.text.Highlight;
 
 public class TGFoundMessage {
   private final TGFoundChat chat;
   private final TdApi.Message message;
-  private final CharSequence text;
+  private final TdApi.FormattedText text;
+  private final Highlight highlight;
 
   public TGFoundMessage (Tdlib tdlib, TdApi.ChatList chatList, TdApi.Chat chat, TdApi.Message message, String query) {
     this.chat = new TGFoundChat(tdlib, chatList, chat, null);
     this.message = message;
-
-    if (StringUtils.isEmpty(query)) {
-      this.text = TD.buildShortPreview(tdlib, message, true);
-      return;
-    }
-
-    CharSequence out;
-    String copyText = TD.getTextFromMessage(message);
-    if (!StringUtils.isEmpty(copyText)) {
-      out = Strings.highlightWords(Strings.replaceNewLines(copyText), query, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
-    } else {
-      out = TD.buildShortPreview(tdlib, message, true);
-    }
-
-    text = Emoji.instance().replaceEmoji(out);
+    // Strings.highlightWords(Strings.replaceNewLines(copyText), query, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
+    ContentPreview preview = ContentPreview.getChatListPreview(tdlib, message.chatId, message, true);
+    this.text = preview.buildFormattedText(false);
+    this.highlight = Highlight.valueOf(text.text, query);
   }
 
   public long getId () {
@@ -55,16 +41,12 @@ public class TGFoundMessage {
     return chat;
   }
 
-  public CharSequence getText () {
+  public TdApi.FormattedText getText () {
     return text;
   }
 
-  public ImageFile getAvatar () {
-    return chat.getAvatar();
-  }
-
-  public AvatarPlaceholder.Metadata getAvatarPlaceholderMetadata () {
-    return chat.getAvatarPlaceholderMetadata();
+  public Highlight getHighlight () {
+    return highlight;
   }
 
   public TdApi.Message getMessage () {

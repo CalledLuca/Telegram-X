@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,9 @@ package org.thunderdog.challegram.telegram;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
+import org.thunderdog.challegram.tool.UI;
+import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.voip.gui.CallSettings;
 
 import me.vkryl.core.reference.ReferenceList;
@@ -31,6 +33,8 @@ public class TdlibListenersGlobal {
   private final ReferenceList<GlobalCallListener> callListeners = new ReferenceList<>(true);
   private final ReferenceList<GlobalCountersListener> countersListeners = new ReferenceList<>();
   private final ReferenceList<GlobalTokenStateListener> tokenStateListeners = new ReferenceList<>(true);
+  private final ReferenceList<GlobalProxyPingListener> proxyPingListeners = new ReferenceList<>();
+  private final ReferenceList<GlobalResolvableProblemListener> resolvableProblemListeners = new ReferenceList<>();
 
   /*package*/ TdlibListenersGlobal (TdlibManager context) {
     this.context = context;
@@ -92,7 +96,7 @@ public class TdlibListenersGlobal {
 
   void notifyUpdateMessageSendFailed (Tdlib tdlib, TdApi.UpdateMessageSendFailed update) {
     for (GlobalMessageListener listener : messageListeners) {
-      listener.onMessageSendFailed(tdlib, update.message, update.oldMessageId, update.errorCode, update.errorMessage);
+      listener.onMessageSendFailed(tdlib, update.message, update.oldMessageId, update.error);
     }
   }
 
@@ -113,6 +117,12 @@ public class TdlibListenersGlobal {
   void notifyTotalCounterChanged (@NonNull TdApi.ChatList chatList, boolean isReset) {
     for (GlobalCountersListener listener : countersListeners) {
       listener.onTotalUnreadCounterChanged(chatList, isReset);
+    }
+  }
+
+  void notifyBadgeSettingsChanged () {
+    for (GlobalCountersListener listener : countersListeners) {
+      listener.onBadgeSettingsChanged();
     }
   }
 
@@ -160,6 +170,48 @@ public class TdlibListenersGlobal {
     }
   }
 
+  void notifyConnectionDisplayStatusChanged (Tdlib tdlib, boolean isCurrent) {
+    for (GlobalConnectionListener listener : connectionListeners) {
+      listener.onConnectionDisplayStatusChanged(tdlib, isCurrent);
+    }
+  }
+
+  // Proxy
+
+  public void addProxyListener (GlobalProxyPingListener listener) {
+    proxyPingListeners.add(listener);
+  }
+
+  public void removeProxyListener (GlobalProxyPingListener listener) {
+    proxyPingListeners.remove(listener);
+  }
+
+  void notifyProxyPingChanged (@NonNull Settings.Proxy proxy, long pingMs) {
+    for (GlobalProxyPingListener listener : proxyPingListeners) {
+      listener.onProxyPingChanged(proxy, pingMs);
+    }
+  }
+
+  // Problem availability
+
+  public void addResolvableProblemAvailabilityListener (GlobalResolvableProblemListener listener) {
+    resolvableProblemListeners.add(listener);
+  }
+
+  public void removeResolvableProblemAvailabilityListener (GlobalResolvableProblemListener listener) {
+    resolvableProblemListeners.remove(listener);
+  }
+
+  public void notifyResolvableProblemAvailabilityMightHaveChanged () {
+    if (!UI.inUiThread()) {
+      UI.post(this::notifyResolvableProblemAvailabilityMightHaveChanged);
+      return;
+    }
+    for (GlobalResolvableProblemListener listener : resolvableProblemListeners) {
+      listener.onResolvableProblemAvailabilityMightHaveChanged();
+    }
+  }
+
   // Account
 
   public void addAccountListener (GlobalAccountListener listener) {
@@ -185,6 +237,12 @@ public class TdlibListenersGlobal {
   void notifyAccountProfilePhotoChanged (TdlibAccount account, boolean big, boolean isCurrent) {
     for (GlobalAccountListener listener : accountListeners) {
       listener.onAccountProfilePhotoChanged(account, big, isCurrent);
+    }
+  }
+
+  void notifyAccountProfileEmojiStatusChanged (TdlibAccount account, boolean isCurrent) {
+    for (GlobalAccountListener listener : accountListeners) {
+      listener.onAccountProfileEmojiStatusChanged(account, isCurrent);
     }
   }
 

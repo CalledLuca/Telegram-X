@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import android.view.View;
 import android.widget.RelativeLayout;
 
 import org.thunderdog.challegram.ui.MessagesController;
-import org.thunderdog.challegram.widget.EmojiLayout;
+import org.thunderdog.challegram.widget.KeyboardFrameLayout;
 
 import me.vkryl.android.animator.Animated;
 
@@ -40,7 +40,7 @@ public class MessagesLayout extends RelativeLayout implements Animated {
   @Override
   protected void onMeasure (int widthMeasureSpec, int heightMeasureSpec) {
     boolean emojiState = controller.getEmojiState();
-    EmojiLayout emojiLayout = controller.getEmojiLayout();
+    KeyboardFrameLayout emojiLayout = controller.getEmojiKeyboardLayout();
 
     boolean commandsState = controller.getCommandsState();
     CommandKeyboardLayout keyboardLayout = controller.getKeyboardLayout();
@@ -63,7 +63,7 @@ public class MessagesLayout extends RelativeLayout implements Animated {
     super.onLayout(changed, l, t, r, b);
     if (changedMin) {
       boolean emojiState = controller.getEmojiState();
-      EmojiLayout emojiLayout = controller.getEmojiLayout();
+      KeyboardFrameLayout emojiLayout = controller.getEmojiKeyboardLayout();
 
       boolean commandsState = controller.getCommandsState();
       CommandKeyboardLayout keyboardLayout = controller.getKeyboardLayout();

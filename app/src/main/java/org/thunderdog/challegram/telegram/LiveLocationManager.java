@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@ package org.thunderdog.challegram.telegram;
 
 import android.content.Intent;
 import android.location.Location;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -25,7 +26,7 @@ import android.text.TextUtils;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
@@ -40,7 +41,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.ChatId;
+import tgx.td.ChatId;
 
 public class LiveLocationManager implements LocationHelper.LocationChangeListener, UI.StateListener, ReferenceList.FullnessListener {
   private static class UiHandler extends Handler {
@@ -97,7 +98,7 @@ public class LiveLocationManager implements LocationHelper.LocationChangeListene
     // this.context = context;
     this.handler = new UiHandler(this);
     this.helper = new LocationHelper(UI.getAppContext(), this, false, true);
-    this.isResumed = UI.getUiState() == UI.STATE_RESUMED;
+    this.isResumed = UI.getUiState() == UI.State.RESUMED;
     UI.addStateListener(this);
   }
 
@@ -260,14 +261,21 @@ public class LiveLocationManager implements LocationHelper.LocationChangeListene
     handler.sendMessage(Message.obtain(handler, ACTION_DISPATCH_LOCATION_CHANGED, heading, 0, location));
   }
 
+  private CancellationSignal serviceLaunchCancellationSignal;
+
   @Override
   public void onFullnessStateChanged (ReferenceList<?> list, boolean isFull) {
     synchronized (this) {
       if (this.isActive != isFull) {
         this.isActive = isFull;
+        if (serviceLaunchCancellationSignal != null) {
+          serviceLaunchCancellationSignal.cancel();
+          serviceLaunchCancellationSignal = null;
+        }
         Intent serviceIntent = new Intent(UI.getAppContext(), LiveLocationService.class);
         if (isFull) {
-          UI.startService(serviceIntent, true, true);
+          serviceLaunchCancellationSignal = new CancellationSignal();
+          UI.startService(serviceIntent, true, true, serviceLaunchCancellationSignal);
           if (location == null) {
             performWorker(null);
           } else {
@@ -356,7 +364,7 @@ public class LiveLocationManager implements LocationHelper.LocationChangeListene
   @Override
   public void onUiStateChanged (int newState) {
     synchronized (this) {
-      boolean isResumed = newState == UI.STATE_RESUMED;
+      boolean isResumed = newState == UI.State.RESUMED;
       if (this.isResumed != isResumed) {
         this.isResumed = isResumed;
         rescheduleLocationWorker(); // changes timeout
@@ -375,6 +383,7 @@ public class LiveLocationManager implements LocationHelper.LocationChangeListene
   private static final int ACTION_DISPATCH_ERROR_STATE = 6;
   private static final int ACTION_REQUEST_LOCATION_UPDATE = 7;
 
+  @SuppressWarnings("unchecked")
   private void handleUiMessage (Message msg) {
     switch (msg.what) {
       case ACTION_PERFORM_WORKER: {
@@ -404,7 +413,6 @@ public class LiveLocationManager implements LocationHelper.LocationChangeListene
       case ACTION_DISPATCH_LIST_CHANGED: {
         Object[] data = (Object[]) msg.obj;
         for (Listener listener : listeners) {
-          //noinspection unchecked
           listener.onLiveLocationsListChanged((Tdlib) data[0], (ArrayList<TdApi.Message>) data[1]);
         }
         data[0] = null;

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,28 +16,34 @@ package org.thunderdog.challegram.data;
 
 import android.view.View;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.telegram.TdlibAccentColor;
 import org.thunderdog.challegram.telegram.TdlibUi;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextPart;
 
 public class TGSourceHidden extends TGSource {
   private final String name;
+  private final TdlibAccentColor accentColor;
   private final boolean isImported;
 
-  public TGSourceHidden (TGMessage msg, TdApi.MessageForwardOriginHiddenUser forward) {
-    super(msg);
-    this.name = forward.senderName;
-    this.isImported = false;
+  public TGSourceHidden (TGMessage msg, TdApi.MessageOriginHiddenUser forward) {
+    this(msg, forward.senderName, false);
   }
 
-  public TGSourceHidden (TGMessage msg, TdApi.MessageForwardOriginMessageImport messageImport) {
+  public TGSourceHidden (TGMessage msg, TdApi.MessageImportInfo messageImport) {
+    this(msg, messageImport.senderName, true);
+  }
+
+  private TGSourceHidden (TGMessage msg, String name, boolean isImported) {
     super(msg);
-    this.name = messageImport.senderName;
-    this.isImported = true;
+    this.name = name;
+    this.accentColor = msg.tdlib.accentColorForString(name);
+    this.isImported = isImported;
+    this.isReady = true;
   }
 
   @Override
@@ -47,7 +53,7 @@ public class TGSourceHidden extends TGSource {
       .builder(view, msg.currentViews)
       .locate(text != null ? (targetView, outRect) -> text.locatePart(outRect, part) : receiver != null ? (targetView, outRect) -> receiver.toRect(outRect) : null)
       .controller(msg.controller())
-      .show(msg.tdlib(), isImported ? R.string.ForwardAuthorImported : R.string.ForwardAuthorHidden)
+      .show(msg.tdlib(), msg.isImported() ? R.string.ForwardAuthorImported : R.string.ForwardAuthorHidden)
       .hideDelayed();
     return true;
   }
@@ -61,15 +67,25 @@ public class TGSourceHidden extends TGSource {
   }
 
   @Override
-  public ImageFile getAvatar () {
-    return null;
+  public TdlibAccentColor getAuthorAccentColor () {
+    if (isImported) {
+      return accentColor;
+    } else {
+      return null;
+    }
+  }
+
+  @Override
+  public void requestAvatar (AvatarReceiver receiver) {
+    receiver.requestPlaceholder(msg.tdlib,
+      new AvatarPlaceholder.Metadata(
+        accentColor,
+        isImported ? null : TD.getLetters(name),
+        isImported ? R.drawable.baseline_phone_24 : 0, 0
+      ), AvatarReceiver.Options.NONE
+    );
   }
 
   @Override
   public void destroy () { }
-
-  @Override
-  public AvatarPlaceholder.Metadata getAvatarPlaceholderMetadata () {
-    return new AvatarPlaceholder.Metadata(TD.getColorIdForName(name), isImported ? null : TD.getLetters(name), isImported ? R.drawable.baseline_phone_24 : 0, 0);
-  }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,10 +20,12 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.Interpolator;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
@@ -37,11 +39,13 @@ import org.thunderdog.challegram.loader.ImageFileLocal;
 import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
+import org.thunderdog.challegram.mediaview.disposable.DisposableMediaViewController;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.player.RoundVideoController;
 import org.thunderdog.challegram.player.TGPlayerController;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibFilesManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -56,14 +60,22 @@ import org.thunderdog.challegram.widget.FileProgressComponent;
 import java.io.File;
 
 import me.vkryl.android.AnimatorUtils;
-import me.vkryl.android.ViewUtils;
+import me.vkryl.android.animator.BoolAnimator;
 import me.vkryl.android.animator.FactorAnimator;
 import me.vkryl.core.ColorUtils;
+import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
 
 public class TGMessageVideo extends TGMessage implements FileProgressComponent.SimpleListener, TGPlayerController.TrackListener {
   private TdApi.VideoNote videoNote;
   private boolean notViewed;
+
+  public static final int RESIZE_DEFAULT_DURATION = 225;
+  public static final Interpolator RESIZE_INTERPOLATOR = AnimatorUtils.ACCELERATE_DECELERATE_INTERPOLATOR;  // AnimatorUtils.ACCELERATE_DECELERATE_INTERPOLATOR
+  private static final int FULL_SIZE_ANIMATOR_ID = 10001;
+
+  private final BoolAnimator isFullSizeAnimator = new BoolAnimator(FULL_SIZE_ANIMATOR_ID, this, RESIZE_INTERPOLATOR, RESIZE_DEFAULT_DURATION);
+  private long fullSizeAnimatorDuration = RESIZE_DEFAULT_DURATION;
 
   private FileProgressComponent fileProgress;
   private ImageFile miniThumbnail, previewFile;
@@ -87,6 +99,10 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
     this.fileProgress.setSimpleListener(this);
     this.fileProgress.setViewProvider(overlayViews);
     this.fileProgress.setFile(videoNote.video, getMessage());
+    if (TD.isSelfDestructTypeImmediately(getMessage())) {
+      this.fileProgress.setIgnorePlayPauseClicks(true);
+      this.fileProgress.setDownloadedIconRes(R.drawable.baseline_hot_once_24);
+    }
 
     if (videoNote.minithumbnail != null) {
       this.miniThumbnail = new ImageFileLocal(videoNote.minithumbnail);
@@ -95,7 +111,7 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
 
     this.mutedVideoFile = new GifFile(tdlib, videoNote.video, GifFile.TYPE_MPEG4);
     this.mutedVideoFile.setIsRoundVideo(msg.chatId, msg.id);
-    this.mutedVideoFile.setSize(Screen.dp(200f));
+    this.mutedVideoFile.setRequestedSize(Screen.dp(200f));
     if (!Settings.instance().needAutoplayGIFs()) {
       this.mutedVideoFile.setIsStill(true);
     }
@@ -118,16 +134,42 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
 
   @Override
   protected void onMessageAttachStateChange (boolean isAttached) {
-    if (isAttached) {
-      tdlib.context().player().addTrackListener(tdlib, getMessage(), this);
-    } else {
-      tdlib.context().player().removeTrackListener(tdlib, getMessage(), this);
+    checkTrackListenerAttached();
+    if (!isAttached && isFullSizeAnimator.isAnimating()) {
+      isFullSizeAnimator.setValue(isFullSizeAnimator.getValue(), false);
+    }
+  }
+
+  private void checkTrackListenerAttached () {
+    setTrackListenerAttached((isUnmuted || isAttachedToView()) && !isDestroyed());
+  }
+
+  private boolean isTrackListenerAttached;
+
+  private void setTrackListenerAttached (boolean attach) {
+    if (isTrackListenerAttached != attach) {
+      isTrackListenerAttached = attach;
+      if (attach) {
+        tdlib.context().player().addTrackListener(tdlib, getMessage(), this);
+      } else {
+        tdlib.context().player().removeTrackListener(tdlib, getMessage(), this);
+      }
     }
   }
 
   @Override
   protected boolean updateMessageContent (TdApi.Message message, TdApi.MessageContent newContent, boolean isBottomMessage) {
     setNotViewed(!((TdApi.MessageVideoNote) newContent).isViewed, true);
+    if (TD.isSelfDestructTypeImmediately(message)) {
+      if (newContent != null && newContent.getConstructor() == TdApi.MessageVideoNote.CONSTRUCTOR) {
+        final var videoNote = ((TdApi.MessageVideoNote) newContent).videoNote;
+        if (videoNote.minithumbnail != null) {
+          this.miniThumbnail = new ImageFileLocal(videoNote.minithumbnail);
+          invalidatePreviewReceiver();
+        }
+      }
+    }
+
     return false;
   }
 
@@ -143,6 +185,10 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
       this.durationWidth = U.measureText(durationStr, useBubbles() ? mTimeBubble() : mTime(false));
       invalidateOverlay();
     }
+  }
+
+  public int getVideoMessageTargetHeight (boolean isExpanded) {
+    return height - videoSize + (isExpanded ? + videoFullSize : videoSmallSize);
   }
 
   // View
@@ -187,6 +233,37 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
         setUnmuteFactor(factor);
         break;
       }
+      case FULL_SIZE_ANIMATOR_ID: {
+        videoSize = MathUtils.fromTo(videoSmallSize, videoFullSize, isFullSizeAnimator.getFloatValue());
+        if (isLayoutBuilt()) {
+          rebuildContent();
+          requestLayout();
+          invalidateOverlay();
+          invalidate();
+        }
+        break;
+      }
+    }
+  }
+
+  @Override
+  public int getForwardLineColor () {
+    return ColorUtils.alphaColor(1f - isFullSizeAnimator.getFloatValue(), super.getForwardLineColor());
+  }
+
+  @Override
+  public int getForwardAuthorNameLeft () {
+    return (int) (super.getForwardAuthorNameLeft() - Screen.dp(11f) * isFullSizeAnimator.getFloatValue());
+  }
+
+  public void setFullSizeAnimatorDuration (long fullSizeAnimatorDuration) {
+    this.fullSizeAnimatorDuration = fullSizeAnimatorDuration;
+  }
+
+  @Override
+  protected void onChildFactorChangeFinished (int id, float finalFactor, FactorAnimator callee) {
+    if (id ==  FULL_SIZE_ANIMATOR_ID) {
+      fullSizeAnimatorDuration = RESIZE_DEFAULT_DURATION;
     }
   }
 
@@ -198,10 +275,19 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
   }
 
   @Override
+  public boolean onPlayPauseClick (FileProgressComponent context, View view, TdApi.File file, long messageId) {
+    return onClick(context, view, file, messageId);
+  }
+
+  @Override
   public boolean onClick (FileProgressComponent context, View view, TdApi.File file, long messageId) {
     if (Config.ROUND_VIDEOS_PLAYBACK_SUPPORTED) {
       if (view.getParent() instanceof MessageViewGroup) {
-        tdlib.context().player().playPauseMessage(tdlib, msg, manager);
+        if (TD.isSelfDestructTypeImmediately(getMessage())) {
+          DisposableMediaViewController.openMediaOrShowTooltip(view, this, (targetView, outRect) -> fileProgress.toRect(outRect));
+        } else {
+          tdlib.context().player().playPauseMessage(tdlib, msg, manager);
+        }
       }
     } else {
       U.openFile(manager.controller(), "video.mp4", new File(file.local.path), "video/mp4", 0);
@@ -215,9 +301,51 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
   private float unmuteFactor;
   private FactorAnimator unmuteAnimator;
 
+  private boolean hasValidAttachedView () {
+    for (View v : currentViews) {
+      if (Views.isValid(v)) {
+        if (v instanceof MessageView) {
+          if (!((MessageView) v).isAttached()) {
+            continue;
+          }
+        }
+
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private float scrollCompensationFactor;
+
+  public float getScrollCompensationFactor () {
+    return scrollCompensationFactor;
+  }
+
   private void setUnmuted (boolean unmuted) {
     if (this.isUnmuted != unmuted) {
       this.isUnmuted = unmuted;
+
+      scrollCompensationFactor = 0.5f;
+      if (!unmuted) {
+        MessagesController c = messagesController();
+        if (c != null) {
+          RecyclerView recyclerView = c.getMessagesView();
+          if (recyclerView != null) {
+            final int range = recyclerView.computeVerticalScrollRange();
+            final int offset = recyclerView.computeVerticalScrollOffset();
+            final int extent = recyclerView.computeVerticalScrollExtent();
+            if (range != extent) {
+              scrollCompensationFactor = MathUtils.clamp((offset) / (float)(range - extent));
+            } else {
+              scrollCompensationFactor = 0.5f;
+            }
+          }
+        }
+      }
+
+      this.isFullSizeAnimator.setDuration(fullSizeAnimatorDuration);
+      this.isFullSizeAnimator.setValue(unmuted, UI.inUiThread() && hasValidAttachedView());
       final float toFactor = unmuted ? 1f : 0f;
       boolean animated = currentViews.hasAnyTargetToInvalidate();
       if (animated) {
@@ -245,6 +373,7 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
   public void onTrackStateChanged (Tdlib tdlib, long chatId, long messageId, int fileId, int state) {
     boolean unmuted = state != TGPlayerController.STATE_NONE;
     setUnmuted(unmuted);
+    checkTrackListenerAttached();
     if (!unmuted) {
       setDuration(sourceDuration);
     }
@@ -259,15 +388,27 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
 
   // View utils
 
+  private int videoSmallSize;
   private int videoSize;
+  private int videoFullSize;
 
   @Override
   protected void buildContent (int maxWidth) {
-    videoSize = getVideoSize(); // Math.min(Screen.dp(200f), maxWidth);
+    videoSmallSize = Math.min(Screen.dp(200f), maxWidth);
+    videoFullSize = getVideoSize();
+    videoSize = MathUtils.fromTo(videoSmallSize, videoFullSize, isFullSizeAnimator.getFloatValue());
   }
 
-  public static int getVideoSize () { // FIXME less width for devices with very small screen
-    return Screen.dp(200f);
+  public static int getVideoSize () {
+    return Math.min(Screen.smallestSide() - Screen.dp(32), Screen.dp(640));
+  }
+
+  public boolean inSizeAnimation () {
+    return isFullSizeAnimator.isAnimating();
+  }
+
+  public float getPlayerScale () {
+    return (float) videoSize / getVideoSize();
   }
 
   @Override
@@ -333,7 +474,10 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
     if (isOutgoingBubble()) {
       return right - timePartWidth;
     } else {
-      return (left + right) / 2 + (int) ((float) ((double) (videoSize / 2) * Math.sin(Math.toRadians(45f))) + Screen.dp(6f));
+      return Math.min(
+        (left + right) / 2 + (int) ((float) ((double) (videoSize / 2) * Math.sin(Math.toRadians(45f))) + Screen.dp(6f)),
+        width - (width - videoFullSize) / 2 - timePartWidth
+      );
     }
   }
 
@@ -348,16 +492,61 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
   }
 
   @Override
+  public int getContentX () {
+    return (int) MathUtils.fromTo(super.getContentX(), ((width - videoSize) / 2f), isFullSizeAnimator.getFloatValue());
+  }
+
+  @Override
+  public int getChildrenLeft () {
+    return getContentX();
+  }
+
+  @Override
+  protected void drawBubble (Canvas c, Paint paint, boolean stroke, int padding) {
+    final int s = Views.save(c);
+    final float cx = getContentX() + videoSize / 2f;
+    final float offset = cx - bubblePathRect.centerX();
+    c.translate(offset, 0);
+
+    super.drawBubble(c, paint, stroke, padding);
+
+    Views.restore(c, s);
+  }
+
+  @Override
   protected void drawContent (MessageView view, Canvas c, int startX, int startY, int maxWidth, Receiver preview, Receiver receiver) {
+    startX = getContentX();
     preview.setBounds(startX, startY, startX + videoSize, startY + videoSize);
+    preview.setRadius(getImageContentRadius(true));
     if (preview.needPlaceholder()) {
-      preview.drawPlaceholderRounded(c, videoSize / 2);
+      preview.drawPlaceholderRounded(c, videoSize / 2f);
     }
-    preview.draw(c);
+
+    final boolean drawSpoiler = TD.isSelfDestructTypeImmediately(getMessage());
+    final float radius = videoSize / 2f;
+    final float cx = preview.centerX(), cy = preview.centerY();
+
+    if (drawSpoiler) {
+      Receiver spoilerReceiver;
+      if (preview instanceof DoubleImageReceiver) {
+        spoilerReceiver = ((DoubleImageReceiver) preview).getPreview();
+      } else {
+        spoilerReceiver = preview;
+      }
+      if (spoilerReceiver.isEmpty()) {
+        spoilerReceiver = preview;
+      }
+      spoilerReceiver.draw(c);
+
+      c.drawCircle(cx, cy, radius, Paints.fillingPaint(Theme.getColor(ColorId.spoilerMediaOverlay)));
+    } else {
+      preview.draw(c);
+    }
   }
 
   @Override
   protected void drawOverlay (MessageView view, Canvas c, int startX, int startY, int maxWidth) {
+    startX = getContentX();
     fileProgress.setBounds(startX, startY, startX + videoSize, startY + videoSize);
     fileProgress.draw(view, c);
 
@@ -385,29 +574,31 @@ public class TGMessageVideo extends TGMessage implements FileProgressComponent.S
     }
 
     if (viewFactor > 0f) {
-      c.drawCircle(circleX, textY + Screen.dp(11.5f), Screen.dp(1.5f), Paints.fillingPaint(ColorUtils.alphaColor(viewFactor, useBubbles ? 0xffffffff : Theme.getColor(R.id.theme_color_online))));
+      c.drawCircle(circleX, textY + Screen.dp(11.5f), Screen.dp(1.5f), Paints.fillingPaint(ColorUtils.alphaColor(viewFactor, useBubbles ? 0xffffffff : Theme.getColor(ColorId.online))));
     }
 
+    final boolean drawSpoiler = TD.isSelfDestructTypeImmediately(getMessage());
     float alpha = (1f - unmuteFactor) * (1f - fileProgress.getBackgroundAlpha());
-    if (alpha > 0f) {
+    if (alpha > 0f && !drawSpoiler) {
       int radius = Screen.dp(12f);
       int centerY = receiver.getBottom() - radius - Screen.dp(10f);
 
       final float scale = .6f + (1f - unmuteFactor) * .4f;
+      final boolean needScale = scale != 1f;
       int restoreToCount;
-      if (scale != 1f) {
+      if (needScale) {
         restoreToCount = Views.save(c);
         c.scale(scale, scale, centerX, centerY);
       } else {
         restoreToCount = -1;
       }
       c.drawCircle(centerX, centerY, radius, Paints.fillingPaint(ColorUtils.alphaColor(alpha, 0x40000000)));
-      Paint paint = Paints.getPorterDuffPaint(0xffffffff);
+      Paint paint = Paints.whitePorterDuffPaint();
       paint.setAlpha((int) (255f * alpha));
       Drawable drawable = view.getSparseDrawable(R.drawable.deproko_baseline_sound_muted_24, 0);
       Drawables.draw(c, drawable, centerX - drawable.getMinimumWidth() / 2f, centerY - drawable.getMinimumHeight() / 2f, paint);
       paint.setAlpha(255);
-      if (scale != 1f) {
+      if (needScale) {
         Views.restore(c, restoreToCount);
       }
     }

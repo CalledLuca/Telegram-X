@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,20 +22,27 @@ import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
+import org.thunderdog.challegram.emoji.EmojiFilter;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.util.CharacterStyleFilter;
 import org.thunderdog.challegram.widget.MaterialEditTextGroup;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import me.vkryl.android.text.CodePointCountFilter;
 import me.vkryl.android.text.RestrictFilter;
 import me.vkryl.android.widget.FrameLayoutFix;
-import me.vkryl.td.TdConstants;
+import tgx.td.TdConstants;
 
 public class EditBioController extends EditBaseController<EditBioController.Arguments> implements SettingsAdapter.TextChangeListener {
   public static class Arguments {
@@ -52,6 +59,13 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
       this.bioChangeListener = c;
       return this;
     }
+
+    public boolean needFullDescription;
+
+    public Arguments setChangeFullDescription (boolean needFullDescription) {
+      this.needFullDescription = needFullDescription;
+      return this;
+    }
   }
 
   public EditBioController (Context context, Tdlib tdlib) {
@@ -63,6 +77,10 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
     return chatId != 0 && !tdlib.isSelfChat(chatId);
   }
 
+  private boolean isBotInfo () {
+    return isBot && isDescription() && !getArgumentsStrict().needFullDescription;
+  }
+
   @Override
   public int getId () {
     return isDescription() ? R.id.controller_editDescription : R.id.controller_editBio;
@@ -70,15 +88,21 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
 
   @Override
   public CharSequence getName () {
-    return Lang.getString(isDescription() ? R.string.Description : R.string.UserBio);
+    if (isBot) {
+      return Lang.getString(isBotInfo() ? R.string.EditBotInfo : R.string.EditBotDescription);
+    } else {
+      return Lang.getString(isDescription() ? R.string.Description : R.string.UserBio);
+    }
   }
 
   private String currentBio;
+  private boolean isBot;
 
   @Override
   public void setArguments (Arguments args) {
     super.setArguments(args);
     currentBio = args.currentBio;
+    isBot = tdlib.isBotChat(args.chatId);
   }
 
   private SettingsAdapter adapter;
@@ -94,28 +118,42 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
       }
     };
 
-    ListItem item = new ListItem(ListItem.TYPE_EDITTEXT_COUNTERED, R.id.input, 0, isDescription() ? R.string.Description : R.string.UserBio).setStringValue(currentBio);
-    ListItem[] items;
+    Arguments args = getArguments();
+
+    @StringRes int stringRes;
+    if (isBot) {
+      stringRes = isBotInfo() ? R.string.BotInfo : R.string.BotDescription;
+    } else {
+      stringRes = isDescription() ? R.string.Description : R.string.UserBio;
+    }
+    ListItem item = new ListItem(ListItem.TYPE_EDITTEXT_COUNTERED, R.id.input, 0, stringRes).setStringValue(currentBio);
+    List<ListItem> items = new ArrayList<>();
     if (isDescription()) {
       item.setInputFilters(new InputFilter[]{
-        new CodePointCountFilter(TdConstants.MAX_CHANNEL_DESCRIPTION_LENGTH)
+        new CodePointCountFilter(TdConstants.MAX_CHANNEL_DESCRIPTION_LENGTH),
+        new EmojiFilter(),
+        new CharacterStyleFilter()
       });
-      items = new ListItem[] {item};
+      items.add(item);
+      if (isBot) {
+        items.add(new ListItem(ListItem.TYPE_DESCRIPTION, R.id.description, 0, Lang.getMarkdownStringSecure(this, args.needFullDescription ? R.string.BotDescriptionHint : R.string.BotAboutTextHint), false)
+          .setTextColorId(ColorId.textLight));
+      }
     } else {
       item.setInputFilters(new InputFilter[]{
         new CodePointCountFilter(tdlib.maxBioLength()),
-        new RestrictFilter(new char[]{'\n'})
+        new EmojiFilter(),
+        new CharacterStyleFilter(),
+        new RestrictFilter(new char[] {'\n'})
           .setListener((filter, source, start, end, index, c) -> {
           if (end - start == 1) {
             onDoneClick(null);
           }
         })
       }).setOnEditorActionListener(new SimpleEditorActionListener(EditorInfo.IME_ACTION_DONE, this));
-      items = new ListItem[] {
-        item,
-        (new ListItem(ListItem.TYPE_DESCRIPTION, R.id.description, 0, R.string.BioDescription)
-        .setTextColorId(R.id.theme_color_textLight))
-      };
+      items.add(item);
+      items.add(new ListItem(ListItem.TYPE_DESCRIPTION, R.id.description, 0, R.string.BioDescription)
+        .setTextColorId(ColorId.textLight));
     }
     adapter.setTextChangeListener(this);
     adapter.setLockFocusOn(this, true);
@@ -128,8 +166,8 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
   }
 
   @Override
-  public void onTextChanged (int id, ListItem item, MaterialEditTextGroup v, String text) {
-    currentBio = text;
+  public void onTextChanged (int id, ListItem item, MaterialEditTextGroup v) {
+    currentBio = v.getText().toString();
   }
 
   @Override
@@ -142,8 +180,19 @@ public class EditBioController extends EditBaseController<EditBioController.Argu
     if (!isInProgress()) {
       setInProgress(true);
       String currentBio = this.currentBio;
+      final long chatId = getArgumentsStrict().chatId;
       if (isDescription()) {
-        tdlib.client().send(new TdApi.SetChatDescription(getArgumentsStrict().chatId, currentBio), object -> tdlib.ui().post(() -> {
+        TdApi.Function<TdApi.Ok> function;
+        if (isBot) {
+          if (getArgumentsStrict().needFullDescription) {
+            function = new TdApi.SetBotInfoDescription(tdlib.chatUserId(chatId), "", currentBio);
+          } else {
+            function = new TdApi.SetBotInfoShortDescription(tdlib.chatUserId(chatId), "", currentBio);
+          }
+        } else {
+          function = new TdApi.SetChatDescription(chatId, currentBio);
+        }
+        tdlib.client().send(function, object -> tdlib.ui().post(() -> {
           if (!isDestroyed()) {
             setInProgress(false);
             switch (object.getConstructor()) {

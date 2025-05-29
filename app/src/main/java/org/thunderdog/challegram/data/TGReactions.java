@@ -8,22 +8,29 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.component.chat.MessageView;
 import org.thunderdog.challegram.component.sticker.TGStickerObj;
 import org.thunderdog.challegram.loader.ComplexReceiver;
+import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.support.ViewSupport;
+import org.thunderdog.challegram.telegram.ReactionLoadListener;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.tool.Strings;
+import org.thunderdog.challegram.tool.Views;
+import org.thunderdog.challegram.unsorted.Settings;
 import org.thunderdog.challegram.util.ReactionsListAnimator;
 import org.thunderdog.challegram.util.text.Counter;
 import org.thunderdog.challegram.util.text.TextColorSet;
@@ -31,19 +38,26 @@ import org.thunderdog.challegram.v.MessagesRecyclerView;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.ViewUtils;
 import me.vkryl.android.animator.FactorAnimator;
+import me.vkryl.core.ArrayUtils;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
+import me.vkryl.core.lambda.Destroyable;
+import tgx.td.Td;
+import tgx.td.TdExt;
 
-public class TGReactions {
+public class TGReactions implements Destroyable, ReactionLoadListener {
   private final Tdlib tdlib;
-  private TdApi.MessageReaction[] reactions;
-  private ComplexReceiver complexReceiver;
+  private @Nullable TdApi.MessageReactions reactions;
 
   private final TGMessage parent;
 
@@ -53,15 +67,15 @@ public class TGReactions {
 
   private final MessageReactionsDelegate delegate;
   private int totalCount;
-  private boolean hasReaction;
-  private String chosenReaction;
+  private final Set<String> chosenReactions;
+  private Set<String> awaitingReactions;
 
   private final ReactionsListAnimator reactionsAnimator;
   private int width = 0;
   private int height = 0;
   private int lastLineWidth = 0;
 
-  TGReactions (TGMessage parent, Tdlib tdlib, TdApi.MessageReaction[] reactions, MessageReactionsDelegate delegate) {
+  TGReactions (TGMessage parent, Tdlib tdlib, TdApi.MessageReactions reactions, MessageReactionsDelegate delegate) {
     this.parent = parent;
     this.delegate = delegate;
 
@@ -70,8 +84,7 @@ public class TGReactions {
     this.tdReactionsMap = new HashMap<>();
 
     this.totalCount = 0;
-    this.hasReaction = false;
-    this.chosenReaction = "";
+    this.chosenReactions = new LinkedHashSet<>();
     this.tdlib = tdlib;
     this.reactionsAnimator = new ReactionsListAnimator((a) -> parent.invalidate(), AnimatorUtils.DECELERATE_INTERPOLATOR, MessagesRecyclerView.ITEM_ANIMATOR_DURATION + 50L);
     setReactions(reactions);
@@ -79,117 +92,168 @@ public class TGReactions {
     resetReactionsAnimator(false);
   }
 
-  public void setReceiversPool (ComplexReceiver complexReceiver) {
-    this.complexReceiver = complexReceiver;
+  public void requestReactionFiles (ComplexReceiver complexReceiver) {
     for (Map.Entry<String, MessageReactionEntry> pair : reactionsMapEntry.entrySet()) {
       MessageReactionEntry entry = pair.getValue();
-      entry.setComplexReceiver(complexReceiver);
+      entry.requestReactionFiles(complexReceiver);
     }
   }
 
-  public void setReactions (TdApi.MessageReaction[] reactions) {
+  public static @Nullable TdApi.MessageReactions filterUnsupported (@Nullable TdApi.MessageReactions reactions) {
+    if (reactions != null) {
+      List<TdApi.MessageReaction> supportedReactions = new ArrayList<>(reactions.reactions.length);
+      for (TdApi.MessageReaction reaction : reactions.reactions) {
+        if (TdExt.isUnsupported(reaction.type))
+          continue;
+        supportedReactions.add(reaction);
+      }
+      if (supportedReactions.size() < reactions.reactions.length) {
+        TdApi.MessageReaction[] array = supportedReactions.toArray(new TdApi.MessageReaction[0]);
+        return new TdApi.MessageReactions(array, reactions.areTags, reactions.paidReactors, reactions.canGetAddedReactions);
+      }
+    }
+    return reactions;
+  }
+
+  public void setReactions (@Nullable TdApi.MessageReactions reactions) {
     this.reactionsListEntry.clear();
     this.tdReactionsMap.clear();
-    this.reactions = reactions;
-    this.hasReaction = false;
-    this.chosenReaction = "";
+    this.reactions = filterUnsupported(reactions);
+    this.chosenReactions.clear();
     this.totalCount = 0;
 
-    if (reactions == null) {
+    if (isEmpty() || isDestroyed) {
       return;
     }
 
-    for (TdApi.MessageReaction reaction : reactions) {
-      tdReactionsMap.put(reaction.reaction, reaction);
+    for (TdApi.MessageReaction reaction : reactions.reactions) {
+      String reactionKey = TD.makeReactionKey(reaction.type);
+      tdReactionsMap.put(reactionKey, reaction);
       totalCount += reaction.totalCount;
-      hasReaction |= reaction.isChosen;
       if (reaction.isChosen) {
-        chosenReaction = reaction.reaction;
+        chosenReactions.add(reactionKey);
       }
 
-      TGReaction reactionObj = tdlib.getReaction(reaction.reaction);
+      TGReaction reactionObj = tdlib.getReaction(reaction.type);
       if (reactionObj == null) {
+        if (awaitingReactions == null) {
+          awaitingReactions = new LinkedHashSet<>();
+        }
+        if (awaitingReactions.add(reactionKey)) {
+          tdlib.listeners().addReactionLoadListener(reactionKey, this);
+        }
         continue;
       }
       MessageReactionEntry entry = getMessageReactionEntry(reactionObj);
       entry.setMessageReaction(reaction);
       reactionsListEntry.add(entry);
+      if (awaitingReactions != null && awaitingReactions.remove(reactionKey)) {
+        tdlib.listeners().removeReactionLoadListener(reactionKey, this);
+      }
     }
+  }
+
+  private static @Nullable CombineResult combineReactions (List<TdApi.Message> messages) {
+    if (messages == null || messages.isEmpty()) {
+      return null;
+    }
+
+    List<TdApi.MessageReactions> nonEmptyReactions = null;
+
+    for (TdApi.Message message : messages) {
+      if (message.interactionInfo != null && !Td.isEmpty(message.interactionInfo.reactions)) {
+        if (nonEmptyReactions == null) {
+          nonEmptyReactions = new ArrayList<>();
+        }
+        nonEmptyReactions.add(message.interactionInfo.reactions);
+      }
+    }
+
+    if (nonEmptyReactions != null && !nonEmptyReactions.isEmpty()) {
+      return combineReactions(nonEmptyReactions.toArray(new TdApi.MessageReactions[0]));
+    }
+
+    return null;
+  }
+
+  private static class CombineResult {
+    public final TdApi.MessageReactions reactions;
+    public final int totalCount;
+    public final String[] chosenReactions;
+
+    public CombineResult (TdApi.MessageReactions reactions, int totalCount, String[] chosenReactions) {
+      this.reactions = reactions;
+      this.totalCount = totalCount;
+      this.chosenReactions = chosenReactions;
+    }
+  }
+
+  private static @NonNull CombineResult combineReactions (@NonNull TdApi.MessageReactions[] allReactions) {
+    if (allReactions.length == 0)
+      throw new IllegalArgumentException();
+    for (TdApi.MessageReactions _reactions : allReactions) {
+      TdApi.MessageReactions reactions = filterUnsupported(_reactions);
+      int totalCount = 0;
+      Set<String> chosenReactions = null;
+      for (TdApi.MessageReaction reaction : reactions.reactions) {
+        totalCount += reaction.totalCount;
+        if (reaction.isChosen) {
+          if (chosenReactions == null) {
+            chosenReactions = new LinkedHashSet<>();
+          }
+          chosenReactions.add(TD.makeReactionKey(reaction.type));
+        }
+      }
+      if (totalCount > 0) {
+        String[] chosenReactionsArray = chosenReactions != null ? chosenReactions.toArray(new String[0]) : new String[0];
+        return new CombineResult(reactions, totalCount, chosenReactionsArray);
+      }
+    }
+
+    return new CombineResult(allReactions[0], 0, new String[0]);
   }
 
   public void setReactions (ArrayList<TdApi.Message> combinedMessages) {
     this.reactionsListEntry.clear();
-    this.hasReaction = false;
-    this.chosenReaction = "";
+    this.chosenReactions.clear();
     this.totalCount = 0;
 
-    HashMap<String, TdApi.MessageReaction> reactionsHashMap = new HashMap<>();
-
-    for (TdApi.Message message : combinedMessages) {
-      if (message.interactionInfo == null) {
-        continue;
-      }
-      if (message.interactionInfo.reactions == null) {
-        continue;
-      }
-
-      for (TdApi.MessageReaction reaction : message.interactionInfo.reactions) {
-        final TdApi.MessageReaction fakeReaction;
-        if (reactionsHashMap.containsKey(reaction.reaction)) {
-          fakeReaction = reactionsHashMap.get(reaction.reaction);
-        } else {
-          fakeReaction = new TdApi.MessageReaction(reaction.reaction, 0, false, new TdApi.MessageSender[0]);
-          reactionsHashMap.put(reaction.reaction, fakeReaction);
-        }
-        fakeReaction.totalCount += reaction.totalCount;
-        totalCount += reaction.totalCount;
-        hasReaction |= reaction.isChosen;
-        if (reaction.isChosen) {
-          chosenReaction = reaction.reaction;
-        }
-      }
+    CombineResult result = combineReactions(combinedMessages);
+    if (result != null) {
+      this.totalCount = result.totalCount;
+      Collections.addAll(this.chosenReactions, result.chosenReactions);
+      setReactions(result.reactions);
     }
-
-    if (hasReaction) {
-      reactionsHashMap.get(chosenReaction).isChosen = true;
-    }
-
-    TdApi.MessageReaction[] combinedReactionsArray = new TdApi.MessageReaction[reactionsHashMap.size()];
-    int i = 0;
-    for (Map.Entry<String, TdApi.MessageReaction> pair : reactionsHashMap.entrySet()) {
-      combinedReactionsArray[i++] = pair.getValue();
-    }
-
-    Arrays.sort(combinedReactionsArray, (a, b) -> b.totalCount - a.totalCount);
-    setReactions(combinedReactionsArray);
   }
 
   @Nullable
-  public TdApi.MessageReaction[] getReactions () {
+  public TdApi.MessageReactions getReactions () {
     return reactions;
   }
 
-  public String getChosen () {
-    return chosenReaction;
+  public Set<String> getChosen () {
+    return chosenReactions;
+  }
+
+  public boolean isChosen (TdApi.ReactionType reactionType) {
+    return chosenReactions.contains(TD.makeReactionKey(reactionType));
   }
 
   private MessageReactionEntry getMessageReactionEntry (TGReaction reactionObj) {
     final MessageReactionEntry entry;
-    if (!reactionsMapEntry.containsKey(reactionObj.reaction.reaction)) {
+    if (!reactionsMapEntry.containsKey(reactionObj.key)) {
       Counter.Builder counterBuilder = new Counter.Builder()
         .allBold(false)
         .callback(parent)
         .textSize(TGMessage.reactionsTextStyleProvider().getTextSizeInDp())
         .noBackground()
-        .textColor(R.id.theme_color_badgeText, R.id.theme_color_badgeText, R.id.theme_color_badgeText);
+        .textColor(ColorId.badgeText, ColorId.badgeText, ColorId.badgeText);
       entry = new MessageReactionEntry(tdlib, delegate, parent, reactionObj, counterBuilder);
-      if (complexReceiver != null) {
-        entry.setComplexReceiver(complexReceiver);
-      }
+      delegate.onInvalidateReceiversRequested();
 
-      reactionsMapEntry.put(reactionObj.reaction.reaction, entry);
+      reactionsMapEntry.put(reactionObj.key, entry);
     } else {
-      entry = reactionsMapEntry.get(reactionObj.reaction.reaction);
+      entry = reactionsMapEntry.get(reactionObj.key);
     }
     return entry;
   }
@@ -201,16 +265,67 @@ public class TGReactions {
   }
 
   public void updateCounterAnimators (boolean animated) {
-    if (reactions == null) {
+    if (isEmpty()) {
       return;
     }
-    for (TdApi.MessageReaction reaction : reactions) {
-      reactionsMapEntry.get(reaction.reaction).setCount(reaction.totalCount, reaction.isChosen, animated);
+    final int mode = Settings.instance().getReactionAvatarsMode();
+
+    for (TdApi.MessageReaction reaction : reactions.reactions) {
+      String reactionKey = TD.makeReactionKey(reaction.type);
+      TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reactionKey);
+      if (entry != null) {
+        TdApi.MessageSender[] recentSenderIds = getRecentSenderIds(reaction, mode);
+        recentSenderIds = limitSenders(recentSenderIds, reaction.totalCount > 3 ? 2 : 3);
+        entry.setCount(recentSenderIds, reaction.totalCount, reaction.isChosen, animated);
+      }
+    }
+  }
+
+  private TdApi.MessageSender[] limitSenders (TdApi.MessageSender[] senders, int maxCount) {
+    return senders != null && senders.length > maxCount ? Arrays.copyOfRange(senders, 0, maxCount) : senders;
+  }
+
+  private TdApi.MessageSender[] getRecentSenderIds (TdApi.MessageReaction reaction, int mode) {
+    if (reaction.recentSenderIds == null || reaction.recentSenderIds.length == 0)
+      return reaction.recentSenderIds;
+    if (mode == Settings.REACTION_AVATARS_MODE_NEVER)
+      return null;
+
+    // Filter out current user/reaction.usedSenderId, unless reaction.isChosen == true
+    List<TdApi.MessageSender> sendersPreFiltered = ArrayUtils.filter(ArrayUtils.asList(reaction.recentSenderIds),
+      sender -> !(tdlib.isSelfSender(sender) || Td.equalsTo(reaction.usedSenderId, sender)) || reaction.isChosen
+    );
+
+    if (mode == Settings.REACTION_AVATARS_MODE_ALWAYS) {
+      return sendersPreFiltered.toArray(new TdApi.MessageSender[0]);
+    }
+
+    final TdApi.FormattedText msgText = parent.getMessageText();
+    return ArrayUtils.filter(sendersPreFiltered, (item) -> parent.matchesReactionSenderAvatarFilter(msgText, reaction, item)).toArray(new TdApi.MessageSender[0]);
+  }
+
+  public boolean isEmpty () {
+    return reactions == null || Td.isEmpty(reactions);
+  }
+
+  public void requestAvatarFiles (ComplexReceiver complexReceiver, boolean isUpdate) {
+    if (isEmpty()) {
+      return;
+    }
+    if (!isUpdate) {
+      complexReceiver.clear();
+    }
+    for (TdApi.MessageReaction reaction : reactions.reactions) {
+      String reactionKey = TD.makeReactionKey(reaction.type);
+      TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reactionKey);
+      if (entry != null) {
+        entry.requestAvatars(complexReceiver, isUpdate);
+      }
     }
   }
 
   public void resetReactionsAnimator (boolean animated) {
-    if (reactions == null) {
+    if (isEmpty()) {
       reactionsAnimator.clear(animated);
       return;
     }
@@ -237,7 +352,7 @@ public class TGReactions {
     for (TGReactions.MessageReactionEntry entry : reactionsListEntry) {
       Counter counter = entry.counter;
 
-      int bubbleWidth = (int) counter.getTargetWidth() + Screen.dp(36);   // bubble width
+      int bubbleWidth = entry.getBubbleTargetWidth();
       int nextLastLineWidth = lastLineWidth + bubbleWidth + (lastLineWidth > 0 ? padding : 0);
       if (nextLastLineWidth > maxWidth) {
         nextLastLineWidth = bubbleWidth;
@@ -272,6 +387,17 @@ public class TGReactions {
     return Screen.dp((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1) * 1.25f + 17);
   }
 
+  public static int getReactionAvatarRadiusDp () {
+    return (int) ((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1) * 0.625f + 2.5f);
+  }
+
+  public static int getReactionAvatarOutlineDp () {
+    return (int) ((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1) / 6f);
+  }
+
+  public static int getReactionAvatarSpacingDp () {
+    return (int) -((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1) / 3f);
+  }
 
   // target values
 
@@ -312,7 +438,7 @@ public class TGReactions {
   }
 
   public boolean hasChosen () {
-    return hasReaction;
+    return !chosenReactions.isEmpty();
   }
 
   public int getTotalCount () {
@@ -365,26 +491,26 @@ public class TGReactions {
     }
   }
 
-  public int getReactionBubbleX (String reaction) {
-    TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reaction);
+  public int getReactionBubbleX (TGReaction reaction) {
+    TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reaction.key);
     if (entry == null) {
       return 0;
     }
     return entry.getX();
   }
 
-  public int getReactionBubbleY (String reaction) {
-    TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reaction);
+  public int getReactionBubbleY (TGReaction reaction) {
+    TGReactions.MessageReactionEntry entry = reactionsMapEntry.get(reaction.key);
     if (entry == null) {
       return 0;
     }
     return entry.getY();
   }
 
-  public float getReactionPositionInList (String reaction) {
+  public float getReactionPositionInList (TdApi.ReactionType reactionType) {
     for (int a = 0; a < reactionsAnimator.size(); a++) {
       ReactionsListAnimator.Entry item = reactionsAnimator.getEntry(a);
-      if (item.item.reaction.equals(reaction)) {
+      if (Td.equalsTo(item.item.reactionType, reactionType)) {
         return item.getPosition();
       }
     }
@@ -432,47 +558,56 @@ public class TGReactions {
     return false;
   }
 
-  public void startAnimation (String emoji) {
-    MessageReactionEntry entry = reactionsMapEntry.get(emoji);
+  public void startAnimation (String reactionKey) {
+    MessageReactionEntry entry = reactionsMapEntry.get(reactionKey);
     if (entry != null) {
       entry.startAnimation();
       entry.setHidden(false);
     }
   }
 
-  public void prepareAnimation (String emoji) {
-    MessageReactionEntry entry = reactionsMapEntry.get(emoji);
+  public void prepareAnimation (String reactionKey) {
+    MessageReactionEntry entry = reactionsMapEntry.get(reactionKey);
     if (entry != null) {
       entry.prepareAnimation();
     }
   }
 
-  public void setHidden (String emoji, boolean hidden) {
-    MessageReactionEntry entry = reactionsMapEntry.get(emoji);
+  public void setHidden (String reactionKey, boolean hidden) {
+    MessageReactionEntry entry = reactionsMapEntry.get(reactionKey);
     if (entry != null) {
       entry.setHidden(hidden);
     }
   }
 
   @Nullable
-  public MessageReactionEntry getMessageReactionEntry (String emoji) {
-    MessageReactionEntry entry = reactionsMapEntry.get(emoji);
-    return entry;
+  public MessageReactionEntry getMessageReactionEntry (String reactionKey) {
+    return reactionsMapEntry.get(reactionKey);
   }
 
-  public TdApi.MessageReaction getTdMessageReaction (String emoji) {
-    TdApi.MessageReaction reaction = tdReactionsMap.get(emoji);
+  public TdApi.MessageReaction getTdMessageReaction (TdApi.ReactionType reactionType) {
+    String reactionKey = TD.makeReactionKey(reactionType);
+    TdApi.MessageReaction reaction = tdReactionsMap.get(reactionKey);
     if (reaction != null) {
       return reaction;
     }
-    return new TdApi.MessageReaction(emoji, 0, false, new TdApi.MessageSender[0]);
+    return new TdApi.MessageReaction(reactionType, 0, false, null, new TdApi.MessageSender[0]);
   }
 
-  public boolean sendReaction (String reaction, boolean isBig, Client.ResultHandler handler) {
-    TdApi.Message message = parent.getFirstMessageInCombined();
-    boolean needUnset = reaction.equals(chosenReaction) && !isBig;
-    tdlib.client().send(new TdApi.SetMessageReaction(parent.getChatId(), message.id, needUnset ? "" : reaction, isBig), handler);
-    return !needUnset;
+  public boolean hasReaction (TdApi.ReactionType reactionType) {
+    String reactionKey = TD.makeReactionKey(reactionType);
+    return chosenReactions.contains(reactionKey);
+  }
+
+  public boolean toggleReaction (TdApi.ReactionType reactionType, boolean isBig, boolean updateRecentReactions, Client.ResultHandler handler) {
+    TdApi.Message message = parent.getOldestMessage();
+    boolean hasReaction = !hasReaction(reactionType);
+    if (hasReaction) {
+      tdlib.client().send(new TdApi.AddMessageReaction(parent.getChatId(), message.id, reactionType, isBig, updateRecentReactions), handler);
+    } else {
+      tdlib.client().send(new TdApi.RemoveMessageReaction(parent.getChatId(), message.id, reactionType), handler);
+    }
+    return hasReaction;
   }
 
   public static class MessageReactionEntry implements TextColorSet, FactorAnimator.Target {
@@ -481,14 +616,19 @@ public class TGReactions {
     public static final int TYPE_APPEAR_OPACITY_FLAG = 2;
 
     private final Counter counter;
-    private final String reaction;
+    private final TGAvatars avatars;
+    private final TdApi.ReactionType reactionType;
     private final TGReaction reactionObj;
     private final TGMessage message;
 
-    @Nullable private GifReceiver staticCenterAnimationReceiver;
-    @Nullable private GifReceiver centerAnimationReceiver;
+    @Nullable private Receiver staticCenterAnimationReceiver;   // FIXME: single TGMessage may be displayed in multiple MessageView at once.
+    @Nullable private GifReceiver centerAnimationReceiver;      // This class wrongly relies that it cannot.
     @Nullable private final GifFile animation;
+    private final float animationScale;
     private final GifFile staticAnimationFile;
+    private final float staticAnimationFileScale;
+    private final ImageFile staticImageFile;
+    private final float staticImageFileScale;
 
     private final MessageReactionsDelegate delegate;
 
@@ -500,26 +640,46 @@ public class TGReactions {
 
     public MessageReactionEntry (Tdlib tdlib, MessageReactionsDelegate delegate, TGMessage message, TGReaction reaction, Counter.Builder counter) {
       this.reactionObj = reaction;
-      this.reaction = reaction.reaction.reaction;
+      this.reactionType = reaction.type;
       this.message = message;
       this.delegate = delegate;
 
       this.path = new Path();
       this.rect = new RectF();
 
-      this.counter = counter.colorSet(this).build();
+      this.counter = counter != null ? counter.colorSet(this).build() : null;
+      if (message != null) {
+        this.avatars = new TGAvatars(tdlib, message, message.currentViews);
+        this.avatars.setDimensions(getReactionAvatarRadiusDp(), getReactionAvatarOutlineDp(), getReactionAvatarSpacingDp());
+      } else {
+        this.avatars = null;
+      }
 
-      animation = reactionObj.newCenterAnimationSicker().getFullAnimation();
-      staticAnimationFile = reactionObj.staticCenterAnimationSicker().getPreviewAnimation();
-      if (animation != null) {
+      TGStickerObj stickerObj = reactionObj.newCenterAnimationSicker();
+      animation = stickerObj.getFullAnimation();
+      animationScale = stickerObj.getDisplayScale();
+      if (animation != null && !stickerObj.isCustomReaction()) {
         animation.setPlayOnce(true);
         animation.setLooped(true);
+      }
+
+      TGStickerObj staticFile = reactionObj.staticCenterAnimationSicker();
+      staticAnimationFile = staticFile.getPreviewAnimation();
+      staticAnimationFileScale = staticFile.getDisplayScale();
+
+      if (staticAnimationFile == null) {
+        staticFile = reactionObj.staticCenterAnimationSicker();
+        staticImageFile = staticFile.getImage();
+        staticImageFileScale = staticFile.getDisplayScale();
+      } else {
+        staticImageFile = null;
+        staticImageFileScale = 0f;
       }
     }
 
     // Receivers
 
-    public void setComplexReceiver (ComplexReceiver complexReceiver) {
+    public void requestReactionFiles (ComplexReceiver complexReceiver) {
       if (complexReceiver == null) {
         this.centerAnimationReceiver = null;
         this.staticCenterAnimationReceiver = null;
@@ -527,10 +687,15 @@ public class TGReactions {
       }
 
       centerAnimationReceiver = complexReceiver.getGifReceiver(reactionObj.getId());
-      staticCenterAnimationReceiver = complexReceiver.getGifReceiver(((long) reactionObj.getId()) << 32);
-
-      if (staticCenterAnimationReceiver != null) {
-        staticCenterAnimationReceiver.requestFile(staticAnimationFile);
+      long staticId = ((long) reactionObj.getId()) << 32;
+      if (staticAnimationFile != null) {
+        GifReceiver receiver = complexReceiver.getGifReceiver(staticId);
+        receiver.requestFile(staticAnimationFile);
+        staticCenterAnimationReceiver = receiver;
+      } else if (staticImageFile != null) {
+        ImageReceiver receiver = complexReceiver.getImageReceiver(staticId);
+        receiver.requestFile(staticImageFile);
+        staticCenterAnimationReceiver = receiver;
       }
       if (centerAnimationReceiver != null && inAnimation) {
         centerAnimationReceiver.requestFile(animation);
@@ -723,7 +888,7 @@ public class TGReactions {
       }
     }
 
-    private void invalidate () {
+    public void invalidate () {
       message.invalidate();
     }
 
@@ -741,16 +906,26 @@ public class TGReactions {
       return reactionObj.getId();
     }
 
-    public String getReaction () {
-      return reaction;
+    public TdApi.ReactionType getReactionType () {
+      return reactionType;
     }
 
     public TGReaction getTGReaction () {
       return reactionObj;
     }
 
-    public void setCount (int count, boolean chosen, boolean animated) {
-      counter.setCount(count, !chosen, animated);
+    public void setCount (TdApi.MessageSender[] senders, int count, boolean chosen, boolean animated) {
+      boolean hasSenders = senders != null && senders.length > 0;
+      int countToDisplay = count - (hasSenders ? senders.length: 0);
+      int value = countToDisplay > 0 ? BitwiseUtils.setFlag(countToDisplay, 1 << 30, hasSenders): 0;
+      String text = hasSenders ? "+" + Strings.buildCounter(countToDisplay): Strings.buildCounter(countToDisplay);
+
+      counter.setCount(value, !chosen, text, animated);
+      avatars.setSenders(senders, animated);
+    }
+
+    public void requestAvatars (ComplexReceiver complexReceiver, boolean isUpdate) {
+      avatars.requestFiles(complexReceiver, isUpdate, true);
     }
 
     // Render
@@ -767,31 +942,39 @@ public class TGReactions {
     private boolean inAnimation;
 
     private void drawReceiver (Canvas c, int l, int t, int r, int b, float alpha) {
-      GifReceiver receiver = inAnimation ? centerAnimationReceiver : staticCenterAnimationReceiver;
+      Receiver receiver = inAnimation ? centerAnimationReceiver : staticCenterAnimationReceiver;
+      float scale = inAnimation ? animationScale : staticAnimationFile != null ? staticAnimationFileScale : staticImageFileScale;
       if (receiver != null) {
+        // TODO contour placeholder
+        if (reactionObj.needThemedColorFilter()) {
+          receiver.setThemedPorterDuffColorId(ColorId.text);
+        } else {
+          receiver.disablePorterDuffColorFilter();
+        }
         receiver.setBounds(l, t, r, b);
         receiver.setAlpha(alpha);
-        receiver.draw(c);
+        receiver.drawScaled(c, scale);
       }
     }
 
     public void drawReactionInBubble (MessageView view, Canvas c, float x, float y, float visibility, int appearTypeFlags) {
-      final boolean hasScaleSaved = visibility != 1f && (BitwiseUtils.getFlag(appearTypeFlags, TYPE_APPEAR_SCALE_FLAG));
-      final float alpha = BitwiseUtils.getFlag(appearTypeFlags, TYPE_APPEAR_OPACITY_FLAG) ? visibility : 1f;
+      final boolean hasScale = visibility != 1f && (BitwiseUtils.hasFlag(appearTypeFlags, TYPE_APPEAR_SCALE_FLAG));
+      final float alpha = BitwiseUtils.hasFlag(appearTypeFlags, TYPE_APPEAR_OPACITY_FLAG) ? visibility : 1f;
 
-      c.save();
+      final int restoreToCount = Views.save(c);
       c.translate(x, y);
-
-      if (hasScaleSaved) {
-        c.save();
+      if (hasScale) {
         c.scale(visibility, visibility, 0, 0);
       }
 
+      int avatarsWidth = (int) avatars.getAnimatedWidth();
+      int avatarsOffset = (Screen.dp(2f * avatars.getAvatarsVisibility()));
       int width = getBubbleWidth();
       int height = getBubbleHeight();
       int imageSize = getReactionImageSize();
       int imgY = (height - imageSize) / 2;
-      int textX = height + Screen.dp(1);
+      int avatarsX = height + Screen.dp(1);
+      int textX = avatarsX + avatarsOffset + avatarsWidth;
       int radius = height / 2;
       int backgroundColor = backgroundColor(false);
 
@@ -801,13 +984,14 @@ public class TGReactions {
 
       if (visibility > 0f) {
         c.drawRoundRect(rect, radius, radius, Paints.fillingPaint( ColorUtils.alphaColor(alpha, backgroundColor)));
-        counter.draw(c, textX, getReactionBubbleHeight() / 2f, Gravity.LEFT, alpha, view, R.id.theme_color_badgeFailedText);
+        avatars.draw(c, view.getReactionAvatarsReceiver(), avatarsX, getReactionBubbleHeight() / 2, Gravity.LEFT, alpha);
+        counter.draw(c, textX, getReactionBubbleHeight() / 2f, Gravity.LEFT, alpha, view, ColorId.badgeFailedText);
         if (!isHidden) {
           drawReceiver(c, Screen.dp(-1), imgY, Screen.dp(-1) + imageSize, imgY + imageSize, alpha);
         }
       }
 
-      int selectionColor = message.useBubbles() ? message.getBubbleButtonRippleColor() : ColorUtils.alphaColor(0.25f, Theme.getColor(R.id.theme_color_bubbleIn_time));
+      int selectionColor = message.useBubbles() ? message.getBubbleButtonRippleColor() : ColorUtils.alphaColor(0.25f, Theme.getColor(ColorId.bubbleIn_time));
       if (fadeFactor != 0f) {
         selectionColor = ColorUtils.color((int) ((float) Color.alpha(selectionColor) * (1f - fadeFactor)), selectionColor);
       }
@@ -834,11 +1018,7 @@ public class TGReactions {
         //}
       }
 
-      if (hasScaleSaved) {
-        c.restore();
-      }
-
-      c.restore();
+      Views.restore(c, restoreToCount);
     }
 
     public void setHidden (boolean isHidden) {
@@ -870,8 +1050,18 @@ public class TGReactions {
     }
 
     public int getBubbleWidth () {
+      float avatarsWidth = avatars.getAnimatedWidth();
+      float avatarsOffset = Screen.dp(2f * avatars.getAvatarsVisibility() * counter.getVisibility());
       int addW = Screen.dp((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1f) / 3f);
-      return (int) (counter.getWidth() + getReactionImageSize() + addW);
+      int subW = Screen.dp(6f - counter.getVisibility() * 6f);
+      return (int) (counter.getWidth() + getReactionImageSize() + addW - subW + avatarsWidth + avatarsOffset);
+    }
+
+    public int getBubbleTargetWidth () {
+      float avatarsWidth = avatars.getTargetWidth(Screen.dp(counter.getVisibilityTarget() ? 2: 0));
+      int addW = Screen.dp((TGMessage.reactionsTextStyleProvider().getTextSizeInDp() + 1f) / 3f);
+      int subW = Screen.dp(counter.getVisibilityTarget() ? 0: 6);
+      return (int) (counter.getTargetWidth() + getReactionImageSize() + addW - subW + avatarsWidth);
     }
 
     public int getBubbleHeight () {
@@ -883,34 +1073,34 @@ public class TGReactions {
     @Override
     public int defaultTextColor () {
       if (!message.useBubbles()) {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_fillingPositiveContent, R.id.theme_color_fillingActiveContent);
+        return counter.getColor(counter.getMuteFactor(), ColorId.fillingPositiveContent, ColorId.fillingActiveContent);
       } else if (message.useStickerBubbleReactions() || message.useMediaBubbleReactions()) {
         return ColorUtils.fromToArgb(
-          Theme.getColor(message.isOutgoing() ? R.id.theme_color_bubbleOut_fillingPositiveContent_overlay : R.id.theme_color_bubbleIn_fillingPositiveContent_overlay),
+          Theme.getColor(message.isOutgoingBubble() ? ColorId.bubbleOut_fillingPositiveContent_overlay : ColorId.bubbleIn_fillingPositiveContent_overlay),
           message.getBubbleDateTextColor(),
           counter.getMuteFactor()
         );
-      } else if (message.isOutgoing()) {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_bubbleOut_fillingPositiveContent, R.id.theme_color_bubbleOut_fillingActiveContent);
+      } else if (message.isOutgoingBubble()) {
+        return counter.getColor(counter.getMuteFactor(), ColorId.bubbleOut_fillingPositiveContent, ColorId.bubbleOut_fillingActiveContent);
       } else {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_bubbleIn_fillingPositiveContent, R.id.theme_color_bubbleIn_fillingActiveContent);
+        return counter.getColor(counter.getMuteFactor(), ColorId.bubbleIn_fillingPositiveContent, ColorId.bubbleIn_fillingActiveContent);
       }
     }
 
     @Override
     public int backgroundColor (boolean isPressed) {
       if (!message.useBubbles()) {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_fillingPositive, R.id.theme_color_fillingActive);
+        return counter.getColor(counter.getMuteFactor(), ColorId.fillingPositive, ColorId.fillingActive);
       } else if (message.useStickerBubbleReactions() || message.useMediaBubbleReactions()) {
         return ColorUtils.fromToArgb(
-          Theme.getColor(message.isOutgoing() ? R.id.theme_color_bubbleOut_fillingPositive_overlay : R.id.theme_color_bubbleIn_fillingPositive_overlay),
+          Theme.getColor(message.isOutgoingBubble() ? ColorId.bubbleOut_fillingPositive_overlay : ColorId.bubbleIn_fillingPositive_overlay),
           message.getBubbleDateBackgroundColor(),
           counter.getMuteFactor()
         );
-      } else if (message.isOutgoing()) {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_bubbleOut_fillingPositive, R.id.theme_color_bubbleOut_fillingActive);
+      } else if (message.isOutgoingBubble()) {
+        return counter.getColor(counter.getMuteFactor(), ColorId.bubbleOut_fillingPositive, ColorId.bubbleOut_fillingActive);
       } else {
-        return counter.getColor(counter.getMuteFactor(), R.id.theme_color_bubbleIn_fillingPositive, R.id.theme_color_bubbleIn_fillingActive);
+        return counter.getColor(counter.getMuteFactor(), ColorId.bubbleIn_fillingPositive, ColorId.bubbleIn_fillingActive);
       }
     }
   }
@@ -918,5 +1108,27 @@ public class TGReactions {
   public interface MessageReactionsDelegate {
     default void onClick (View v, MessageReactionEntry entry) {}
     default void onLongClick (View v, MessageReactionEntry entry) {}
+    default void onInvalidateReceiversRequested () {}
+    default void onRebuildRequested () {}
+  }
+
+  private boolean isDestroyed;
+
+  @Override
+  public void performDestroy () {
+    this.isDestroyed = true;
+    if (awaitingReactions != null) {
+      for (String reactionKey : awaitingReactions) {
+        tdlib.listeners().removeReactionLoadListener(reactionKey, this);
+      }
+      awaitingReactions.clear();
+    }
+  }
+
+  @Override
+  public void onReactionLoaded (String reactionKey) {
+    if (awaitingReactions != null && awaitingReactions.remove(reactionKey)) {
+      delegate.onRebuildRequested();
+    }
   }
 }

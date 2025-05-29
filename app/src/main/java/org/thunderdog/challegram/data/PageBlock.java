@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,8 +22,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.loader.ComplexReceiver;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageReceiver;
@@ -32,6 +31,7 @@ import org.thunderdog.challegram.loader.gif.GifReceiver;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.player.TGPlayerController;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
@@ -41,17 +41,15 @@ import org.thunderdog.challegram.util.DrawableProvider;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.util.text.TextStyleProvider;
-import org.thunderdog.challegram.widget.PageBlockView;
 
 import java.util.ArrayList;
 
 import me.vkryl.android.util.MultipleViewProvider;
 import me.vkryl.android.util.ViewProvider;
 import me.vkryl.android.widget.FrameLayoutFix;
-import me.vkryl.core.reference.ReferenceList;
-import me.vkryl.td.Td;
+import tgx.td.Td;
 
-public abstract class PageBlock implements MultipleViewProvider.InvalidateContentProvider {
+public abstract class PageBlock {
   protected final ViewController<?> context;
   protected final TdApi.PageBlock block;
   protected MultipleViewProvider currentViews;
@@ -62,7 +60,6 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
     this.context = context;
     this.block = block;
     this.currentViews = new MultipleViewProvider();
-    this.currentViews.setContentProvider(this);
   }
 
   public ViewController<?> parent () {
@@ -81,6 +78,10 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
   public final void setAnchor (String anchor, boolean isBottom) {
     this.anchor = anchor;
     this.anchorIsBottom = isBottom;
+  }
+
+  public boolean belongsToBlock (PageBlock pageBlock) {
+    return pageBlock == this || (pageBlock != null && chatLinkBlock == pageBlock);
   }
 
   public void requestIcons (ComplexReceiver receiver) {
@@ -156,16 +157,6 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
   public void mergeWith (PageBlock topBlock) {
     mergeTop = true;
     topBlock.mergeBottom = true;
-  }
-
-  @Override
-  public void invalidateContent () {
-    final ReferenceList<View> views = currentViews.getViewsList();
-    for (View view : views) {
-      if (view instanceof PageBlockView) {
-        ((PageBlockView) view).requestFiles(true);
-      }
-    }
   }
 
   public final ViewProvider getViewProvider () {
@@ -251,6 +242,10 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
     return handleTouchEvent(view, e);
   }
 
+  public int getCustomWidth () {
+    return -1;
+  }
+
   protected abstract boolean handleTouchEvent (View view, MotionEvent e);
 
   protected final int getMinimumContentPadding (boolean leftEdge) {
@@ -273,7 +268,7 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
     return 0;
   }
   public int getBackgroundColorId () {
-    return R.id.theme_color_filling;
+    return ColorId.filling;
   }
 
   protected int getTotalContentPadding () {
@@ -282,7 +277,7 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
 
   public final <T extends View & DrawableProvider> void draw (T view, Canvas c, Receiver preview, Receiver receiver, @Nullable ComplexReceiver iconReceiver) {
     if (isPost) {
-      final int lineColor = Theme.getColor(R.id.theme_color_iv_blockQuoteLine);
+      final int lineColor = Theme.getColor(ColorId.iv_blockQuoteLine);
       RectF rectF = Paints.getRectF();
       int lineWidth = Screen.dp(3f);
       int linePadding = Screen.dp(8f) / 2;
@@ -390,11 +385,11 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
       if (this.isClosed != isClosed) {
         this.isClosed = isClosed;
         if (needOffset && isClosed && !((lastBlock != null && lastBlock.block != null) && (lastBlock.block.getConstructor() == TdApi.PageBlockDetails.CONSTRUCTOR || lastBlock.block.getConstructor() == TdApi.PageBlockChatLink.CONSTRUCTOR))) {
-          processImpl(new PageBlockSimple(context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, R.id.theme_color_filling), out);
+          processImpl(new PageBlockSimple(context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, ColorId.filling), out);
         }
         processImpl(new PageBlockSimple(context, isClosed ? ListItem.TYPE_SHADOW_BOTTOM : ListItem.TYPE_SHADOW_TOP, 0), out);
         if (needOffset && !isClosed) {
-          processImpl(new PageBlockSimple(context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, R.id.theme_color_filling), out);
+          processImpl(new PageBlockSimple(context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, ColorId.filling), out);
         }
       }
     }
@@ -405,7 +400,7 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
         setClosed(!isPost && openedList == null && detailsBlock == null && (pageBlock.getConstructor() == TdApi.PageBlockFooter.CONSTRUCTOR), block.context, out, pageBlock.getConstructor() != TdApi.PageBlockChatLink.CONSTRUCTOR);
       }
       if (lastBlock != null && (lastBlock != detailsBlock && ((lastBlock.block != null && lastBlock.block.getConstructor() == TdApi.PageBlockDetails.CONSTRUCTOR) || (lastBlock.details != null && lastBlock.details != detailsBlock)))) {
-        processImpl(new PageBlockSimple(block.context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, R.id.theme_color_filling), out);
+        processImpl(new PageBlockSimple(block.context, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, ColorId.filling), out);
       }
       processImpl(block, out);
     }
@@ -447,20 +442,20 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
     }
   }
 
-  public static ArrayList<PageBlock> parse (ViewController<?> parent, String url, @NonNull TdApi.WebPageInstantView instantView, @Nullable PageBlock detailsBlock, TGPlayerController.PlayListBuilder playListBuilder, @Nullable TdlibUi.UrlOpenParameters urlOpenParameters) {
+  public static ArrayList<PageBlock> parse (ViewController<?> parent, String url, @NonNull TdApi.WebPageInstantView instantView, @Nullable PageBlock detailsBlock, TGPlayerController.PlayListBuilder playListBuilder, @Nullable TdlibUi.UrlOpenParameters urlOpenParameters) throws UnsupportedPageBlockException {
     PageBlock.ParseContext context = new PageBlock.ParseContext(url, instantView, playListBuilder);
     context.detailsBlock = context.lastBlock = detailsBlock;
     TdApi.PageBlock[] pageBlocks = detailsBlock != null ? ((TdApi.PageBlockDetails) detailsBlock.getOriginalBlock()).pageBlocks : instantView.pageBlocks;
     boolean needPadding = (detailsBlock != null && pageBlocks.length > 0);
     ArrayList<PageBlock> out = new ArrayList<>(pageBlocks.length);
     if (needPadding) {
-      context.process(new PageBlockSimple(parent, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, R.id.theme_color_filling), out);
+      context.process(new PageBlockSimple(parent, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, ColorId.filling), out);
     }
     for (TdApi.PageBlock rawPageBlock : pageBlocks) {
       parse(parent, out, context, rawPageBlock, urlOpenParameters);
     }
     if (needPadding) {
-      context.process(new PageBlockSimple(parent, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, R.id.theme_color_filling), out);
+      context.process(new PageBlockSimple(parent, ListItem.TYPE_EMPTY_OFFSET_NO_HEAD, ColorId.filling), out);
     }
     if (detailsBlock == null) {
       context.setClosed(true, parent, out, true);
@@ -472,7 +467,9 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
     return out;
   }
 
-  private static void parse (ViewController<?> parent, ArrayList<PageBlock> out, ParseContext context, TdApi.PageBlock block, @Nullable TdlibUi.UrlOpenParameters openParameters) {
+  public static class UnsupportedPageBlockException extends Exception { }
+
+  private static void parse (ViewController<?> parent, ArrayList<PageBlock> out, ParseContext context, TdApi.PageBlock block, @Nullable TdlibUi.UrlOpenParameters openParameters) throws UnsupportedPageBlockException {
     switch (block.getConstructor()) {
       // Page cover
       case TdApi.PageBlockCover.CONSTRUCTOR: {
@@ -613,7 +610,7 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
         if (!Td.isEmpty(tableRaw.caption)) {
           context.process(new PageBlockRichText(parent, tableRaw, openParameters), out);
         }
-        context.process(new PageBlockTable(parent, tableRaw, context.isRtl, openParameters), out);
+        context.process(new PageBlockTable(parent, tableRaw, openParameters), out);
         break;
       }
 
@@ -682,7 +679,7 @@ public abstract class PageBlock implements MultipleViewProvider.InvalidateConten
         int index = 0;
         for (TdApi.PageBlockRelatedArticle related : relatedRaw.articles) {
           if (index > 0) {
-            context.process(new PageBlockSimple(parent, ListItem.TYPE_SEPARATOR_FULL, R.id.theme_color_filling), out);
+            context.process(new PageBlockSimple(parent, ListItem.TYPE_SEPARATOR_FULL, ColorId.filling), out);
           }
           context.process(new PageBlockRelatedArticle(parent, relatedRaw, related, openParameters), out);
           index++;

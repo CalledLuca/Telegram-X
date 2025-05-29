@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,18 +25,18 @@ import android.view.ViewGroup;
 
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.BackHeaderButton;
 import org.thunderdog.challegram.navigation.HeaderView;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewSupport;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.util.HapticMenuHelper;
@@ -84,14 +84,18 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
 
   // Settings
 
+  public boolean allowSpoiler () {
+    return false;
+  }
+
   @Override
   protected final int getHeaderTextColorId () {
-    return R.id.theme_color_text;
+    return ColorId.text;
   }
 
   @Override
   protected final int getHeaderColorId () {
-    return R.id.theme_color_filling;
+    return ColorId.filling;
   }
 
   @Override
@@ -101,7 +105,7 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
 
   @Override
   protected final int getHeaderIconColorId () {
-    return R.id.theme_color_headerLightIcon;
+    return ColorId.headerLightIcon;
   }
 
   @Override
@@ -143,7 +147,7 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
   }
 
   private int getBarHeightIfAvailable () {
-    return mediaLayout.inSpecificMode() ? 0 : MediaBottomBar.getBarHeight();
+    return mediaLayout.inSpecificMode() && mediaLayout.getMode() != MediaLayout.MODE_CUSTOM_ADAPTER ? 0 : MediaBottomBar.getBarHeight();
   }
 
   private void resetStartHeights (boolean initial) {
@@ -297,8 +301,8 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
 
   }
 
-  protected @ThemeColorId int getRecyclerBackgroundColorId () {
-    return R.id.theme_color_filling;
+  protected @ColorId int getRecyclerBackgroundColorId () {
+    return ColorId.filling;
   }
 
   public void dispatchRecyclerTouchEvent (MotionEvent e) {
@@ -345,16 +349,16 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
     recyclerView.setAdapter(adapter);
   }
 
-  protected final void dispatchError (final String error, final boolean animated) {
-    runOnUiThread(() -> showError(error, animated));
+  protected final void dispatchError (final String error, final String resolveErrorButtonText, final View.OnClickListener onResolveButtonClick, final boolean animated) {
+    runOnUiThread(() -> showError(error, resolveErrorButtonText, onResolveButtonClick, animated));
   }
 
   public void updateExtraSpacingDecoration () {
     recyclerView.invalidateItemDecorations();
   }
 
-  protected final void showError (@StringRes int errorRes, boolean animated) {
-    showError(Lang.getString(errorRes), animated);
+  protected final void showError (@StringRes int errorRes, @StringRes int resolveErrorButtonRes, View.OnClickListener onResolveButtonClick, boolean animated) {
+    showError(Lang.getString(errorRes), resolveErrorButtonRes != 0 ? Lang.getString(resolveErrorButtonRes) : null, onResolveButtonClick, animated);
   }
 
   protected void hideError () {
@@ -368,7 +372,7 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
     // force scroll to top
   }
 
-  protected void showError (String error, boolean animated) {
+  protected void showError (String error, @Nullable String resolveButtonText, @Nullable View.OnClickListener onResolveButtonClick, boolean animated) {
     if (emptyView == null) {
       FrameLayoutFix.LayoutParams params = FrameLayoutFix.newParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
       params.topMargin = HeaderView.getSize(false);
@@ -501,6 +505,9 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
         }
       }
     }
+  }
+
+  protected void onUpdateBottomBarFactor (float bottomBarFactor, float counterFactor, float y) {
   }
 
   private boolean animatingHeight;
@@ -712,11 +719,11 @@ public abstract class MediaBottomBaseController<T> extends ViewController<T> {
     // Do all heavy work like layout or etc, no animation will lag
   }
 
-  protected void onMultiSendPress (@NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
+  protected void onMultiSendPress (View view, @NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
     // Send all selected shit
   }
 
-  protected void addCustomItems (@NonNull List<HapticMenuHelper.MenuItem> hapticItems) {
+  protected void addCustomItems (View view, @NonNull List<HapticMenuHelper.MenuItem> hapticItems) {
     // Add specific items
   }
 

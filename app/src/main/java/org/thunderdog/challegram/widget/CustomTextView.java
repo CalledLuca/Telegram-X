@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,24 +22,30 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.Nullable;
+import androidx.core.util.ObjectsCompat;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Background;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.data.TD;
 import org.thunderdog.challegram.loader.ComplexReceiver;
+import org.thunderdog.challegram.loader.ComplexReceiverUpdateListener;
 import org.thunderdog.challegram.navigation.RtlCheckListener;
+import org.thunderdog.challegram.navigation.ViewController;
+import org.thunderdog.challegram.receiver.RefreshRateLimiter;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.ThemeDelegate;
 import org.thunderdog.challegram.tool.Fonts;
+import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextColorSet;
 import org.thunderdog.challegram.util.text.TextColorSetThemed;
+import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.util.text.TextEntity;
-import org.thunderdog.challegram.util.text.TextEntityCustom;
+import org.thunderdog.challegram.util.text.TextMedia;
 import org.thunderdog.challegram.util.text.TextStyleProvider;
 
 import me.vkryl.android.AnimatorUtils;
@@ -49,11 +55,13 @@ import me.vkryl.android.util.SingleViewProvider;
 import me.vkryl.core.StringUtils;
 import me.vkryl.core.lambda.Destroyable;
 
-public class CustomTextView extends View implements TGLegacyManager.EmojiLoadListener, RtlCheckListener, TextColorSetThemed, AttachDelegate, Destroyable {
-  @ThemeColorId
-  private int colorId = R.id.theme_color_text,
-              clickableColorId = R.id.theme_color_textLink,
-              clickableHighlightColorId = R.id.theme_color_textLinkPressHighlight;
+public class CustomTextView extends View implements TGLegacyManager.EmojiLoadListener, RtlCheckListener, TextColorSetThemed, AttachDelegate, Destroyable, Text.TextMediaListener {
+  @ColorId
+  private int colorId = ColorId.text,
+              clickableColorId = ColorId.textLink,
+              clickableHighlightColorId = ColorId.textLinkPressHighlight,
+              quoteTextColorId = ColorId.blockQuoteText,
+              quoteLineColorId = ColorId.blockQuoteLine;
   @Nullable
   private ThemeDelegate forcedTheme;
   private final Text.ClickCallback clickCallback = new Text.ClickCallback() {
@@ -65,25 +73,77 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
   };
   private int linkFlags = Text.ENTITY_FLAGS_NONE;
   private int maxLineCount = -1;
+  private int extraTextFlags = 0;
+
+  private final RefreshRateLimiter refreshRateLimiter = new RefreshRateLimiter(this, Config.MAX_ANIMATED_EMOJI_REFRESH_RATE);
+
+  private static class TextEntry extends ListAnimator.MeasurableEntry<Text> implements AttachDelegate {
+    public final ComplexReceiver receiver;
+
+    public TextEntry (View view, ComplexReceiverUpdateListener updateListener, Text content, boolean isAttached) {
+      super(content);
+      if (content.hasMedia()) {
+        receiver = new ComplexReceiver(updateListener != null ? null : view);
+        receiver.setUpdateListener(updateListener);
+        if (isAttached) {
+          receiver.attach();
+        } else {
+          receiver.detach();
+        }
+        content.requestMedia(receiver);
+      } else {
+        receiver = null;
+      }
+    }
+
+    public void invalidateMediaContent (Text text, @Nullable TextMedia specificMedia) {
+      if (receiver != null && this.content == text) {
+        if (!text.invalidateMediaContent(receiver, specificMedia)) {
+          text.requestMedia(receiver);
+        }
+      }
+    }
+
+    @Override
+    public void attach () {
+      if (receiver != null) {
+        receiver.attach();
+      }
+    }
+
+    @Override
+    public void detach () {
+      if (receiver != null) {
+        receiver.detach();
+      }
+    }
+
+    @Override
+    public void performDestroy () {
+      super.performDestroy();
+      if (receiver != null) {
+        receiver.performDestroy();
+      }
+    }
+  }
 
   private final Tdlib tdlib;
 
-  private String rawText;
-  private TextEntity[] entities;
+  private @Nullable String rawText;
+  private @Nullable TextEntity[] entities;
 
-  private final ReplaceAnimator<Text> text = new ReplaceAnimator<>(animator -> {
+  private final ReplaceAnimator<TextEntry> text = new ReplaceAnimator<>(animator -> {
     if (getMeasuredHeight() != getCurrentHeight())
       requestLayout();
     invalidate();
   }, AnimatorUtils.DECELERATE_INTERPOLATOR, 180l);
   private TextStyleProvider textStyleProvider;
   private int lastMeasuredWidth;
-  private final ComplexReceiver iconReceiver = new ComplexReceiver(this);
 
   public CustomTextView (Context context, Tdlib tdlib) {
     super(context);
     this.tdlib = tdlib;
-    textStyleProvider = new TextStyleProvider(new Fonts.TextPaintStorage(Fonts.getRobotoRegular(), Fonts.getRobotoMedium(), Fonts.getRobotoItalic(), null, Fonts.getRobotoMono(), 0))
+    this.textStyleProvider = new TextStyleProvider(Fonts.newRobotoStorage())
       .setTextSize(15f);
     TGLegacyManager.instance().addEmojiListener(this);
   }
@@ -110,6 +170,16 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
   }
 
   @Override
+  public int quoteTextColorId () {
+    return quoteTextColorId;
+  }
+
+  @Override
+  public int quoteLineColorId () {
+    return quoteLineColorId;
+  }
+
+  @Override
   public void checkRtl () {
     invalidate();
   }
@@ -130,14 +200,29 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
     textStyleProvider = provider;
   }
 
-  public void setTextColorId (@ThemeColorId int colorId) {
+  public void setTextColorId (@ColorId int colorId) {
+    setTextColorId(colorId, false);
+  }
+
+  public void setTextColorId (@ColorId int colorId, boolean includeQuotes) {
     if (this.colorId != colorId) {
       this.colorId = colorId;
       invalidate();
     }
+    if (includeQuotes) {
+      setQuoteColorId(colorId, colorId);
+    }
   }
 
-  public void setLinkColorId (@ThemeColorId int linkColorId, @ThemeColorId int linkColorHighlightId) {
+  public void setQuoteColorId (int textColorId, int lineColorId) {
+    if (quoteTextColorId != textColorId || quoteLineColorId != lineColorId) {
+      quoteTextColorId = textColorId;
+      quoteLineColorId = lineColorId;
+      invalidate();
+    }
+  }
+
+  public void setLinkColorId (@ColorId int linkColorId, @ColorId int linkColorHighlightId) {
     this.clickableColorId = linkColorId;
     this.clickableHighlightColorId = linkColorHighlightId;
   }
@@ -147,7 +232,7 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
   }
 
   @Override
-  public void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     invalidate();
   }
 
@@ -156,17 +241,24 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
   }
 
   public void setBoldText (CharSequence sequence, TextEntity[] entities, boolean animated) {
-    // TODO support nested entities
-    setText(sequence, new TextEntity[] {new TextEntityCustom(null, tdlib, sequence.toString(), 0, sequence.length(), TextEntityCustom.FLAG_BOLD, null)}, animated);
+    if (entities == null) {
+      entities = TextEntity.toEntities(sequence);
+    }
+    setText(sequence, entities, Text.FLAG_ALL_BOLD, animated);
   }
 
   public void setText (CharSequence sequence, TextEntity[] entities, boolean animated) {
+    setText(sequence, entities, 0, animated);
+  }
+
+  public void setText (CharSequence sequence, TextEntity[] entities, int extraTextFlags, boolean animated) {
     String text = sequence != null ? sequence.toString() : null;
     if (sequence instanceof Spannable && (entities == null || entities.length == 0)) {
       entities = TD.collectAllEntities(null, tdlib, sequence, false, null);
     }
-    if ((rawText == null && text != null) || (rawText != null && !rawText.equals(text))) {
+    if (!ObjectsCompat.equals(rawText, text) || this.extraTextFlags != extraTextFlags) {
       this.rawText = text;
+      this.extraTextFlags = extraTextFlags;
       this.entities = entities;
       cancelAsyncLayout();
       if (lastMeasuredWidth > 0) {
@@ -194,10 +286,49 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
 
   private long asyncContextId;
 
-  private void dispatchAsyncText (final String text, final int textWidth, final boolean animated, final TextStyleProvider provider, final int maxLineCount, final int linkFlags, final TextEntity[] entities) {
+  private static Text createText (final View view, final String text, final int textWidth, final TextStyleProvider provider, final int maxLineCount, final TextEntity[] entities, final int extraTextFlags, TextColorSet colorSet, Text.TextMediaListener textMediaListener) {
+    return new Text.Builder(text, textWidth, provider, colorSet)
+      .entities(entities, textMediaListener)
+      .view(view)
+      .textFlags(
+        Text.FLAG_BOUNDS_NOT_STRICT |
+        Text.FLAG_CUSTOM_LONG_PRESS |
+        Text.FLAG_CUSTOM_LONG_PRESS_NO_SHARE |
+        Text.FLAG_TRIM_END |
+        (Lang.rtl() ? Text.FLAG_ALIGN_RIGHT : 0) |
+        extraTextFlags
+      )
+      .maxLineCount(maxLineCount)
+      .build();
+  }
+
+  public static int measureHeight (ViewController<?> controller, CharSequence text, int extraTextFlags, float textSize, int width) {
+    TextEntity[] entities = TD.collectAllEntities(controller, controller.tdlib(), text, false, null);
+    Text measuredText = CustomTextView.createText(
+      null,
+      text.toString(), width,
+      Paints.robotoStyleProvider(textSize),
+      -1,
+      entities,
+      extraTextFlags,
+      TextColorSets.WHITE,
+      (parsedText, specificMedia) -> { }
+    );
+    return measuredText.getHeight();
+  }
+
+  private void dispatchAsyncText (final String text, final int textWidth, final boolean animated, final TextStyleProvider provider, final int maxLineCount, final int extraTextFlags, final int linkFlags, final TextEntity[] entities) {
     final long contextId = asyncContextId;
     Background.instance().post(() -> {
-      final Text newText = new Text(text, textWidth, provider, this, maxLineCount, Text.FLAG_BOUNDS_NOT_STRICT | Text.FLAG_CUSTOM_LONG_PRESS | Text.FLAG_CUSTOM_LONG_PRESS_NO_SHARE | Text.FLAG_TRIM_END | (Lang.rtl() ? Text.FLAG_ALIGN_RIGHT : 0), Text.makeEntities(text, linkFlags, entities, tdlib, null));
+      final Text newText = createText(
+        this,
+        text, textWidth, provider,
+        maxLineCount,
+        Text.makeEntities(text, linkFlags, entities, tdlib, null),
+        extraTextFlags,
+        this,
+        this
+      );
       UI.post(() -> {
         if (asyncContextId == contextId) {
           setAsyncText(newText, textWidth, animated);
@@ -206,17 +337,27 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
     });
   }
 
+  @Override
+  public void onInvalidateTextMedia (Text text, @Nullable TextMedia specificMedia) {
+    for (ListAnimator.Entry<TextEntry> entry : this.text) {
+      if (entry.item.content == text) {
+        entry.item.invalidateMediaContent(text, specificMedia);
+      }
+    }
+    invalidate();
+  }
+
   private int calculateTextWidth () {
     return Math.max(getMeasuredWidth() - getPaddingLeft() - getPaddingRight(), 0);
   }
 
   private void setAsyncText (Text text, int textWidth, boolean animated) {
     if (calculateTextWidth() == textWidth) {
-      Text currentText = this.text.singletonItem();
+      TextEntry currentText = this.text.singletonItem();
       if (currentText != null) {
-        currentText.cancelTouch();
+        currentText.content.cancelTouch();
       }
-      this.text.replace(text, animated);
+      this.text.replace(new TextEntry(this, refreshRateLimiter, text, isAttached), animated);
       text.setViewProvider(new SingleViewProvider(this));
       if (getMeasuredHeight() != getCurrentHeight()) {
         requestLayout();
@@ -227,12 +368,18 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
     }
   }
 
+  @Deprecated
+  public boolean checkMeasuredWidth (int width) {
+    // TODO: better API
+    return lastMeasuredWidth == width;
+  }
+
   private void layoutText (int width, boolean animated, boolean byLayout, boolean allowAsync) {
     if (width != lastMeasuredWidth || !byLayout) {
-      Text currentText = this.text.singletonItem();
+      TextEntry currentText = this.text.singletonItem();
       lastMeasuredWidth = width;
       if (currentText != null) {
-        currentText.cancelTouch();
+        currentText.content.cancelTouch();
       }
       if (StringUtils.isEmpty(rawText)) {
         this.text.clear(animated);
@@ -244,11 +391,19 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
         cancelAsyncLayout();
 
         if (async) {
-          dispatchAsyncText(rawText, textWidth, animated, textStyleProvider, maxLineCount, linkFlags, entities);
+          dispatchAsyncText(rawText, textWidth, animated, textStyleProvider, maxLineCount, extraTextFlags, linkFlags, entities);
         } else {
-          Text newText = new Text(rawText, textWidth, textStyleProvider, this, maxLineCount, Text.FLAG_BOUNDS_NOT_STRICT | Text.FLAG_CUSTOM_LONG_PRESS | Text.FLAG_CUSTOM_LONG_PRESS_NO_SHARE | Text.FLAG_TRIM_END | (Lang.rtl() ? Text.FLAG_ALIGN_RIGHT : 0), Text.makeEntities(rawText, linkFlags, entities, tdlib, null));
-          newText.setViewProvider(new SingleViewProvider(this));
-          this.text.replace(newText, animated);
+          final TextEntity[] newEntities = Text.makeEntities(rawText, linkFlags, entities, tdlib, null);
+          final Text newText = createText(
+            this,
+            rawText, textWidth, textStyleProvider,
+            maxLineCount,
+            newEntities,
+            extraTextFlags,
+            this,
+            this
+          );
+          this.text.replace(new TextEntry(this, refreshRateLimiter, newText, isAttached), animated);
         }
         if (!byLayout) {
           if (currentHeight != 0 && currentHeight != getCurrentHeight()) {
@@ -262,11 +417,11 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
 
   @Override
   public boolean onTouchEvent (MotionEvent event) {
-    Text text = this.text.singletonItem();
+    TextEntry text = this.text.singletonItem();
     if (text == null || (linkFlags == Text.ENTITY_FLAGS_NONE && entities == null)) {
       return super.onTouchEvent(event);
     } else {
-      return text.onTouchEvent(this, event, clickCallback);
+      return text.content.onTouchEvent(this, event, clickCallback);
     }
   }
 
@@ -332,23 +487,41 @@ public class CustomTextView extends View implements TGLegacyManager.EmojiLoadLis
 
   @Override
   protected void onDraw (Canvas c) {
-    for (ListAnimator.Entry<Text> entry : text) {
-      entry.item.draw(c, getPaddingLeft(), getMeasuredWidth() - getPaddingRight(), 0, getPaddingTop(), colorSet, entry.getVisibility(), iconReceiver);
+    for (ListAnimator.Entry<TextEntry> entry : text) {
+      entry.item.content.draw(c, getPaddingLeft(), getMeasuredWidth() - getPaddingRight(), 0, getPaddingTop(), colorSet, entry.getVisibility(), entry.item.receiver);
+    }
+  }
+
+  private boolean isAttached = true;
+
+  @Override
+  public void attach () {
+    if (!isAttached) {
+      isAttached = true;
+      for (ListAnimator.Entry<TextEntry> entry : text) {
+        entry.item.attach();
+      }
     }
   }
 
   @Override
-  public void attach () {
-    iconReceiver.attach();
-  }
-
-  @Override
   public void detach () {
-    iconReceiver.detach();
+    if (isAttached) {
+      isAttached = false;
+      for (ListAnimator.Entry<TextEntry> entry : text) {
+        entry.item.detach();
+      }
+    }
   }
 
   @Override
   public void performDestroy () {
-    iconReceiver.performDestroy();
+    TGLegacyManager.instance().removeEmojiListener(this);
+    for (ListAnimator.Entry<TextEntry> entry : text) {
+      entry.item.performDestroy();
+    }
+    text.clear(false);
+    rawText = null;
+    entities = null;
   }
 }

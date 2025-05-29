@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,8 +14,9 @@
  */
 package org.thunderdog.challegram.telegram;
 
-import me.vkryl.leveldb.LevelDB;
 import org.thunderdog.challegram.unsorted.Settings;
+
+import me.vkryl.leveldb.LevelDB;
 
 public class TdlibCounter {
   public int totalChatCount;

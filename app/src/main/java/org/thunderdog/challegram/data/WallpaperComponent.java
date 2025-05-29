@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,8 +23,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
-import org.thunderdog.challegram.R;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.loader.DoubleImageReceiver;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageFileLocal;
@@ -33,6 +32,7 @@ import org.thunderdog.challegram.loader.Receiver;
 import org.thunderdog.challegram.support.ViewSupport;
 import org.thunderdog.challegram.telegram.TdlibFilesManager;
 import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.TGBackground;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.theme.ThemeDelegate;
@@ -47,7 +47,7 @@ import org.thunderdog.challegram.widget.FileProgressComponent;
 import me.vkryl.android.util.ClickHelper;
 import me.vkryl.android.util.ViewProvider;
 import me.vkryl.core.ColorUtils;
-import me.vkryl.td.TdConstants;
+import tgx.td.TdConstants;
 
 public class WallpaperComponent extends BaseComponent implements ClickHelper.Delegate {
   private final TGMessage context;
@@ -70,17 +70,18 @@ public class WallpaperComponent extends BaseComponent implements ClickHelper.Del
 
   private final FileProgressComponent progress;
 
-  public WallpaperComponent (@NonNull TGMessage context, @NonNull TdApi.WebPage webPage, @NonNull String wallpaperUrl) {
+  public WallpaperComponent (@NonNull TGMessage context, @NonNull TdApi.LinkPreview linkPreview, @NonNull String wallpaperUrl) {
     this.context = context;
-    this.fullUrl = webPage.url;
+    this.fullUrl = linkPreview.url;
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
       this.placeholderPath = new Path();
     }
 
-    updateBackground(webPage.document);
+    TdApi.LinkPreviewTypeBackground linkPreviewBackground = (TdApi.LinkPreviewTypeBackground) linkPreview.type;
+    updateBackground(linkPreviewBackground.document);
 
-    this.progress = new FileProgressComponent(context.context(), context.tdlib(), TdlibFilesManager.DOWNLOAD_FLAG_FILE, webPage.document != null && TGMimeType.isImageMimeType(webPage.document.mimeType), context.getChatId(), context.getId());
+    this.progress = new FileProgressComponent(context.context(), context.tdlib(), TdlibFilesManager.DOWNLOAD_FLAG_FILE, linkPreviewBackground.document != null && TGMimeType.isImageMimeType(linkPreviewBackground.document.mimeType), context.getChatId(), context.getId());
     this.progress.setBackgroundColorProvider(context);
     this.progress.setSimpleListener(new FileProgressComponent.SimpleListener() {
       @Override
@@ -101,7 +102,7 @@ public class WallpaperComponent extends BaseComponent implements ClickHelper.Del
       }
     });
     this.progress.setBackgroundColor(0x44000000);
-    this.progress.setFile(webPage.document != null ? webPage.document.document : null, context.getMessage());
+    this.progress.setFile(linkPreviewBackground.document != null ? linkPreviewBackground.document.document : null, context.getMessage());
     if (viewProvider != null) {
       this.progress.setViewProvider(viewProvider);
     }
@@ -173,7 +174,7 @@ public class WallpaperComponent extends BaseComponent implements ClickHelper.Del
     int right = startX + getWidth();
     int bottom = startY + getHeight();
 
-    placeholderPaint.setColor(Theme.getColor(R.id.theme_color_placeholder));
+    placeholderPaint.setColor(Theme.getColor(ColorId.placeholder));
     placeholderRect.set(startX, startY, right, bottom);
 
     final boolean clipped = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && placeholderPath != null;
@@ -219,7 +220,7 @@ public class WallpaperComponent extends BaseComponent implements ClickHelper.Del
   }
 
   private int getWallpaperBackground (ThemeDelegate theme) {
-    return ColorUtils.compositeColor(theme.getColor(R.id.theme_color_background), theme.getColor(R.id.theme_color_bubble_chatBackground));
+    return ColorUtils.compositeColor(theme.getColor(ColorId.background), theme.getColor(ColorId.bubble_chatBackground));
   }
 
   private void drawBackground (Canvas c, TGBackground wallpaper, int startX, int startY, int endX, int endY, float alpha, Receiver receiver) {
@@ -242,10 +243,10 @@ public class WallpaperComponent extends BaseComponent implements ClickHelper.Del
       } else {
         c.drawColor(ColorUtils.alphaColor(alpha, wallpaper.getBackgroundColor(defaultColor)));
       }
-      receiver.setColorFilter(wallpaper.getPatternColor());
+      receiver.setPorterDuffColorFilter(wallpaper.getPatternColor());
       receiver.setPaintAlpha(alpha * wallpaper.getPatternIntensity());
     } else {
-      receiver.disableColorFilter();
+      receiver.disablePorterDuffColorFilter();
       if (alpha != 1f) {
         receiver.setPaintAlpha(alpha);
       }

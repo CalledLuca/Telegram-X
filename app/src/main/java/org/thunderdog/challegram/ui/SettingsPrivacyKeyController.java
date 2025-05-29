@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,7 @@
 package org.thunderdog.challegram.ui;
 
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
@@ -22,29 +23,71 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.component.attach.AvatarPickerManager;
 import org.thunderdog.challegram.component.base.SettingView;
 import org.thunderdog.challegram.component.dialogs.SearchManager;
+import org.thunderdog.challegram.component.user.BubbleView;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.TGUser;
+import org.thunderdog.challegram.navigation.ActivityResultHandler;
 import org.thunderdog.challegram.telegram.PrivacySettings;
 import org.thunderdog.challegram.telegram.PrivacySettingsListener;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibCache;
+import org.thunderdog.challegram.telegram.TdlibUi;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.tool.Fonts;
 import org.thunderdog.challegram.tool.Screen;
 import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.util.CustomTypefaceSpan;
+import org.thunderdog.challegram.util.NoUnderlineClickableSpan;
+import org.thunderdog.challegram.util.ProfilePhotoDrawModifier;
 import org.thunderdog.challegram.util.UserPickerMultiDelegate;
 import org.thunderdog.challegram.v.CustomRecyclerView;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
+import me.vkryl.core.StringUtils;
 import me.vkryl.core.collection.LongList;
-import me.vkryl.td.ChatId;
+import tgx.td.Td;
 
-public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.UserPrivacySetting> implements View.OnClickListener, UserPickerMultiDelegate, PrivacySettingsListener {
+public class SettingsPrivacyKeyController extends RecyclerViewController<SettingsPrivacyKeyController.Args> implements View.OnClickListener, UserPickerMultiDelegate, PrivacySettingsListener, ActivityResultHandler,
+  TdlibCache.UserDataChangeListener {
+  @IntDef({
+    Mode.USER_PRIVACY_SETTING,
+    Mode.INCOMING_MESSAGES_PRIVACY
+  })
+  public @interface Mode {
+    int
+      USER_PRIVACY_SETTING = 0,
+      INCOMING_MESSAGES_PRIVACY = 1;
+  }
+
+  public static class Args {
+    public final @Mode int mode;
+    public final TdApi.UserPrivacySetting userPrivacySetting;
+
+    public Args (TdApi.UserPrivacySetting userPrivacySetting) {
+      this(Mode.USER_PRIVACY_SETTING, userPrivacySetting);
+    }
+
+    private Args (@Mode int mode, TdApi.UserPrivacySetting setting) {
+      this.mode = mode;
+      this.userPrivacySetting = setting;
+    }
+
+    public static Args newChatsPrivacy () {
+      return new Args(Mode.INCOMING_MESSAGES_PRIVACY, new TdApi.UserPrivacySettingAllowUnpaidMessages());
+    }
+  }
 
   public SettingsPrivacyKeyController (Context context, Tdlib tdlib) {
     super(context, tdlib);
@@ -57,13 +100,24 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
 
   @Override
   public CharSequence getName () {
-    return Lang.getString(getName(getArgumentsStrict(), false, false));
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING:
+        return Lang.getString(getName(args.userPrivacySetting, false, false));
+      case Mode.INCOMING_MESSAGES_PRIVACY:
+        return Lang.getString(R.string.PrivacyMessageTitle);
+    }
+    throw new UnsupportedOperationException();
   }
 
   public static int getIcon (TdApi.UserPrivacySetting privacySetting) {
     switch (privacySetting.getConstructor()) {
       case TdApi.UserPrivacySettingShowPhoneNumber.CONSTRUCTOR:
         return R.drawable.baseline_call_24;
+      case TdApi.UserPrivacySettingShowBio.CONSTRUCTOR:
+        return R.drawable.baseline_info_24;
+      case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR:
+        return R.drawable.baseline_cake_variant_24;
       case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
         return R.drawable.baseline_search_24;
       case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR:
@@ -78,8 +132,16 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
         return R.drawable.baseline_phone_in_talk_24;
       case TdApi.UserPrivacySettingAllowPeerToPeerCalls.CONSTRUCTOR:
         return R.drawable.baseline_swap_horiz_24;
+      case TdApi.UserPrivacySettingAllowPrivateVoiceAndVideoNoteMessages.CONSTRUCTOR:
+        return R.drawable.baseline_mic_24;
+      case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR:
+        return R.drawable.baseline_gift_outline_24;
+      case TdApi.UserPrivacySettingAllowUnpaidMessages.CONSTRUCTOR:
+        return R.drawable.baseline_premium_star_24;
+      default:
+        Td.assertUserPrivacySetting_6bbb3d7e();
+        throw Td.unsupported(privacySetting);
     }
-    return 0;
   }
 
   public static int getName (TdApi.UserPrivacySetting privacyKey, boolean isException, boolean isMultiChatException) {
@@ -88,6 +150,10 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
         return isException ? R.string.EditPrivacyPhoneNumber : R.string.PhoneNumber;
       case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
         return R.string.FindingByPhoneNumber;
+      case TdApi.UserPrivacySettingShowBio.CONSTRUCTOR:
+        return isException ? R.string.EditPrivacyBio : R.string.UserBio;
+      case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR:
+        return isException ? R.string.EditPrivacyBirthdate : R.string.UserBirthdate;
       case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR:
         return isException ? (isMultiChatException ? R.string.EditPrivacyChatInviteGroup : R.string.EditPrivacyChatInvite) : R.string.GroupsAndChannels;
       case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR:
@@ -100,57 +166,66 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
         return isException ? R.string.EditPrivacyForward : R.string.PrivacyForwardLinkTitle;
       case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR:
         return isException ? R.string.EditPrivacyPhoto : R.string.PrivacyPhotoTitle;
+      case TdApi.UserPrivacySettingAllowPrivateVoiceAndVideoNoteMessages.CONSTRUCTOR:
+        return isException ? R.string.EditPrivacyVoice : R.string.PrivacyVoiceVideoTitle;
+      case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR:
+        return isException ? R.string.EditPrivacyGifts : R.string.PrivacyGiftsTitle;
+      case TdApi.UserPrivacySettingAllowUnpaidMessages.CONSTRUCTOR:
+        if (isException) {
+          return R.string.EditPrivacyFreeMessages;
+        } else {
+          // Controlled via New Chats privacy screen only.
+          throw new UnsupportedOperationException();
+        }
+      default:
+        Td.assertUserPrivacySetting_6bbb3d7e();
+        throw Td.unsupported(privacyKey);
     }
-    throw new IllegalStateException("privacyKey == " + privacyKey);
   }
 
   @Override
   public boolean saveInstanceState (Bundle outState, String keyPrefix) {
     super.saveInstanceState(outState, keyPrefix);
-    outState.putInt(keyPrefix + "setting", getArgumentsStrict().getConstructor());
+    Args args = getArgumentsStrict();
+    outState.putInt(keyPrefix + "mode", args.mode);
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING:
+        outState.putInt(keyPrefix + "setting", args.userPrivacySetting.getConstructor());
+        break;
+      case Mode.INCOMING_MESSAGES_PRIVACY:
+        // Nothing to save
+        break;
+      default:
+        throw new UnsupportedOperationException();
+    }
     return true;
   }
 
   @Override
   public boolean restoreInstanceState (Bundle in, String keyPrefix) {
     super.restoreInstanceState(in, keyPrefix);
-    @TdApi.UserPrivacySetting.Constructors int constructor = in.getInt(keyPrefix + "setting", 0);
-    TdApi.UserPrivacySetting setting = null;
-    switch (constructor) {
-      case TdApi.UserPrivacySettingAllowCalls.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingAllowCalls();
+    @Mode int mode = in.getInt(keyPrefix + "mode", Mode.USER_PRIVACY_SETTING);
+    switch (mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        @TdApi.UserPrivacySetting.Constructors int constructor = in.getInt(keyPrefix + "setting", 0);
+        if (constructor != 0) {
+          TdApi.UserPrivacySetting setting = Td.constructUserPrivacySetting(constructor);
+          setArguments(new Args(setting));
+          return true;
+        }
         break;
-      case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingAllowChatInvites();
-        break;
-      case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingAllowFindingByPhoneNumber();
-        break;
-      case TdApi.UserPrivacySettingAllowPeerToPeerCalls.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingAllowPeerToPeerCalls();
-        break;
-      case TdApi.UserPrivacySettingShowLinkInForwardedMessages.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingShowLinkInForwardedMessages();
-        break;
-      case TdApi.UserPrivacySettingShowPhoneNumber.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingShowPhoneNumber();
-        break;
-      case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingShowProfilePhoto();
-        break;
-      case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR:
-        setting = new TdApi.UserPrivacySettingShowStatus();
-        break;
-    }
-    if (setting != null) {
-      setArguments(setting);
-      return true;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        setArguments(Args.newChatsPrivacy());
+        return true;
+      }
     }
     return false;
   }
 
   private SettingsAdapter adapter;
   private PrivacySettings privacyRules, changedPrivacyRules;
+  private @Nullable TdApi.ReadDatePrivacySettings readDatePrivacySetting;
 
   private PrivacySettings currentRules () {
     return changedPrivacyRules != null ? changedPrivacyRules : privacyRules;
@@ -160,7 +235,9 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     if (this.privacyRules == null) {
       this.privacyRules = PrivacySettings.valueOf(rules);
       buildCells();
-      executeScheduledAnimation();
+      if (!needAsynchronousAnimation()) {
+        executeScheduledAnimation();
+      }
     } else {
       int prevMode = currentRules().getMode();
       this.privacyRules = PrivacySettings.valueOf(rules);
@@ -168,13 +245,13 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
         int newMode = currentRules().getMode();
         int modeId;
         switch (newMode) {
-          case PrivacySettings.MODE_CONTACTS:
+          case PrivacySettings.Mode.CONTACTS:
             modeId = R.id.btn_contacts;
             break;
-          case PrivacySettings.MODE_EVERYBODY:
+          case PrivacySettings.Mode.EVERYBODY:
             modeId = R.id.btn_everybody;
             break;
-          case PrivacySettings.MODE_NOBODY:
+          case PrivacySettings.Mode.NOBODY:
             modeId = R.id.btn_nobody;
             break;
           default:
@@ -193,23 +270,67 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     }
   }
 
+  private PrivacySettings unpaidRules, changedUnpaidRules;
+
+  private PrivacySettings currentUnpaidRules () {
+    return changedUnpaidRules != null ? changedUnpaidRules : unpaidRules;
+  }
+
+  private TdApi.NewChatPrivacySettings currentNewChatPrivacySettings () {
+    boolean allowNewChatsFromUnknownUsers = currentRules().getMode() != PrivacySettings.Mode.CONTACTS;
+    long incomingMessageStarCount = 0;
+    if (currentRules().getMode() == PrivacySettings.Mode.NOBODY) {
+      // TODO
+    }
+    return new TdApi.NewChatPrivacySettings(allowNewChatsFromUnknownUsers, 0);
+  }
+
+  private void setNewChatPrivacySettings (@NonNull TdApi.NewChatPrivacySettings newChatPrivacySettings, @NonNull TdApi.UserPrivacySettingRules unpaidRules) {
+    this.unpaidRules = PrivacySettings.valueOf(unpaidRules);
+    if (newChatPrivacySettings.allowNewChatsFromUnknownUsers) {
+      setPrivacyRules(new TdApi.UserPrivacySettingRules(new TdApi.UserPrivacySettingRule[] {new TdApi.UserPrivacySettingRuleAllowAll()}));
+    } else {
+      setPrivacyRules(new TdApi.UserPrivacySettingRules(new TdApi.UserPrivacySettingRule[] {new TdApi.UserPrivacySettingRuleAllowContacts(), new TdApi.UserPrivacySettingRuleAllowPremiumUsers()}));
+    }
+  }
+
   private boolean needNobodyOption () {
-    switch (getArgumentsStrict().getConstructor()) {
-      case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR:
-      case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
-      // case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR:
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        //noinspection SwitchIntDef
+        switch (args.userPrivacySetting.getConstructor()) {
+          // case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR:
+          case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
+          // case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR:
+            return false;
+        }
+        return true;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY:
         return false;
     }
-    return true;
+    throw new UnsupportedOperationException();
   }
 
   private boolean needExceptions () {
-    switch (getArgumentsStrict().getConstructor()) {
-      case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
-        return false;
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        //noinspection SwitchIntDef
+        switch (args.userPrivacySetting.getConstructor()) {
+          case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:
+            return false;
+        }
+        return true;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY:
+        return currentRules().getMode() == PrivacySettings.Mode.NOBODY;
     }
-    return true;
+    throw new UnsupportedOperationException();
   }
+
+  private boolean loadingLink;
 
   private void buildCells () {
     if (privacyRules == null) {
@@ -219,61 +340,123 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     final ListItem headerItem;
     final ListItem hintItem;
 
+    TdApi.InternalLinkType internalLinkType = null;
+
     final int rulesType = privacyRules.getMode();
 
-    switch (getArgumentsStrict().getConstructor()) {
-      case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanAddYouToGroupsAndChannels);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanAddMeInfo);
-        break;
-      }
-      case TdApi.UserPrivacySettingShowLinkInForwardedMessages.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanForwardLink);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanForwardLinkInfo);
-        break;
-      }
-      case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeePhoto);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeePhotoInfo);
-        break;
-      }
-      case TdApi.UserPrivacySettingAllowCalls.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanCallMe);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.VoiceCallPrivacyDesc);
-        break;
-      }
-      case TdApi.UserPrivacySettingShowPhoneNumber.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeePhone);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeePhoneInfo);
-        break;
-      }
-      case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanFindByPhone);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, rulesType == PrivacySettings.MODE_EVERYBODY ? R.string.WhoCanFindByPhoneInfoEveryone : R.string.WhoCanFindByPhoneInfoContacts);
-        break;
-      }
-      case TdApi.UserPrivacySettingAllowPeerToPeerCalls.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.UseP2PWith);
-        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.PeerToPeerInfo);
-        break;
-      }
-      case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR: {
-        headerItem = new ListItem(ListItem.TYPE_HEADER, R.id.btn_description, 0, R.string.LastSeenTitle);
+    final Args args = getArgumentsStrict();
 
-        String str = Lang.getString(R.string.CustomHelp);
-        int i = str.indexOf(':');
-        if (i == -1) {
-          hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.CustomHelp);
-        } else {
-          SpannableStringBuilder b = new SpannableStringBuilder(str);
-          b.setSpan(new CustomTypefaceSpan(Fonts.getRobotoMedium(), R.id.theme_color_background_textLight), 0, i + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-          hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, b, false);
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        switch (args.userPrivacySetting.getConstructor()) {
+          case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanAddYouToGroupsAndChannels);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanAddMeInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowLinkInForwardedMessages.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanForwardLink);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanForwardLinkInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeePhoto);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeePhotoInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingAllowCalls.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanCallMe);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.VoiceCallPrivacyDesc);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowPhoneNumber.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeePhone);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeePhoneInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowBio.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeeBio);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeeBioInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSeeBirthdate);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.WhoCanSeeBirthdateInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanFindByPhone);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, rulesType == PrivacySettings.Mode.EVERYBODY ? R.string.WhoCanFindByPhoneInfoEveryone : R.string.WhoCanFindByPhoneInfoContacts);
+            TdApi.User user = tdlib.myUser();
+            if (user != null) {
+              internalLinkType = new TdApi.InternalLinkTypeUserPhoneNumber(user.phoneNumber, "", true);
+            }
+            break;
+          }
+          case TdApi.UserPrivacySettingAllowPeerToPeerCalls.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.UseP2PWith);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.PeerToPeerInfo);
+            break;
+          }
+          case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, R.id.btn_description, 0, R.string.LastSeenTitle);
+
+            String str = Lang.getString(R.string.CustomHelp);
+            int i = str.indexOf(':');
+            if (i == -1) {
+              hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.CustomHelp);
+            } else {
+              SpannableStringBuilder b = new SpannableStringBuilder(str);
+              b.setSpan(new CustomTypefaceSpan(Fonts.getRobotoMedium(), ColorId.background_textLight), 0, i + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+              hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, b, false);
+            }
+            break;
+          }
+          case TdApi.UserPrivacySettingAllowPrivateVoiceAndVideoNoteMessages.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSendVoiceVideo);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.VoiceVideoPrivacyDesc);
+            break;
+          }
+          case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR: {
+            headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanDisplayGifts);
+            hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, R.string.GiftsPrivacyDesc);
+            break;
+          }
+          case TdApi.UserPrivacySettingAllowUnpaidMessages.CONSTRUCTOR: {
+            // Controlled only via Mode.NEW_CHATS_PRIVACY
+            throw new UnsupportedOperationException();
+          }
+          default: {
+            Td.assertUserPrivacySetting_6bbb3d7e();
+            throw Td.unsupported(args.userPrivacySetting);
+          }
         }
         break;
       }
-      default: {
-        throw new IllegalStateException("privacyKey == " + getArgumentsStrict());
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        headerItem = new ListItem(ListItem.TYPE_HEADER, 0, 0, R.string.WhoCanSendMessages);
+        hintItem = new ListItem(ListItem.TYPE_DESCRIPTION, R.id.btn_description, 0, Lang.getMarkdownString(this, R.string.NewChatsPrivacyDesc));
+        break;
       }
+      default: {
+        throw new UnsupportedOperationException();
+      }
+    }
+
+    if (!loadingLink && StringUtils.isEmpty(additionalLink) && internalLinkType != null) {
+      loadingLink = true;
+      tdlib.send(new TdApi.GetInternalLink(internalLinkType, true), (httpUrl, error) -> runOnUiThreadOptional(() -> {
+        if (loadingLink) {
+          loadingLink = false;
+          if (httpUrl != null) {
+            additionalLink = httpUrl.url;
+            updateHints();
+          }
+          if (!needAsynchronousAnimation()) {
+            executeScheduledAnimation();
+          }
+        }
+      }));
     }
 
     ArrayList<ListItem> items = new ArrayList<>();
@@ -282,12 +465,18 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     items.add(headerItem);
 
     items.add(new ListItem(ListItem.TYPE_SHADOW_TOP));
-    items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_everybody, 0, R.string.Everybody, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.MODE_EVERYBODY));
+    items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_everybody, 0, R.string.Everybody, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.Mode.EVERYBODY));
     items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
-    items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_contacts, 0, R.string.MyContacts, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.MODE_CONTACTS));
-    if (needNobodyOption() || rulesType == PrivacySettings.MODE_NOBODY) {
+    if (args.mode == Mode.INCOMING_MESSAGES_PRIVACY) {
+      items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_contacts, 0, Lang.getMarkdownString(this, R.string.MyContactsAndPremium), R.id.btn_privacyRadio, rulesType == PrivacySettings.Mode.CONTACTS));
       items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
-      items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_nobody, 0, R.string.Nobody, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.MODE_NOBODY));
+      items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_nobody, 0, Lang.getMarkdownString(this, R.string.ChargeForMessages), R.id.btn_privacyRadio, rulesType == PrivacySettings.Mode.NOBODY));
+    } else {
+      items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_contacts, 0, R.string.MyContacts, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.Mode.CONTACTS));
+      if (needNobodyOption() || rulesType == PrivacySettings.Mode.NOBODY) {
+        items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
+        items.add(new ListItem(ListItem.TYPE_RADIO_OPTION, R.id.btn_nobody, 0, R.string.Nobody, null, R.id.btn_privacyRadio, rulesType == PrivacySettings.Mode.NOBODY));
+      }
     }
     items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
 
@@ -298,16 +487,27 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
 
       boolean needNever = privacyRules.needNeverAllow();
       if (needNever) {
-        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_neverAllow, 0, getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.NeverShareWith : R.string.NeverAllow));
+        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_neverAllow, 0, args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.NeverShareWith : R.string.NeverAllow));
       }
       if (privacyRules.needAlwaysAllow()) {
         if (needNever) {
           items.add(new ListItem(ListItem.TYPE_SEPARATOR_FULL));
         }
-        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_alwaysAllow, 0, getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.AlwaysShareWith : R.string.AlwaysAllow));
+        @StringRes int stringRes;
+        if (args.mode == Mode.INCOMING_MESSAGES_PRIVACY) {
+          stringRes = R.string.RemoveMessageFee;
+        } else {
+          stringRes = args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.AlwaysShareWith : R.string.AlwaysAllow;
+        }
+        items.add(new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_alwaysAllow, 0, stringRes));
       }
       items.add(new ListItem(ListItem.TYPE_SHADOW_BOTTOM));
-      items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.CustomShareSettingsHelp));
+      items.add(new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, args.mode == Mode.INCOMING_MESSAGES_PRIVACY ? R.string.RemoveMessageFeeHint : R.string.CustomShareSettingsHelp));
+    }
+
+    if (needExtraToggle(privacyRules)) {
+      List<ListItem> extraItems = newExtraToggleItems();
+      items.addAll(extraItems);
     }
 
     /*if (privacyKey.getConstructor() == TdApi.UserPrivacySettingAllowCalls.CONSTRUCTOR) {
@@ -329,20 +529,50 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     restorePersistentScrollPosition();
   }
 
+  private String additionalLink;
+
+  private void updateHints () {
+    Args args = getArgumentsStrict();
+    if (args.mode != Mode.USER_PRIVACY_SETTING) {
+      return;
+    }
+    @PrivacySettings.Mode int mode = currentRules().getMode();
+    //noinspection SwitchIntDef
+    switch (args.userPrivacySetting.getConstructor()) {
+      case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:  {
+        int i = adapter.indexOfViewById(R.id.btn_description);
+        if (i != -1) {
+          boolean changed;
+          ListItem item = adapter.getItems().get(i);
+          if (mode == PrivacySettings.Mode.EVERYBODY && !StringUtils.isEmpty(additionalLink)) {
+            changed = item.setStringIfChanged(Lang.getString(R.string.WhoCanFindByPhoneInfoEveryoneLink, (target, argStart, argEnd, argIndex, needFakeBold) -> new NoUnderlineClickableSpan() {
+              @Override
+              public void onClick (@NonNull View widget) {
+                tdlib.ui().showUrlOptions(SettingsPrivacyKeyController.this, additionalLink, () -> new TdlibUi.UrlOpenParameters().disableInstantView());
+              }
+            }, additionalLink));
+          } else {
+            changed = item.setStringIfChanged(mode == PrivacySettings.Mode.EVERYBODY ? R.string.WhoCanFindByPhoneInfoEveryone : R.string.WhoCanFindByPhoneInfoContacts);
+          }
+          if (changed) {
+            adapter.notifyItemChanged(i);
+          }
+        }
+        break;
+      }
+    }
+  }
+
   private void updateRulesState (PrivacySettings newPrivacySettings) {
     int newRules = newPrivacySettings.getMode();
     if (!needExceptions()) {
-      switch (getArgumentsStrict().getConstructor()) {
-        case TdApi.UserPrivacySettingAllowFindingByPhoneNumber.CONSTRUCTOR:  {
-          int i = adapter.indexOfViewById(R.id.btn_description);
-          if (i != -1 && adapter.getItems().get(i).setStringIfChanged(newRules == PrivacySettings.MODE_EVERYBODY ? R.string.WhoCanFindByPhoneInfoEveryone : R.string.WhoCanFindByPhoneInfoContacts)) {
-            adapter.notifyItemChanged(i);
-          }
-          break;
-        }
-      }
+      updateHints();
       return;
     }
+
+    updateExtraToggle(newPrivacySettings);
+
+    final boolean isShowStatus = getArgumentsStrict().userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR;
 
     boolean prevHadNever = adapter.indexOfViewById(R.id.btn_neverAllow) != -1;
     boolean prevHadAlways = adapter.indexOfViewById(R.id.btn_alwaysAllow) != -1;
@@ -355,8 +585,8 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     List<ListItem> items = adapter.getItems();
     int index = adapter.indexOfViewByType(ListItem.TYPE_VALUED_SETTING_COMPACT);
 
-    final int alwaysString = getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.AlwaysShareWith : R.string.AlwaysAllow;
-    final int neverString = getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.NeverShareWith : R.string.NeverAllow;
+    final int alwaysString = isShowStatus ? R.string.AlwaysShareWith : R.string.AlwaysAllow;
+    final int neverString = isShowStatus ? R.string.NeverShareWith : R.string.NeverAllow;
 
     if (nowHasSeparator == prevHadSeparator) {
       if (!nowHasSeparator) {
@@ -388,36 +618,222 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
     }
   }
 
+  private boolean needExtraToggle (PrivacySettings privacyRules) {
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        switch (args.userPrivacySetting.getConstructor()) {
+          case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR:
+          case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR:
+          case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR:
+            return true;
+          case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR:
+            return privacyRules.getMode() != PrivacySettings.Mode.EVERYBODY || privacyRules.getMinusUserIdCount() > 0;
+          case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR:
+            return privacyRules.getMode() != PrivacySettings.Mode.EVERYBODY;
+        }
+        return false;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        return privacyRules.getMode() == PrivacySettings.Mode.NOBODY;
+      }
+    }
+    throw new UnsupportedOperationException(Integer.toString(args.mode));
+  }
+
+  private int getExtraItemCount () {
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING:
+        return args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR ? 3 : 4;
+      case Mode.INCOMING_MESSAGES_PRIVACY:
+        return 4;
+      default:
+        throw new UnsupportedOperationException(Integer.toString(args.mode));
+    }
+  }
+
+  private List<ListItem> newExtraToggleItems () {
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        switch (args.userPrivacySetting.getConstructor()) {
+          case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR: {
+            return Arrays.asList(
+              new ListItem(ListItem.TYPE_SHADOW_TOP),
+              new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_togglePermission, 0, R.string.PublicPhoto),
+              new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+              new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.PublicPhotoHint)
+            );
+          }
+          case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR: {
+            return Arrays.asList(
+              new ListItem(ListItem.TYPE_SHADOW_TOP),
+              new ListItem(ListItem.TYPE_VALUED_SETTING_COMPACT, R.id.btn_togglePermission, 0, R.string.Birthdate),
+              new ListItem(ListItem.TYPE_SHADOW_BOTTOM)
+            );
+          }
+          case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR: {
+            return Arrays.asList(
+              new ListItem(ListItem.TYPE_SHADOW_TOP),
+              new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_togglePermission, 0, R.string.HideReadTime),
+              new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+              new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, R.string.HideReadTimeDesc)
+            );
+          }
+          case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR: {
+            return Arrays.asList(
+              new ListItem(ListItem.TYPE_SHADOW_TOP),
+              new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_togglePermission, 0, Lang.getMarkdownString(this, R.string.AllowPremiumInvite)),
+              new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+              new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, Lang.getMarkdownString(this, R.string.AllowPremiumInviteDesc))
+            );
+          }
+          case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR: {
+            if (currentRules().getMode() != PrivacySettings.Mode.EVERYBODY) {
+              return Arrays.asList(
+                new ListItem(ListItem.TYPE_SHADOW_TOP),
+                new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_togglePermission, 0, Lang.getMarkdownString(this, R.string.AllowBotsAndMiniApps)),
+                new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+                new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, Lang.getMarkdownString(this, R.string.AllowBotsAndMiniAppsDesc))
+              );
+            } else {
+              return Arrays.asList(
+                new ListItem(ListItem.TYPE_SHADOW_TOP),
+                new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_togglePermission, 0, Lang.getMarkdownString(this, R.string.RestrictBotsAndMiniApps)),
+                new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+                new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, Lang.getMarkdownString(this, R.string.RestrictBotsAndMiniAppsDesc))
+              );
+            }
+          }
+        }
+        throw new IllegalStateException(args.userPrivacySetting.toString());
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        return Arrays.asList(
+          new ListItem(ListItem.TYPE_SHADOW_TOP),
+          new ListItem(ListItem.TYPE_RADIO_SETTING, R.id.btn_togglePermission, 0, Lang.getMarkdownString(this, R.string.RestrictBotsAndMiniApps)),
+          new ListItem(ListItem.TYPE_SHADOW_BOTTOM),
+          new ListItem(ListItem.TYPE_DESCRIPTION, 0, 0, Lang.getMarkdownString(this, R.string.RestrictBotsAndMiniAppsDesc))
+        );
+      }
+      default:
+        throw new UnsupportedOperationException(Integer.toString(args.mode));
+    }
+  }
+
+  private void updateExtraToggle (PrivacySettings newPrivacySettings) {
+    if (newPrivacySettings == null) {
+      // Primary privacy information isn't yet loaded.
+      return;
+    }
+    int index = adapter.indexOfViewById(R.id.btn_togglePermission);
+    boolean prevHadExtraToggle = index != -1;
+    boolean nowHasExtraToggle = needExtraToggle(newPrivacySettings);
+    if (prevHadExtraToggle != nowHasExtraToggle) {
+      if (nowHasExtraToggle) {
+        List<ListItem> extraItems = newExtraToggleItems();
+        int atIndex = adapter.getItems().size();
+        adapter.getItems().addAll(extraItems);
+        adapter.notifyItemRangeInserted(atIndex, extraItems.size());
+        loadExtraToggle();
+      } else {
+        adapter.removeRange(index - 1, getExtraItemCount());
+      }
+    } else if (nowHasExtraToggle) {
+      adapter.updateValuedSettingByPosition(index);
+    }
+  }
+
   @Override
   public boolean needAsynchronousAnimation () {
-    return privacyRules == null;
+    return privacyRules == null || loadingLink;
   }
 
   @Override
   public void onPrivacySettingRulesChanged (TdApi.UserPrivacySetting setting, TdApi.UserPrivacySettingRules rules) {
-    tdlib.ui().post(() -> {
-      if (!isDestroyed() && getArgumentsStrict().getConstructor() == setting.getConstructor()) {
+    runOnUiThreadOptional(() -> {
+      Args args = getArgumentsStrict();
+      if (args.mode == Mode.USER_PRIVACY_SETTING && args.userPrivacySetting.getConstructor() == setting.getConstructor()) {
         setPrivacyRules(rules);
+      } else if (args.mode == Mode.INCOMING_MESSAGES_PRIVACY && setting.getConstructor() == TdApi.UserPrivacySettingAllowUnpaidMessages.CONSTRUCTOR) {
+        setNewChatPrivacySettings(currentNewChatPrivacySettings(), rules);
       }
     });
   }
 
   @Override
+  public void onNewChatPrivacySettingsChanged (TdApi.NewChatPrivacySettings settings) {
+    runOnUiThreadOptional(() -> {
+      Args args = getArgumentsStrict();
+      if (args.mode == Mode.INCOMING_MESSAGES_PRIVACY) {
+        setNewChatPrivacySettings(settings, currentUnpaidRules().toRules());
+      }
+    });
+  }
+
+  private long subscribedToUserId;
+
+  @Override
   protected void onCreateView (Context context, CustomRecyclerView recyclerView) {
+    Args args = getArgumentsStrict();
     adapter = new SettingsAdapter(this) {
       @Override
       protected void setValuedSetting (ListItem item, SettingView view, boolean isUpdate) {
-        switch (item.getId()) {
-          case R.id.btn_alwaysAllow: {
-            int count = currentRules().getPlusTotalCount(tdlib);
-            view.setData(count > 0 ? Lang.plural(R.string.xUsers, count) : Lang.getString(R.string.PrivacyAddUsers));
-            break;
+        final int itemId = item.getId();
+        if (itemId == R.id.btn_alwaysAllow) {
+          int count = currentRules().getPlusTotalCount(tdlib);
+          view.setData(count > 0 ? Lang.plural(R.string.xUsers, count) : Lang.getString(R.string.PrivacyAddUsers));
+        } else if (itemId == R.id.btn_neverAllow) {
+          int count = currentRules().getMinusTotalCount(tdlib);
+          view.setData(count > 0 ? Lang.plural(R.string.xUsers, count) : Lang.getString(R.string.PrivacyAddUsers));
+        }
+
+        if (itemId == R.id.btn_togglePermission) {
+          switch (args.userPrivacySetting.getConstructor()) {
+            case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR: {
+              final TdApi.UserFullInfo myUserFull = tdlib.myUserFull();
+              final boolean hasAvatar = myUserFull != null && myUserFull.publicPhoto != null;
+
+              view.setData(Lang.getString(hasAvatar ? R.string.PublicPhotoSet : R.string.PublicPhotoNoSet));
+              view.setDrawModifier(new ProfilePhotoDrawModifier().requestFiles(view.getComplexReceiver(), tdlib));
+              break;
+            }
+            case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR: {
+              final TdApi.UserFullInfo myUserFull = tdlib.myUserFull();
+              if (myUserFull != null) {
+                if (myUserFull.birthdate != null) {
+                  view.setName(R.string.UserBirthdate);
+                  view.setData(Lang.getBirthdate(myUserFull.birthdate, true, true));
+                } else {
+                  view.setName(Lang.getString(R.string.ReminderSetBirthdateText));
+                  view.setData(Lang.getString(R.string.ReminderSetBirthdate));
+                }
+              } else {
+                view.setData(R.string.LoadingInformation);
+              }
+              break;
+            }
+            case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR: {
+              view.setEnabledAnimated(readDatePrivacySetting != null, isUpdate);
+              view.getToggler().setRadioEnabled(readDatePrivacySetting != null && !readDatePrivacySetting.showReadDate, isUpdate);
+              break;
+            }
+            case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR: {
+              view.getToggler().setRadioEnabled(currentRules().needPlusPremium(), isUpdate);
+              break;
+            }
+            case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR: {
+              view.getToggler().setRadioEnabled(currentRules().needPlusOrMinusBots(), isUpdate);
+              break;
+            }
+            default: {
+              Td.assertUserPrivacySetting_6bbb3d7e();
+              throw Td.unsupported(args.userPrivacySetting);
+            }
           }
-          case R.id.btn_neverAllow: {
-            int count = currentRules().getMinusTotalCount(tdlib);
-            view.setData(count > 0 ? Lang.plural(R.string.xUsers, count) : Lang.getString(R.string.PrivacyAddUsers));
-            break;
-          }
+        } else {
+          view.setDrawModifier(null);
         }
       }
 
@@ -429,21 +845,71 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
       }
     };
     recyclerView.setAdapter(adapter);
-    tdlib.client().send(new TdApi.GetUserPrivacySettingRules(getArgumentsStrict()), result -> tdlib.ui().post(() -> {
-      if (!isDestroyed()) {
-        switch (result.getConstructor()) {
-          case TdApi.UserPrivacySettingRules.CONSTRUCTOR: {
-            setPrivacyRules((TdApi.UserPrivacySettingRules) result);
-            break;
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        tdlib.send(new TdApi.GetUserPrivacySettingRules(args.userPrivacySetting), (rules, error) -> runOnUiThreadOptional(() -> {
+          if (error != null) {
+            UI.showError(error);
+          } else {
+            setPrivacyRules(rules);
           }
-          case TdApi.Error.CONSTRUCTOR: {
-            UI.showError(result);
-            break;
-          }
-        }
+        }));
+        loadExtraToggle();
+        break;
       }
-    }));
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        tdlib.send(new TdApi.GetNewChatPrivacySettings(), (newChatPrivacySettings, error) ->
+          tdlib.send(new TdApi.GetUserPrivacySettingRules(new TdApi.UserPrivacySettingAllowUnpaidMessages()), (unpaidRules, error1) -> runOnUiThreadOptional(() -> {
+            if (error != null) {
+              UI.showError(error);
+            } else if (error1 != null) {
+              UI.showError(error1);
+            } else {
+              setNewChatPrivacySettings(newChatPrivacySettings, unpaidRules);
+            }
+          }))
+        );
+        break;
+      }
+      default:
+        throw new UnsupportedOperationException();
+    }
+
+    subscribedToUserId = tdlib.myUserId();
+    tdlib.cache().addUserDataListener(subscribedToUserId, this);
     tdlib.listeners().subscribeToPrivacyUpdates(this);
+  }
+
+  @Override
+  public void onUserFullUpdated (long userId, TdApi.UserFullInfo userFull) {
+    runOnUiThreadOptional(() -> {
+      if (userId == tdlib.myUserId()) {
+        adapter.updateValuedSettingById(R.id.btn_togglePermission);
+      }
+    });
+  }
+
+  private void loadExtraToggle () {
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        if (args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR) {
+          tdlib.send(new TdApi.GetReadDatePrivacySettings(), (readDatePrivacySetting, error) -> runOnUiThreadOptional(() -> {
+            if (error != null) {
+              UI.showError(error);
+            } else {
+              this.readDatePrivacySetting = readDatePrivacySetting;
+              updateExtraToggle(currentRules());
+            }
+          }));
+        }
+        break;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+
+        break;
+      }
+    }
   }
 
   @Override
@@ -453,35 +919,45 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
   }
 
   private boolean nothingChanged () {
-    return changedPrivacyRules == null || changedPrivacyRules.equals(privacyRules);
+    return (changedPrivacyRules == null || changedPrivacyRules.equals(privacyRules)) && (changedUnpaidRules == null || changedUnpaidRules.equals(unpaidRules));
   }
 
   private void saveChanges () {
     if (privacyRules == null || nothingChanged()) {
       return;
     }
-    TdApi.UserPrivacySettingRules newRules = changedPrivacyRules.toRules();
-
-    tdlib.client().send(new TdApi.SetUserPrivacySettingRules(getArgumentsStrict(), newRules), tdlib.okHandler());
+    Args args = getArgumentsStrict();
+    switch (args.mode) {
+      case Mode.USER_PRIVACY_SETTING: {
+        TdApi.UserPrivacySettingRules newRules = changedPrivacyRules.toRules();
+        tdlib.send(new TdApi.SetUserPrivacySettingRules(args.userPrivacySetting, newRules), tdlib.typedOkHandler());
+        break;
+      }
+      case Mode.INCOMING_MESSAGES_PRIVACY: {
+        TdApi.NewChatPrivacySettings newChatPrivacySettings = currentNewChatPrivacySettings();
+        tdlib.send(new TdApi.SetNewChatPrivacySettings(newChatPrivacySettings), tdlib.typedOkHandler(() ->
+          tdlib.listeners().updateNewChatPrivacySettings(newChatPrivacySettings))
+        );
+        break;
+      }
+    }
   }
 
   @Override
   public void destroy () {
     super.destroy();
     tdlib.listeners().unsubscribeFromPrivacyUpdates(this);
+    tdlib.cache().removeUserDataListener(subscribedToUserId, this);
   }
 
   private int userPickMode;
 
   @Override
   public long[] getAlreadySelectedChatIds () {
-    switch (userPickMode) {
-      case R.id.btn_alwaysAllow: {
-        return currentRules().getAllPlusIds();
-      }
-      case R.id.btn_neverAllow: {
-        return currentRules().getAllMinusIds();
-      }
+    if (userPickMode == R.id.btn_alwaysAllow) {
+      return currentRules().getAllPlusIds();
+    } else if (userPickMode == R.id.btn_neverAllow) {
+      return currentRules().getAllMinusIds();
     }
     return null;
   }
@@ -500,78 +976,140 @@ public class SettingsPrivacyKeyController extends RecyclerViewController<TdApi.U
 
   @Override
   public int provideMultiUserPickerHint () {
-    switch (userPickMode) {
-      case R.id.btn_neverAllow: {
-        return getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.NeverShareWith : R.string.NeverAllow;
-      }
-      case R.id.btn_alwaysAllow: {
-        return getArgumentsStrict().getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.AlwaysShareWith : R.string.AlwaysAllow;
-      }
+    if (userPickMode == R.id.btn_neverAllow) {
+      return getArgumentsStrict().userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.NeverShareWith : R.string.NeverAllow;
+    } else if (userPickMode == R.id.btn_alwaysAllow) {
+      return getArgumentsStrict().userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR ? R.string.AlwaysShareWith : R.string.AlwaysAllow;
     }
     return R.string.AlwaysAllow;
   }
 
   @Override
-  public void onAlreadyPickedChatsChanged (List<TGUser> users) {
-    LongList userIds = new LongList(users.size());
-    LongList chatIds = new LongList(users.size());
-    for (TGUser user : users) {
-      long chatId = user.getChatId();
-      if (ChatId.isPrivate(chatId)) {
-        userIds.append(ChatId.toUserId(chatId));
-      } else {
-        chatIds.append(chatId);
+  public void onAlreadyPickedChatsChanged (List<BubbleView.Entry> bubbles) {
+    LongList userIds = new LongList(bubbles.size());
+    LongList chatIds = new LongList(bubbles.size());
+    for (BubbleView.Entry entry : bubbles) {
+      if (entry.senderId == null) {
+        continue;
+      }
+      switch (entry.senderId.getConstructor()) {
+        case TdApi.MessageSenderChat.CONSTRUCTOR:
+          chatIds.append(((TdApi.MessageSenderChat) entry.senderId).chatId);
+          break;
+        case TdApi.MessageSenderUser.CONSTRUCTOR:
+          userIds.append(((TdApi.MessageSenderUser) entry.senderId).userId);
+          break;
+        default:
+          Td.assertMessageSender_439d4c9c();
+          throw Td.unsupported(entry.senderId);
       }
     }
-    switch (userPickMode) {
-      case R.id.btn_alwaysAllow: {
-        setAllowUsers(userIds.get(), chatIds.get());
-        break;
+    long[] pickedUserIds = userIds.get();
+    long[] pickedChatIds = chatIds.get();
+    if (userPickMode == R.id.btn_alwaysAllow) {
+      setAllowUsers(pickedUserIds, pickedChatIds);
+    } else if (userPickMode == R.id.btn_neverAllow) {
+      setNeverAllow(pickedUserIds, pickedChatIds);
+    } else {
+      return;
+    }
+    updateExtraToggle(changedPrivacyRules);
+  }
+
+  @Override
+  public void onClick (View v) {
+    final int viewId = v.getId();
+    final Args args = getArgumentsStrict();
+    if (viewId == R.id.btn_alwaysAllow || viewId == R.id.btn_neverAllow) {
+      userPickMode = v.getId();
+      ContactsController c = new ContactsController(context, tdlib);
+      c.setArguments(new ContactsController.Args(this).useGlobalSearch(SearchManager.FLAG_NEED_TOP_CHATS | SearchManager.FLAG_NEED_GLOBAL_SEARCH | SearchManager.FLAG_NO_BOTS | SearchManager.FLAG_NO_CHANNELS | SearchManager.FLAG_NO_SELF));
+      navigateTo(c);
+    } else if (viewId == R.id.btn_everybody || viewId == R.id.btn_contacts || viewId == R.id.btn_nobody) {
+      ListItem item = (ListItem) v.getTag();
+      if (adapter.processToggle(v)) {
+        final int desiredMode;
+        final int modeId = adapter.getCheckIntResults().get(item.getCheckId());
+        if (modeId == R.id.btn_everybody) {
+          desiredMode = PrivacySettings.Mode.EVERYBODY;
+        } else if (modeId == R.id.btn_contacts) {
+          desiredMode = PrivacySettings.Mode.CONTACTS;
+        } else if (modeId == R.id.btn_nobody) {
+          desiredMode = PrivacySettings.Mode.NOBODY;
+        } else {
+          return;
+        }
+        int prevMode = currentRules().getMode();
+        boolean plusPremium, plusOrMinusBots;
+        switch (args.mode) {
+          case Mode.USER_PRIVACY_SETTING: {
+            plusPremium = args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR && desiredMode == PrivacySettings.Mode.CONTACTS;
+            plusOrMinusBots = args.userPrivacySetting.getConstructor() == TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR && desiredMode != PrivacySettings.Mode.EVERYBODY && !(prevMode != PrivacySettings.Mode.EVERYBODY && !currentRules().needPlusOrMinusBots());
+            break;
+          }
+          case Mode.INCOMING_MESSAGES_PRIVACY: {
+            plusPremium = desiredMode == PrivacySettings.Mode.CONTACTS;
+            plusOrMinusBots = false;
+            break;
+          }
+          default:
+            throw new UnsupportedOperationException();
+        }
+        changedPrivacyRules = PrivacySettings.valueOf(currentRules().toggleGlobal(desiredMode, plusPremium, plusOrMinusBots));
+        updateRulesState(changedPrivacyRules);
       }
-      case R.id.btn_neverAllow: {
-        setNeverAllow(userIds.get(), chatIds.get());
-        break;
+    } else if (viewId == R.id.btn_togglePermission) {
+      switch (args.userPrivacySetting.getConstructor()) {
+        case TdApi.UserPrivacySettingShowProfilePhoto.CONSTRUCTOR: {
+          getAvatarPickerManager().showMenuForProfile(null, true);
+          break;
+        }
+        case TdApi.UserPrivacySettingShowBirthdate.CONSTRUCTOR: {
+          tdlib.ui().openBirthdateEditor(SettingsPrivacyKeyController.this, v, TdlibUi.BirthdateOpenOrigin.PRIVACY_SETTINGS);
+          break;
+        }
+        case TdApi.UserPrivacySettingShowStatus.CONSTRUCTOR: {
+          if (readDatePrivacySetting != null) {
+            readDatePrivacySetting.showReadDate = !adapter.toggleView(v);
+            TdApi.ReadDatePrivacySettings newPrivacySettings = new TdApi.ReadDatePrivacySettings(readDatePrivacySetting.showReadDate);
+            tdlib.send(new TdApi.SetReadDatePrivacySettings(newPrivacySettings), tdlib.typedOkHandler(() -> {
+              tdlib.listeners().updateReadDatePrivacySettings(newPrivacySettings);
+            }));
+          }
+          break;
+        }
+        case TdApi.UserPrivacySettingAllowChatInvites.CONSTRUCTOR: {
+          boolean plusPremium = adapter.toggleView(v);
+          PrivacySettings rules = currentRules();
+          changedPrivacyRules = PrivacySettings.valueOf(rules.togglePlusPremium(plusPremium));
+          updateRulesState(changedPrivacyRules);
+          break;
+        }
+        case TdApi.UserPrivacySettingAutosaveGifts.CONSTRUCTOR: {
+          boolean plusOrMinusBots = adapter.toggleView(v);
+          PrivacySettings rules = currentRules();
+          changedPrivacyRules = PrivacySettings.valueOf(rules.togglePlusOrMinusBots(plusOrMinusBots));
+          updateRulesState(changedPrivacyRules);
+          break;
+        }
+        default: {
+          throw new IllegalStateException();
+        }
       }
     }
   }
 
   @Override
-  public void onClick (View v) {
-    switch (v.getId()) {
-      case R.id.btn_alwaysAllow:
-      case R.id.btn_neverAllow: {
-        userPickMode = v.getId();
-        ContactsController c = new ContactsController(context, tdlib);
-        c.setArguments(new ContactsController.Args(this).useGlobalSearch(SearchManager.FLAG_NEED_TOP_CHATS | SearchManager.FLAG_NEED_GLOBAL_SEARCH | SearchManager.FLAG_NO_BOTS | SearchManager.FLAG_NO_CHANNELS | SearchManager.FLAG_NO_SELF));
-        navigateTo(c);
-        break;
-      }
+  public void onActivityResult (int requestCode, int resultCode, Intent data) {
+    getAvatarPickerManager().handleActivityResult(requestCode, resultCode, data, AvatarPickerManager.MODE_PROFILE_PUBLIC, null, null);
+  }
 
-      case R.id.btn_everybody:
-      case R.id.btn_contacts:
-      case R.id.btn_nobody: {
-        ListItem item = (ListItem) v.getTag();
-        if (adapter.processToggle(v)) {
-          final int desiredMode;
-          switch (adapter.getCheckIntResults().get(item.getCheckId())) {
-            case R.id.btn_everybody:
-              desiredMode = PrivacySettings.MODE_EVERYBODY;
-              break;
-            case R.id.btn_contacts:
-              desiredMode = PrivacySettings.MODE_CONTACTS;
-              break;
-            case R.id.btn_nobody:
-              desiredMode = PrivacySettings.MODE_NOBODY;
-              break;
-            default:
-              return;
-          }
-          int prevMode = currentRules().getMode();
-          changedPrivacyRules = PrivacySettings.valueOf(currentRules().toggleGlobal(desiredMode));
-          updateRulesState(changedPrivacyRules);
-        }
-        break;
-      }
+  private AvatarPickerManager avatarPickerManager;
+
+  private AvatarPickerManager getAvatarPickerManager () {
+    if (avatarPickerManager == null) {
+      avatarPickerManager = new AvatarPickerManager(this);
     }
+    return avatarPickerManager;
   }
 }

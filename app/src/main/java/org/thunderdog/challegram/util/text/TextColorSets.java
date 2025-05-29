@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -12,22 +12,27 @@
  */
 package org.thunderdog.challegram.util.text;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
+import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Screen;
 
+import me.vkryl.core.ColorUtils;
+
 public final class TextColorSets {
-  public static final TextColorSetThemed WHITE = () -> R.id.theme_color_white;
+  public static final TextColorSetThemed WHITE = () -> ColorId.white;
+  public static final TextColorSetThemed PLACEHOLDER = () -> ColorId.textPlaceholder;
 
   // Instant View
   public interface InstantView extends TextColorSetThemed {
     @Override
     default int clickableTextColorId (boolean isPressed) {
-      return R.id.theme_color_iv_textLink;
+      return ColorId.iv_textLink;
     }
 
     @Override
     default int pressedBackgroundColorId () {
-      return R.id.theme_color_iv_textLinkPressHighlight;
+      return ColorId.iv_textLinkPressHighlight;
     }
 
     @Override
@@ -35,12 +40,12 @@ public final class TextColorSets {
       return Screen.dp(2f);
     }
 
-    InstantView NORMAL = () -> R.id.theme_color_iv_text,
-      CHAT_LINK_OVERLAY = () -> R.id.theme_color_white,
+    InstantView NORMAL = () -> ColorId.iv_text,
+      CHAT_LINK_OVERLAY = () -> ColorId.white,
       REFERENCE = new InstantView() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_iv_textReference;
+          return ColorId.iv_textReference;
         }
 
         @Override
@@ -55,42 +60,42 @@ public final class TextColorSets {
 
         @Override
         public int pressedBackgroundColorId () {
-          return R.id.theme_color_iv_textReferenceBackgroundPressed;
+          return ColorId.iv_textReferenceBackgroundPressed;
         }
 
         @Override
         public int staticBackgroundColorId () {
-          return R.id.theme_color_iv_textReferenceBackground;
+          return ColorId.iv_textReferenceBackground;
         }
 
         @Override
         public int outlineColorId (boolean isPressed) {
-          return isPressed ? R.id.theme_color_iv_textReferenceOutlinePressed : R.id.theme_color_iv_textReferenceOutline;
+          return isPressed ? ColorId.iv_textReferenceOutlinePressed : ColorId.iv_textReferenceOutline;
         }
       },
-      FOOTER = () -> R.id.theme_color_iv_pageFooter,
-      CAPTION = () -> R.id.theme_color_iv_caption,
-      PULL_QUOTE = () -> R.id.theme_color_iv_pullQuote,
-      BLOCK_QUOTE = () -> R.id.theme_color_iv_blockQuote,
-      TITLE = () -> R.id.theme_color_iv_pageTitle,
-      SUBTITLE = () -> R.id.theme_color_iv_pageSubtitle,
+      FOOTER = () -> ColorId.iv_pageFooter,
+      CAPTION = () -> ColorId.iv_caption,
+      PULL_QUOTE = () -> ColorId.iv_pullQuote,
+      BLOCK_QUOTE = () -> ColorId.iv_blockQuote,
+      TITLE = () -> ColorId.iv_pageTitle,
+      SUBTITLE = () -> ColorId.iv_pageSubtitle,
       HEADER = TITLE, SUBHEADER = TITLE,
-      AUTHOR = () -> R.id.theme_color_iv_pageAuthor;
+      AUTHOR = () -> ColorId.iv_pageAuthor;
     interface Marked extends InstantView {
       default int defaultTextColorId () {
-        return R.id.theme_color_iv_textMarked;
+        return ColorId.iv_textMarked;
       }
 
       default int clickableTextColorId (boolean isPressed) {
-        return R.id.theme_color_iv_textMarkedLink;
+        return ColorId.iv_textMarkedLink;
       }
 
       default int pressedBackgroundColorId () {
-        return R.id.theme_color_iv_textMarkedLinkPressHighlight;
+        return ColorId.iv_textMarkedLinkPressHighlight;
       }
 
       default int staticBackgroundColorId () {
-        return R.id.theme_color_iv_textMarkedBackground;
+        return ColorId.iv_textMarkedBackground;
       }
 
       Marked NORMAL = new Marked() { };
@@ -98,22 +103,22 @@ public final class TextColorSets {
     interface Monospace extends InstantView {
       @Override
       default int defaultTextColorId () {
-        return R.id.theme_color_iv_textCode;
+        return ColorId.iv_textCode;
       }
 
       @Override
       default int clickableTextColorId (boolean isPressed) {
-        return R.id.theme_color_iv_textCode;
+        return ColorId.iv_textCode;
       }
 
       @Override
       default int pressedBackgroundColorId () {
-        return R.id.theme_color_iv_textCodeBackgroundPressed;
+        return ColorId.iv_textCodeBackgroundPressed;
       }
 
       @Override
       default int staticBackgroundColorId () {
-        return R.id.theme_color_iv_textCodeBackground;
+        return ColorId.iv_textCodeBackground;
       }
 
       Monospace
@@ -124,23 +129,39 @@ public final class TextColorSets {
   // NORMAL
   public interface Regular extends TextColorSetThemed {
     @Override
+    @PorterDuffColorId
     default int defaultTextColorId () {
-      return R.id.theme_color_text;
+      return ColorId.text;
+    }
+
+    @Override
+    default long mediaTextComplexColor () {
+      return Theme.newComplexColor(true, defaultTextColorId());
     }
 
     @Override
     default int iconColorId () {
-      return R.id.theme_color_icon;
+      return ColorId.icon;
     }
 
     @Override
     default int clickableTextColorId (boolean isPressed) {
-      return R.id.theme_color_textLink;
+      return ColorId.textLink;
     }
 
     @Override
     default int pressedBackgroundColorId () {
-      return R.id.theme_color_textLinkPressHighlight;
+      return ColorId.textLinkPressHighlight;
+    }
+
+    @Override
+    default int quoteTextColorId () {
+      return ColorId.blockQuoteText;
+    }
+
+    @Override
+    default int quoteLineColorId () {
+      return ColorId.blockQuoteLine;
     }
 
     Regular
@@ -148,74 +169,105 @@ public final class TextColorSets {
       LIGHT = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_textLight;
+          return ColorId.textLight;
         }
 
         @Override
         public int iconColorId () {
-          return R.id.theme_color_iconLight;
+          return ColorId.iconLight;
+        }
+      },
+      SEARCH_HIGHLIGHT = new Regular() {
+        @Override
+        public int defaultTextColorId () {
+          return ColorId.textSearchQueryHighlight;
+        }
+      },
+      MESSAGE_SEARCH_HIGHLIGHT = new Regular() {
+        @Override
+        public int backgroundColor (boolean isPressed) {
+          return Theme.getColor(ColorId.textLinkPressHighlight);
+        }
+        @Override
+        public int backgroundColorId (boolean isPressed) {
+          return ColorId.textLinkPressHighlight;
         }
       },
       LINK = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_textLink;
+          return ColorId.textLink;
         }
       },
       SECURE = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_textSecure;
+          return ColorId.textSecure;
         }
 
         @Override
         public int iconColorId () {
-          return R.id.theme_color_textSecure;
+          return ColorId.textSecure;
         }
       },
       NEGATIVE = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_textNegative;
+          return ColorId.textNegative;
         }
 
         @Override
         public int iconColorId () {
-          return R.id.theme_color_iconNegative;
+          return ColorId.iconNegative;
         }
       },
       NEUTRAL = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_textNeutral;
+          return ColorId.textNeutral;
         }
       },
       MESSAGE_AUTHOR = new Regular() {
         /*@Override
         public int defaultTextColorId () {
-          return R.id.theme_color_messageAuthor;
+          return ColorId.messageAuthor;
         }*/
 
         @Override
+        public long mediaTextComplexColor () {
+          return Theme.newComplexColor(true, ColorId.messageAuthor);
+        }
+
+        @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_messageAuthor;
+          return ColorId.messageAuthor;
+        }
+
+        @Override
+        public int backgroundColor (boolean isPressed) {
+          return isPressed ? ColorUtils.alphaColor(.2f, Theme.getColor(ColorId.messageAuthor)) : ColorId.NONE;
+        }
+
+        @Override
+        public int backgroundColorId (boolean isPressed) {
+          return isPressed ? ColorId.messageAuthor : ColorId.NONE;
         }
       },
       MESSAGE_AUTHOR_PSA = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_text;
+          return ColorId.text;
         }
 
         @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_messageAuthorPsa;
+          return ColorId.messageAuthorPsa;
         }
       },
       AVATAR_CONTENT = new Regular() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_avatar_content;
+          return ColorId.avatar_content;
         }
       };
   }
@@ -224,43 +276,72 @@ public final class TextColorSets {
   public interface BubbleOut extends TextColorSetThemed {
     @Override
     default int iconColorId () {
-      return R.id.theme_color_bubbleOut_time;
+      return ColorId.bubbleOut_time;
     }
 
     @Override
     default int clickableTextColorId (boolean isPressed) {
-      return R.id.theme_color_bubbleOut_textLink;
+      return ColorId.bubbleOut_textLink;
     }
 
     @Override
     default int pressedBackgroundColorId () {
-      return R.id.theme_color_bubbleOut_textLinkPressHighlight;
+      return ColorId.bubbleOut_textLinkPressHighlight;
+    }
+
+    @Override
+    default int quoteTextColorId () {
+      return ColorId.bubbleOut_blockQuoteText;
+    }
+
+    @Override
+    default int quoteLineColorId () {
+      return ColorId.bubbleOut_blockQuoteLine;
     }
 
     BubbleOut
-      NORMAL = () -> R.id.theme_color_bubbleOut_text,
-      LIGHT = () -> R.id.theme_color_bubbleOut_time,
-      LINK = () -> R.id.theme_color_bubbleOut_textLink,
+      NORMAL = () -> ColorId.bubbleOut_text,
+      LIGHT = () -> ColorId.bubbleOut_time,
+      LINK = () -> ColorId.bubbleOut_textLink,
       MESSAGE_AUTHOR = new BubbleOut() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_bubbleOut_text;
+          return ColorId.bubbleOut_text;
+        }
+
+        @Override
+        public long mediaTextComplexColor () {
+          return Theme.newComplexColor(true, ColorId.bubbleOut_messageAuthor);
         }
 
         @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_bubbleOut_messageAuthor;
+          return ColorId.bubbleOut_messageAuthor;
         }
       },
       MESSAGE_AUTHOR_PSA = new BubbleOut() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_bubbleOut_text;
+          return ColorId.bubbleOut_text;
         }
 
         @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_bubbleOut_messageAuthorPsa;
+          return ColorId.bubbleOut_messageAuthorPsa;
+        }
+      },
+      MESSAGE_SEARCH_HIGHLIGHT = new BubbleOut() {
+        @Override
+        public int defaultTextColorId () {
+          return ColorId.bubbleOut_text;
+        }
+        @Override
+        public int backgroundColor (boolean isPressed) {
+          return Theme.getColor(ColorId.bubbleOut_textLinkPressHighlight);
+        }
+        @Override
+        public int backgroundColorId (boolean isPressed) {
+          return ColorId.bubbleOut_textLinkPressHighlight;
         }
       };
   }
@@ -268,43 +349,72 @@ public final class TextColorSets {
   public interface BubbleIn extends TextColorSetThemed {
     @Override
     default int iconColorId () {
-      return R.id.theme_color_bubbleIn_time;
+      return ColorId.bubbleIn_time;
     }
 
     @Override
     default int clickableTextColorId (boolean isPressed) {
-      return R.id.theme_color_bubbleIn_textLink;
+      return ColorId.bubbleIn_textLink;
     }
 
     @Override
     default int pressedBackgroundColorId () {
-      return R.id.theme_color_bubbleIn_textLinkPressHighlight;
+      return ColorId.bubbleIn_textLinkPressHighlight;
+    }
+
+    @Override
+    default int quoteTextColorId () {
+      return ColorId.bubbleIn_blockQuoteText;
+    }
+
+    @Override
+    default int quoteLineColorId () {
+      return ColorId.bubbleIn_blockQuoteLine;
     }
 
     BubbleIn
-      NORMAL = () -> R.id.theme_color_bubbleIn_text,
-      LIGHT = () -> R.id.theme_color_bubbleIn_time,
-      LINK = () -> R.id.theme_color_bubbleIn_textLink,
+      NORMAL = () -> ColorId.bubbleIn_text,
+      LIGHT = () -> ColorId.bubbleIn_time,
+      LINK = () -> ColorId.bubbleIn_textLink,
       MESSAGE_AUTHOR = new BubbleIn() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_bubbleIn_text;
+          return ColorId.bubbleIn_text;
+        }
+
+        @Override
+        public long mediaTextComplexColor () {
+          return Theme.newComplexColor(true, ColorId.messageAuthor);
         }
 
         @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_messageAuthor;
+          return ColorId.messageAuthor;
         }
       },
       MESSAGE_AUTHOR_PSA = new BubbleIn() {
         @Override
         public int defaultTextColorId () {
-          return R.id.theme_color_bubbleIn_text;
+          return ColorId.bubbleIn_text;
         }
 
         @Override
         public int clickableTextColorId (boolean isPressed) {
-          return R.id.theme_color_messageAuthorPsa;
+          return ColorId.messageAuthorPsa;
+        }
+      },
+      MESSAGE_SEARCH_HIGHLIGHT = new BubbleIn() {
+        @Override
+        public int defaultTextColorId () {
+          return ColorId.bubbleIn_text;
+        }
+        @Override
+        public int backgroundColor (boolean isPressed) {
+          return Theme.getColor(ColorId.bubbleIn_textLinkPressHighlight);
+        }
+        @Override
+        public int backgroundColorId (boolean isPressed) {
+          return ColorId.bubbleIn_textLinkPressHighlight;
         }
       };
   }

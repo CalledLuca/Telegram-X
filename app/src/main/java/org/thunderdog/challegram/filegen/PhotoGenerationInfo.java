@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,14 +20,17 @@ import android.graphics.BitmapRegionDecoder;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Rect;
+import android.os.Build;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
+import org.thunderdog.challegram.BuildConfig;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.loader.ImageGalleryFile;
 import org.thunderdog.challegram.loader.ImageReader;
 import org.thunderdog.challegram.mediaview.crop.CropState;
+import org.thunderdog.challegram.mediaview.crop.CropStateParser;
 import org.thunderdog.challegram.mediaview.data.FiltersState;
 import org.thunderdog.challegram.mediaview.paint.PaintState;
 
@@ -62,7 +65,7 @@ public class PhotoGenerationInfo extends GenerationInfo {
       isFiltered = !args[1].isEmpty();
     }
     if (args.length > 2) {
-      cropState = CropState.parse(args[2]);
+      cropState = CropStateParser.parse(args[2]);
     }
     if (args.length > 3) {
       for (int i = 3; i < args.length; i++) {
@@ -109,6 +112,9 @@ public class PhotoGenerationInfo extends GenerationInfo {
   }
 
   public boolean needSpecialProcessing (boolean needRotate) {
+    if (cropState != null && cropState.getFlags() != 0) {
+      return true;
+    }
     if (paintState != null && !paintState.isEmpty()) {
       return true;
     }
@@ -181,8 +187,16 @@ public class PhotoGenerationInfo extends GenerationInfo {
           BitmapFactory.Options regionOptions = new BitmapFactory.Options();
           regionOptions.inSampleSize = ImageReader.calculateInSampleSize(regionRect.width(), regionRect.height(), PhotoGenerationInfo.SIZE_LIMIT, PhotoGenerationInfo.SIZE_LIMIT);
 
-          decoder = BitmapRegionDecoder.newInstance(is, false);
-          bitmapRegion = decoder.decodeRegion(regionRect, regionOptions);
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            decoder = BitmapRegionDecoder.newInstance(is);
+          } else {
+            decoder = BitmapRegionDecoder.newInstance(is, false);
+          }
+          if (decoder != null) {
+            bitmapRegion = decoder.decodeRegion(regionRect, regionOptions);
+          } else {
+            Log.i("BitmapRegionDecoder.newInstance returned null");
+          }
         } catch (Throwable t) {
           Log.i("BitmapRegionDecoder failed", t);
         }
@@ -241,8 +255,12 @@ public class PhotoGenerationInfo extends GenerationInfo {
     int bitmapBottom = source.getHeight();
     int rotation = needRotate ? this.rotation : 0;
     boolean drawingComplete = false;
+    boolean needMirrorHorizontal = false;
+    boolean needMirrorVertical = false;
 
-    if (cropState != null) {
+    if (cropState != null && !cropState.isEmpty()) {
+      needMirrorHorizontal = cropState.needMirrorHorizontally();
+      needMirrorVertical = cropState.needMirrorVertically();
       rotation = MathUtils.modulo(rotation + cropState.getRotateBy(), 360);
       if (regionDecoderState == REGION_ERROR) {
         Log.i("Region reader failed, cropping in-memory");
@@ -258,7 +276,7 @@ public class PhotoGenerationInfo extends GenerationInfo {
       }
 
       final float preRotate = cropState.getDegreesAroundCenter();
-      if (preRotate != 0f) {
+      if (preRotate != 0f || (rotation != 0 && (needMirrorHorizontal || needMirrorVertical))) {
         float w = source.getWidth();
         float h = source.getHeight();
 
@@ -271,22 +289,32 @@ public class PhotoGenerationInfo extends GenerationInfo {
 
         float W = w * cos + h * sin;
         float H = w * sin + h * cos;
+        final float scale = Math.max(W / w, H / h);
 
         Bitmap rotated = Bitmap.createBitmap(source.getWidth(), source.getHeight(), Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(rotated);
-        final float scale = Math.max(W / w, H / h);
-        c.rotate(preRotate, w / 2, h / 2);
+        if (preRotate != 0f) {
+          c.rotate(preRotate, w / 2, h / 2);
+        }
         if (scale != 1f) {
           c.scale(scale, scale, w / 2, h / 2);
         }
+        if (needMirrorHorizontal || needMirrorVertical) {
+          c.save();
+          c.scale(needMirrorHorizontal ? -1 : 1, needMirrorVertical ? -1 : 1, w / 2f, h / 2f);
+        }
         c.drawBitmap(source, 0, 0, null);
+        if (needMirrorHorizontal || needMirrorVertical) {
+          c.restore();
+          needMirrorHorizontal = false;
+          needMirrorVertical = false;
+        }
         if (paintState != null) {
           drawPaintState(c, source.getWidth(), source.getHeight());
           drawingComplete = true;
         }
         source.recycle();
         source = rotated;
-        U.recycle(c);
       }
     }
 
@@ -299,14 +327,32 @@ public class PhotoGenerationInfo extends GenerationInfo {
       matrix = null;
     }
 
-    if (paintState != null && !drawingComplete) {
+    if (paintState != null && !paintState.isEmpty() && !drawingComplete) {
       Bitmap altered = Bitmap.createBitmap(source.getWidth(), source.getHeight(), Bitmap.Config.ARGB_8888);
       Canvas c = new Canvas(altered);
+      if (needMirrorHorizontal || needMirrorVertical) {
+        c.save();
+        c.scale(needMirrorHorizontal ? -1 : 1, needMirrorVertical ? -1 : 1, source.getWidth() / 2f, source.getHeight() / 2f);
+      }
       c.drawBitmap(source, 0, 0, null);
+      if (needMirrorHorizontal || needMirrorVertical) {
+        c.restore();
+        needMirrorHorizontal = false;
+        needMirrorVertical = false;
+      }
       drawPaintState(c, source.getWidth(), source.getHeight());
       source.recycle();
       source = altered;
       U.recycle(c);
+    }
+
+    if (needMirrorHorizontal || needMirrorVertical) {
+      Matrix flipMatrix = new Matrix();
+      flipMatrix.preScale(needMirrorHorizontal ? -1.0f : 1.0f, needMirrorVertical ? -1.0f : 1.0f);
+
+      Bitmap flipped = Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), flipMatrix, false);
+      source.recycle();
+      source = flipped;
     }
 
     return Bitmap.createBitmap(source, bitmapLeft, bitmapTop, bitmapRight - bitmapLeft, bitmapBottom - bitmapTop, matrix, false);
@@ -398,16 +444,18 @@ public class PhotoGenerationInfo extends GenerationInfo {
     b.append(',');
     CropState cropState = file.getCropState();
     if (cropState != null && !cropState.isEmpty()) {
-      b.append(cropState.toString());
+      b.append(CropStateParser.toParsableString(cropState));
     }
 
     PaintState paintState = file.getPaintState();
     if (paintState != null && !paintState.isEmpty()) {
       b.append(",p:");
-      b.append(paintState.toString());
+      b.append(paintState.saveAndSerializeToString());
     }
 
-    if (lastModifiedTime != 0) {
+    if (BuildConfig.DEBUG) {
+      b.append(",").append(Math.round(Math.random() * Integer.MAX_VALUE));
+    } else if (lastModifiedTime != 0) {
       b.append(",").append(lastModifiedTime);
     }
 

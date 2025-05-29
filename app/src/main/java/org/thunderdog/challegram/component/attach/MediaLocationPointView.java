@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@ import android.os.SystemClock;
 import android.view.View;
 
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
@@ -95,18 +96,18 @@ public class MediaLocationPointView extends View implements FactorAnimator.Targe
     float placeFactor = isPlace.getFloatValue();
     float activeFactor = Math.max(gpsFactor, customFactor);
 
-    int color = Theme.getColor(R.id.theme_color_file);
+    int color = Theme.getColor(ColorId.file);
 
     c.drawCircle(cx, cy, Screen.dp(20f), Paints.fillingPaint(color));
     progressComponent.draw(c);
     if (activeFactor > 0f && placeFactor < 1f) {
-      Paint paint = Paints.getPorterDuffPaint(0xffffffff);
+      Paint paint = Paints.whitePorterDuffPaint();
       paint.setAlpha((int) (255f * activeFactor * (1f - placeFactor)));
       Drawables.draw(c, locationIcon, cx - locationIcon.getMinimumWidth() / 2, cy - locationIcon.getMinimumHeight() / 2, paint);
       paint.setAlpha(255);
     }
     if (placeFactor > 0f) {
-      Paint paint = Paints.getPorterDuffPaint(0xffffffff);
+      Paint paint = Paints.whitePorterDuffPaint();
       paint.setAlpha((int) (255f * placeFactor));
       c.save();
       c.scale(.7f, .7f, cx, cy);

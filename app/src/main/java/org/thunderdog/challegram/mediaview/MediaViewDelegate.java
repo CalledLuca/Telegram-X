@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,6 @@ package org.thunderdog.challegram.mediaview;
 import org.thunderdog.challegram.mediaview.data.MediaItem;
 
 public interface MediaViewDelegate {
-  MediaViewThumbLocation getTargetLocation (int index, MediaItem item); // null if item is not presented on screen
+  MediaViewThumbLocation getTargetLocation (int indexInStack, MediaItem item); // null if item is not presented on screen
   void setMediaItemVisible (int index, MediaItem item, boolean isVisible); // called when opening and closing photo viewer
 }

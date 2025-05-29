@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.tool.UI;
 
 import java.util.ArrayList;
@@ -28,7 +28,7 @@ import java.util.List;
 
 import me.vkryl.core.lambda.Destroyable;
 
-public abstract class ListManager<T> implements Destroyable, Iterable<T> {
+public abstract class ListManager<T> implements Destroyable, Iterable<T>, TdlibProvider {
   private static final int STATE_INITIALIZING = 0;
   private static final int STATE_INITIALIZED = 1;
   private static final int STATE_FULL = 2;
@@ -69,6 +69,12 @@ public abstract class ListManager<T> implements Destroyable, Iterable<T> {
       this.addChangeListener(listener);
     }
     subscribeToUpdates();
+  }
+
+  @NonNull
+  @Override
+  public Tdlib tdlib () {
+    return tdlib;
   }
 
   protected void loadTotalCount (@Nullable Runnable after) {

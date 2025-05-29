@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,9 +16,10 @@ package org.thunderdog.challegram.navigation;
 
 import android.content.Context;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 
-import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.unsorted.Size;
 
 import me.vkryl.android.widget.FrameLayoutFix;
@@ -35,14 +36,19 @@ public class ViewPagerHeaderView extends SimpleHeaderView implements StretchyHea
 
     topView = new ViewPagerTopView(context);
     topView.setLayoutParams(params);
-    topView.setSelectionColorId(R.id.theme_color_headerTabActive);
-    topView.setTextFromToColorId(R.id.theme_color_headerTabInactiveText, R.id.theme_color_headerTabActiveText);
+    topView.setSelectionColorId(ColorId.headerTabActive);
+    topView.setTextFromToColorId(ColorId.headerTabInactiveText, ColorId.headerTabActiveText);
     addView(topView);
   }
 
   @Override
   public void checkRtl () {
     topView.checkRtl();
+  }
+
+  @Override
+  public View getView () {
+    return this;
   }
 
   @Override

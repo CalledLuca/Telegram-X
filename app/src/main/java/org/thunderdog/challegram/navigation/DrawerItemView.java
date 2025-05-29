@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,19 +24,21 @@ import android.view.ViewGroup;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 
-import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.AvatarPlaceholder;
-import org.thunderdog.challegram.loader.ImageFile;
-import org.thunderdog.challegram.loader.ImageReceiver;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
+import org.thunderdog.challegram.telegram.TdlibAccount;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
 import org.thunderdog.challegram.tool.Screen;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
 import org.thunderdog.challegram.util.text.Counter;
 import org.thunderdog.challegram.util.text.Text;
+import org.thunderdog.challegram.util.text.TextColorSet;
+import org.thunderdog.challegram.util.text.TextColorSetOverride;
 import org.thunderdog.challegram.util.text.TextColorSets;
 import org.thunderdog.challegram.widget.AttachDelegate;
 import org.thunderdog.challegram.widget.BaseView;
@@ -59,16 +61,18 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
 
   private float checkFactor;
   private BoolAnimator checkAnimator;
-  private ImageReceiver receiver;
+  private AvatarReceiver receiver;
+  private final EmojiStatusHelper emojiStatusHelper;
   private Counter counter;
 
   public DrawerItemView (Context context, Tdlib tdlib) {
     super(context, tdlib);
+    emojiStatusHelper = new EmojiStatusHelper(tdlib, this, null);
     TGLegacyManager.instance().addEmojiListener(this);
   }
 
   @Override
-  public void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     invalidate();
   }
 
@@ -150,6 +154,9 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     if (counter != null) {
       availWidth -= counter.getScaledWidth(Screen.dp(24f) + Screen.dp(8f));
     }
+    if (emojiStatusHelper.needDrawEmojiStatus()) {
+      availWidth -= emojiStatusHelper.getWidth() + Screen.dp(12);
+    }
     if (availWidth <= 0) {
       trimmedText = null;
       return;
@@ -161,10 +168,9 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
   }
 
   private static final float AVATAR_SIZE = 40f;
-  private static final float AVATAR_LETTERS_SIZE = 16f;
 
   public void addAvatar () {
-    receiver = new ImageReceiver(this, Screen.dp(AVATAR_SIZE) / 2);
+    receiver = new AvatarReceiver(this);
     layoutReceiver();
     counter = new Counter.Builder().callback(this).build();
   }
@@ -183,26 +189,33 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     }
   }
 
-  private AvatarPlaceholder avatarPlaceholder;
-  private ImageFile imageFile;
-
-  public void setAvatar (AvatarPlaceholder.Metadata avatarPlaceholderMetadata, @Nullable ImageFile imageFile) {
-    if (avatarPlaceholderMetadata != null) {
-      avatarPlaceholder = new AvatarPlaceholder(AVATAR_SIZE / 2f, avatarPlaceholderMetadata, null);
-    } else {
-      avatarPlaceholder = null;
-    }
-    this.receiver.requestFile(this.imageFile = imageFile);
-    invalidate();
+  public void setAvatar (Tdlib tdlib, long chatId) {
+    this.receiver.requestChat(tdlib, chatId, AvatarReceiver.Options.NONE);
   }
 
-  public void setError (boolean error, int errorIcon, boolean animated) {
-    if (errorIcon != 0) {
-      setErrorIcon(errorIcon, animated);
-    } else if (error) {
+  public void setEmojiStatus (TdlibAccount account) {
+    TextColorSet colorSet = new TextColorSetOverride(TextColorSets.Regular.NORMAL) {
+      @Override
+      public long mediaTextComplexColor () {
+        return Theme.newComplexColor(true, ColorId.iconActive);
+      }
+    };
+    emojiStatusHelper.setSharedUsageId("account_" + account.id);
+    emojiStatusHelper.updateEmoji(account, colorSet);
+    trimText(true);
+  }
+
+  public void setAvatar (TdlibAccount account) {
+    receiver.requestAccount(tdlib, account.id, AvatarReceiver.Options.NONE);
+  }
+
+  public void setClickBait (boolean isError, @DrawableRes int iconRes, boolean animated) {
+    if (iconRes != 0) {
+      setClickBaitIcon(iconRes, isError, animated);
+    } else if (isError) {
       setUnreadCount(Tdlib.CHAT_FAILED, counter != null && counter.isMuted(), animated);
     } else if (iconDrawableRes != 0) {
-      setErrorIcon(0, animated);
+      setClickBaitIcon(0, false, animated);
     } else {
       setUnreadCount(0, false, animated);
     }
@@ -210,7 +223,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
 
   private @DrawableRes int iconDrawableRes;
 
-  public void setErrorIcon (@DrawableRes int drawableRes, boolean animated) {
+  public void setClickBaitIcon (@DrawableRes int drawableRes, boolean isError, boolean animated) {
     if (this.iconDrawableRes != drawableRes) {
       this.iconDrawableRes = drawableRes;
       if (drawableRes != 0) {
@@ -223,7 +236,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
           }
           invalidate();
         }).build();
-        this.counter.setCount(Tdlib.CHAT_FAILED, animated);
+        this.counter.setCount(isError ? Tdlib.CHAT_FAILED : Tdlib.CHAT_MARKED_AS_UNREAD, animated);
       } else if (animated && counter != null) {
         this.counter.hide(true);
       } else {
@@ -252,6 +265,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     if (receiver != null) {
       receiver.attach();
     }
+    emojiStatusHelper.attach();
   }
 
   @Override
@@ -259,6 +273,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     if (receiver != null) {
       receiver.detach();
     }
+    emojiStatusHelper.detach();
   }
 
   @Override
@@ -266,6 +281,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     if (receiver != null) {
       receiver.destroy();
     }
+    emojiStatusHelper.performDestroy();
     TGLegacyManager.instance().removeEmojiListener(this);
   }
 
@@ -299,17 +315,13 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
     if (trimmedText != null) {
       trimmedText.draw(c, textLeft, textLeft + trimmedText.getWidth(), 0, Screen.dp(17f));
     }
-
+    emojiStatusHelper.draw(c, textLeft + (trimmedText != null ? trimmedText.getWidth() + Screen.dp(6) : 0), Screen.dp(17f));
     if (receiver != null) {
-      int radius = Screen.dp(AVATAR_SIZE) / 2;
-      if (imageFile != null) {
-        if (receiver.needPlaceholder()) {
-          receiver.drawPlaceholderRounded(c, radius);
-        }
-        receiver.draw(c);
-      } else if (avatarPlaceholder != null) {
-        avatarPlaceholder.draw(c, receiver.centerX(), receiver.centerY());
+      layoutReceiver();
+      if (receiver.needPlaceholder()) {
+        receiver.drawPlaceholder(c);
       }
+      receiver.draw(c);
       if (checkFactor > 0f) {
         final double radians = Math.toRadians(rtl ? 315f : 45f);
 
@@ -327,7 +339,7 @@ public class DrawerItemView extends BaseView implements FactorAnimator.Target, A
 
     }
     if (counter != null) {
-      counter.draw(c, rtl ? Screen.dp(24f) : viewWidth - Screen.dp(24f), getMeasuredHeight() / 2f, Lang.rtl() ? Gravity.LEFT : Gravity.RIGHT, 1f, this, R.id.theme_color_badgeFailedText);
+      counter.draw(c, rtl ? Screen.dp(24f) : viewWidth - Screen.dp(24f), getMeasuredHeight() / 2f, Lang.rtl() ? Gravity.LEFT : Gravity.RIGHT, 1f, this, ColorId.badgeFailedText);
     }
   }
 }

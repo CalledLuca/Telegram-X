@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,8 +22,8 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.drinkless.td.libcore.telegram.Client;
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.Client;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.component.user.SimpleUsersAdapter;
 import org.thunderdog.challegram.core.Background;
@@ -66,32 +66,22 @@ public class MediaBottomContactsController extends MediaBottomBaseController<Voi
 
   @Override
   public void fillMenuItems (int id, HeaderView header, LinearLayout menu) {
-    switch (id) {
-      case R.id.menu_search: {
-        header.addSearchButton(menu, this);
-        break;
-      }
-      case R.id.menu_clear: {
-        header.addClearButton(menu, this);
-        break;
-      }
+    if (id == R.id.menu_search) {
+      header.addSearchButton(menu, this);
+    } else if (id == R.id.menu_clear) {
+      header.addClearButton(menu, this);
     }
   }
 
   @Override
   public void onMenuItemPressed (int id, View view) {
-    switch (id) {
-      case R.id.menu_btn_search: {
-        if (users != null && !users.isEmpty()) {
-          mediaLayout.getHeaderView().openSearchMode();
-          headerView = mediaLayout.getHeaderView();
-        }
-        break;
+    if (id == R.id.menu_btn_search) {
+      if (users != null && !users.isEmpty()) {
+        mediaLayout.getHeaderView().openSearchMode();
+        headerView = mediaLayout.getHeaderView();
       }
-      case R.id.menu_btn_clear: {
-        clearSearchInput();
-        break;
-      }
+    } else if (id == R.id.menu_btn_clear) {
+      clearSearchInput();
     }
   }
 
@@ -112,7 +102,7 @@ public class MediaBottomContactsController extends MediaBottomBaseController<Voi
 
   protected void displayContacts (final ArrayList<TGUser> users) {
     if (users.isEmpty()) {
-      showError(this.users == null ? R.string.NoContacts : R.string.NothingFound, this.users == null);
+      showError(this.users == null ? R.string.NoContacts : R.string.NothingFound, 0, null, this.users == null);
       adapter.setUsers(null);
     } else if (this.users == null) {
       hideProgress();
@@ -137,7 +127,7 @@ public class MediaBottomContactsController extends MediaBottomBaseController<Voi
   }
 
   @Override
-  protected void onMultiSendPress (@NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
+  protected void onMultiSendPress (View view, @NonNull TdApi.MessageSendOptions options, boolean disableMarkdown) {
     mediaLayout.sendContacts(adapter.getSelectedUsers(), options);
   }
 
@@ -150,7 +140,7 @@ public class MediaBottomContactsController extends MediaBottomBaseController<Voi
   public void onResult (TdApi.Object object) {
     switch (object.getConstructor()) {
       case TdApi.Error.CONSTRUCTOR: {
-        dispatchError(TD.toErrorString(object), true);
+        dispatchError(TD.toErrorString(object), null, null, true);
         break;
       }
       case TdApi.Users.CONSTRUCTOR: {
@@ -166,7 +156,7 @@ public class MediaBottomContactsController extends MediaBottomBaseController<Voi
         break;
       }
       default: {
-        dispatchError("Unknown constructor: " + object.getConstructor(), true);
+        dispatchError("Unknown constructor: " + object.getConstructor(), null, null, true);
         break;
       }
     }

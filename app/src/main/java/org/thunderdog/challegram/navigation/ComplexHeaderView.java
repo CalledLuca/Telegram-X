@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,9 +18,9 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
+import android.text.style.ClickableSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,17 +29,18 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
+import org.thunderdog.challegram.BaseActivity;
 import org.thunderdog.challegram.R;
 import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.component.MediaCollectorDelegate;
 import org.thunderdog.challegram.component.chat.ChatHeaderView;
+import org.thunderdog.challegram.component.sticker.StickerPreviewView;
+import org.thunderdog.challegram.component.sticker.StickerSmallView;
+import org.thunderdog.challegram.component.sticker.TGStickerObj;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.data.AvatarPlaceholder;
 import org.thunderdog.challegram.data.TD;
-import org.thunderdog.challegram.loader.DoubleImageReceiver;
-import org.thunderdog.challegram.loader.ImageFile;
-import org.thunderdog.challegram.loader.Receiver;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.mediaview.MediaViewController;
 import org.thunderdog.challegram.mediaview.MediaViewDelegate;
 import org.thunderdog.challegram.mediaview.MediaViewThumbLocation;
@@ -48,6 +49,7 @@ import org.thunderdog.challegram.mediaview.data.MediaStack;
 import org.thunderdog.challegram.telegram.TGLegacyManager;
 import org.thunderdog.challegram.telegram.Tdlib;
 import org.thunderdog.challegram.telegram.TdlibStatusManager;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
 import org.thunderdog.challegram.tool.DrawAlgorithms;
 import org.thunderdog.challegram.tool.Drawables;
@@ -59,23 +61,31 @@ import org.thunderdog.challegram.tool.UI;
 import org.thunderdog.challegram.tool.Views;
 import org.thunderdog.challegram.ui.SimpleMediaViewController;
 import org.thunderdog.challegram.unsorted.Size;
+import org.thunderdog.challegram.util.EmojiStatusHelper;
+import org.thunderdog.challegram.util.OptionDelegate;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.util.text.TextColorSet;
 import org.thunderdog.challegram.util.text.TextEntity;
 import org.thunderdog.challegram.widget.BaseView;
+import org.thunderdog.challegram.widget.EmojiStatusInfoView;
+import org.thunderdog.challegram.widget.PopupLayout;
+
+import java.util.ArrayList;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.ScrimUtil;
 import me.vkryl.android.ViewUtils;
 import me.vkryl.android.animator.BoolAnimator;
 import me.vkryl.android.widget.FrameLayoutFix;
+import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.ColorUtils;
 import me.vkryl.core.MathUtils;
 import me.vkryl.core.StringUtils;
+import me.vkryl.core.lambda.CancellableRunnable;
 import me.vkryl.core.lambda.Destroyable;
-import me.vkryl.core.BitwiseUtils;
+import me.vkryl.core.lambda.Future;
 
-public class ComplexHeaderView extends BaseView implements RtlCheckListener, StretchyHeaderView, TextChangeDelegate, Destroyable, ColorSwitchPreparator, MediaCollectorDelegate, BaseView.CustomControllerProvider, TdlibStatusManager.HelperTarget, TGLegacyManager.EmojiLoadListener, HeaderView.OffsetChangeListener {
+public class ComplexHeaderView extends BaseView implements RtlCheckListener, StickerPreviewView.PreviewCallback, StickerPreviewView.MenuStickerPreviewCallback, StretchyHeaderView, TextChangeDelegate, Destroyable, ColorSwitchPreparator, MediaCollectorDelegate, BaseView.CustomControllerProvider, TdlibStatusManager.HelperTarget, TGLegacyManager.EmojiLoadListener, HeaderView.OffsetChangeListener {
   private static final int FLAG_SHOW_LOCK = 1;
   private static final int FLAG_SHOW_MUTE = 1 << 1;
   private static final int FLAG_SHOW_VERIFY = 1 << 2;
@@ -91,27 +101,25 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   private static final int FLAG_NO_EXPAND = 1 << 18;
   private static final int FLAG_SHOW_SCAM = 1 << 19;
   private static final int FLAG_SHOW_FAKE = 1 << 20;
+  private static final int FLAG_ALLOW_TITLE_CLICK = 1 << 21;
 
   protected float scaleFactor;
 
-  private AvatarPlaceholder avatarPlaceholder;
-  private Drawable avatarPlaceholderDrawable;
-  private ImageFile avatar, avatarFull;
-  private final DoubleImageReceiver avatarReceiver;
+  private @NonNull final AvatarReceiver receiver;
 
-  private @Nullable TdApi.ProfilePhoto previewProfilePhoto;
-  private @Nullable TdApi.ChatPhotoInfo previewChatPhoto;
-
+  private final EmojiStatusHelper emojiStatusHelper;
   private String title, subtitle, expandedSubtitle;
   private TextEntity[] subtitleEntities;
   private @Nullable Text trimmedTitle, trimmedTitleExpanded, trimmedSubtitle, trimmedSubtitleExpanded;
+  private RectF trimmedTitleClickRect = new RectF();
+  private RectF emojiStatusClickRect = new RectF();
 
   private float avatarAllowanceFactor, avatarCollapseFactor;
   private BoolAnimator avatarCollapseAnimator;
 
   private int flags;
 
-  // private ViewController parent;
+  private final ViewController parent;
 
   private Drawable arrowDrawable;
   private Drawable topShadow, bottomShadow;
@@ -119,13 +127,52 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   public ComplexHeaderView (Context context, @NonNull Tdlib tdlib, @Nullable ViewController<?> parent) {
     super(context, tdlib);
     setLayoutParams(FrameLayoutFix.newParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-    // this.parent = parent;
+    this.parent = parent;
     this.status = new TdlibStatusManager.Helper(UI.getContext(context), tdlib, this, parent);
     setUseDefaultClickListener(false);
-    avatarReceiver = new DoubleImageReceiver(this, 1);
-    avatarReceiver.setRadius(0);
+    this.receiver = new AvatarReceiver(this);
+    this.receiver.setDisplayFullSizeOnlyInFullScreen(true);
+    this.emojiStatusHelper = new EmojiStatusHelper(tdlib, this, null);
     setCustomControllerProvider(this);
     TGLegacyManager.instance().addEmojiListener(this);
+    setOnEmojiStatusClickListener(null);
+  }
+
+  public void setIgnoreDrawEmojiStatus (boolean ignoreDrawEmojiStatus) {
+    emojiStatusHelper.setIgnoreDraw(ignoreDrawEmojiStatus);
+    invalidate();
+  }
+
+  public void setOnEmojiStatusClickListener (View.OnClickListener clickListener) {
+    if (clickListener == null) {
+      emojiStatusHelper.setClickListener(v -> {
+        if (!isCollapsed() && BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TITLE_CLICK)) {
+          onTitleClick();
+        }
+      });
+      return;
+    }
+    emojiStatusHelper.setClickListener(clickListener);
+  }
+
+  public int getEmojiStatusLastDrawX () {
+    return emojiStatusHelper.getLastDrawX();
+  }
+
+  public int getEmojiStatusLastDrawY () {
+    return emojiStatusHelper.getLastDrawY();
+  }
+
+  @Override
+  protected void onAttachedToWindow () {
+    super.onAttachedToWindow();
+    emojiStatusHelper.attach();
+  }
+
+  @Override
+  protected void onDetachedFromWindow () {
+    super.onDetachedFromWindow();
+    emojiStatusHelper.detach();
   }
 
   protected final boolean hasSubtitle () {
@@ -213,7 +260,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   }
 
   @Override
-  public void onEmojiPartLoaded () {
+  public void onEmojiUpdated (boolean isPackSwitch) {
     invalidate();
   }
 
@@ -259,8 +306,8 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
     if (status != null) {
       status.detachFromAnyChat();
     }
-    if (avatarReceiver != null) {
-      avatarReceiver.clear();
+    if (receiver != null) {
+      receiver.clear();
     }
   }
 
@@ -292,7 +339,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
     if (this.scaleFactor != scaleFactor) {
       int oldTextMaxWidth = getCheckTextMaxWidth();
       this.scaleFactor = scaleFactor;
-      if (!BitwiseUtils.getFlag(flags, FLAG_NO_EXPAND)) {
+      if (!BitwiseUtils.hasFlag(flags, FLAG_NO_EXPAND)) {
         if (!byScroll) {
           if (wouldCollapse(fromFactor) == wouldCollapse(toScaleFactor)) {
             setAvatarAllowanceFactor(1f);
@@ -393,57 +440,6 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
     return (flags & FLAG_SHOW_MUTE) != 0;
   }
 
-  public void setAvatar (@Nullable TdApi.ProfilePhoto profilePhoto) {
-    this.previewProfilePhoto = profilePhoto;
-    this.previewChatPhoto = null;
-    this.avatarPlaceholder = null;
-
-    if (profilePhoto != null) {
-      this.avatar = TD.getAvatar(tdlib, profilePhoto);
-      this.avatarFull = new ImageFile(tdlib, profilePhoto.big);
-    } else {
-      this.avatar = null;
-      this.avatarFull = null;
-    }
-  }
-
-  public void setAvatar (@Nullable TdApi.ChatPhotoInfo chatPhoto) {
-    this.previewChatPhoto = chatPhoto;
-    this.previewProfilePhoto = null;
-    this.avatarPlaceholder = null;
-
-    if (chatPhoto != null) {
-      this.avatar = TD.getAvatar(tdlib, chatPhoto);
-      this.avatarFull = new ImageFile(tdlib, chatPhoto.big);
-    } else {
-      this.avatar = null;
-      this.avatarFull = null;
-    }
-  }
-
-  public void setAvatar (ImageFile avatar) {
-    this.avatar = avatar;
-    this.previewProfilePhoto = null;
-    this.previewChatPhoto = null;
-    this.avatarPlaceholder = null;
-  }
-
-  public ImageFile getAvatar () {
-    return avatar;
-  }
-
-  public void setAvatarPlaceholder (AvatarPlaceholder avatarPlaceholder) {
-    this.avatar = null;
-    this.previewProfilePhoto = null;
-    this.previewChatPhoto = null;
-    this.avatarPlaceholder = avatarPlaceholder;
-    this.avatarPlaceholderDrawable = avatarPlaceholder != null && avatarPlaceholder.metadata.extraDrawableRes != 0 ? getSparseDrawable(avatarPlaceholder.metadata.extraDrawableRes, 0) : null;
-  }
-
-  public void updateAvatar () {
-    avatarReceiver.requestFile(avatar, avatarFull);
-  }
-
   public void setText (@StringRes int titleResId, @StringRes int subtitleResId) {
     setText(Lang.getString(titleResId), Lang.getString(subtitleResId));
   }
@@ -453,6 +449,13 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
     this.subtitle = StringUtils.isEmpty(subtext) ? null : subtext.toString();
     TdApi.TextEntity[] entities = this.subtitle != null ? TD.toEntities(subtext, false) : null;
     this.subtitleEntities = entities != null ? TextEntity.valueOf(tdlib, this.subtitle, entities, null) : null;
+    buildLayout();
+    invalidate();
+  }
+
+  public void setEmojiStatus (TdApi.User user) {
+    emojiStatusHelper.updateEmoji(tdlib, user, getTitleColorSet(), R.drawable.baseline_premium_star_16, 18);
+    emojiStatusHelper.invalidateEmojiStatusReceiver(trimmedTitleExpanded, null);
     buildLayout();
     invalidate();
   }
@@ -477,7 +480,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   private int innerLeftMargin, innerRightMargin, innerRightMarginStart = -1;
 
   private int getInnerRightMargin () {
-    return !BitwiseUtils.getFlag(flags, FLAG_HAD_FULL_EXPAND) && innerRightMarginStart != -1 ? innerRightMarginStart : innerRightMargin;
+    return !BitwiseUtils.hasFlag(flags, FLAG_HAD_FULL_EXPAND) && innerRightMarginStart != -1 ? innerRightMarginStart : innerRightMargin;
   }
 
   public void setInnerRightMarginStart (int rightMarginStart) {
@@ -545,12 +548,13 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
     float expandFactor = getAvatarExpandFactor();
     int viewCenterX = getMeasuredWidth() / 2;
     int viewCenterY = currentHeaderOffset + (calculateHeaderHeight() - currentHeaderOffset) / 2;
-    avatarReceiver.setRadius(Math.round(baseRadius * (1f - expandFactor)));
+    // avatarReceiver.setRadius(Math.round(baseRadius * (1f - expandFactor)));
+    receiver.forceFullScreen(expandFactor != 0f, expandFactor);
 
     baseRadius += (viewCenterX - baseRadius) * expandFactor;
     baseCenterX += (viewCenterX - baseCenterX) * expandFactor;
     baseCenterY += (viewCenterY - baseCenterY) * expandFactor;
-    avatarReceiver.setBounds(Math.round(baseCenterX - baseRadius), Math.round(baseCenterY - baseRadius), Math.round(baseCenterX + baseRadius), Math.round(baseCenterY + baseRadius));
+    receiver.setBounds(Math.round(baseCenterX - baseRadius), Math.round(baseCenterY - baseRadius), Math.round(baseCenterX + baseRadius), Math.round(baseCenterY + baseRadius));
   }
 
   // Private utils
@@ -582,7 +586,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   private void buildLayout () {
     updateTopShadow();
     updateBottomShadow();
-    updateAvatar();
+    layoutReceiver();
     layoutTexts();
     invalidate();
   }
@@ -620,7 +624,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   }
 
   private int getExpandedMaxTextWidth () {
-    return (int) ((float) (getMeasuredWidth() - Screen.dp(11f) * 2) / avatarTextScale) - (BitwiseUtils.getFlag(flags, FLAG_SHOW_VERIFY) ? Screen.dp(20f) : 0);
+    return (int) ((float) (getMeasuredWidth() - Screen.dp(11f) * 2) / avatarTextScale) - (BitwiseUtils.hasFlag(flags, FLAG_SHOW_VERIFY) ? Screen.dp(20f) : 0);
   }
 
   /*private int calculateTextMaxWidth (boolean allowScale) {
@@ -656,6 +660,10 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
         additionalTextEndPadding = getOutlinedWidth(Lang.getString(showFake ? R.string.FakeMark : R.string.ScamMark));
       } else {
         additionalTextEndPadding = 0;
+      }
+
+      if (emojiStatusHelper.needDrawEmojiStatus()) {
+        additionalTextEndPadding += emojiStatusHelper.getWidth();
       }
 
       avatarTextScale = DEFAULT_AVATAR_TEXT_SCALE;
@@ -694,9 +702,15 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
       trimmedSubtitle = trimmedSubtitleExpanded = null;
     } else {
       TextColorSet colorSet = this::getSubtitleColor;
-      trimmedSubtitle = new Text.Builder(subtitle, getCurrentScaledTextMaxWidth(), Paints.robotoStyleProvider(14), colorSet).singleLine().entities(subtitleEntities).build();
+      trimmedSubtitle = new Text.Builder(subtitle, getCurrentScaledTextMaxWidth(), Paints.robotoStyleProvider(14), colorSet)
+        .singleLine()
+        .entities(subtitleEntities, null)
+        .build();
       if (trimmedSubtitle.isEllipsized() || (expandedSubtitle != null && !expandedSubtitle.equals(subtitle))) {
-        trimmedSubtitleExpanded = new Text.Builder(expandedSubtitle != null ? expandedSubtitle : subtitle, getExpandedMaxTextWidth(), Paints.robotoStyleProvider(14), colorSet).singleLine().entities(expandedSubtitle != null ? null /*TODO*/ : subtitleEntities).build();
+        trimmedSubtitleExpanded = new Text.Builder(expandedSubtitle != null ? expandedSubtitle : subtitle, getExpandedMaxTextWidth(), Paints.robotoStyleProvider(14), colorSet)
+          .singleLine()
+          .entities(expandedSubtitle != null ? null /*TODO*/ : subtitleEntities, null)
+          .build();
       } else {
         trimmedSubtitleExpanded = null;
       }
@@ -704,7 +718,21 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   }
 
   private TextColorSet getTitleColorSet () {
-    return this::getTitleColor;
+    return new TextColorSet() {
+      @Override
+      public int defaultTextColor () {
+        return getTitleColor();
+      }
+
+      @Override
+      public long mediaTextComplexColor () {
+        if (getAvatarExpandFactor() == 1f) {
+          return Theme.newComplexColor(true, ColorId.white);
+        } else {
+          return Theme.newComplexColor(false, getTitleColor());
+        }
+      }
+    };
   }
 
   private int getTypingColor () {
@@ -749,7 +777,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   public void setMuteFadeFactor (float factor) {
     if (this.muteFadeFactor != factor) {
       this.muteFadeFactor = factor;
-      if (BitwiseUtils.getFlag(flags, FLAG_SHOW_MUTE) && !BitwiseUtils.getFlag(flags, FLAG_IGNORE_MUTE)) {
+      if (BitwiseUtils.hasFlag(flags, FLAG_SHOW_MUTE) && !BitwiseUtils.hasFlag(flags, FLAG_IGNORE_MUTE)) {
         invalidate();
       }
     }
@@ -768,7 +796,7 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   }
 
   public void setIgnoreMute (boolean ignoreMute) {
-    if (setFlags(BitwiseUtils.setFlag(flags, FLAG_IGNORE_MUTE, ignoreMute)) && BitwiseUtils.getFlag(flags, FLAG_SHOW_MUTE)) {
+    if (setFlags(BitwiseUtils.setFlag(flags, FLAG_IGNORE_MUTE, ignoreMute)) && BitwiseUtils.hasFlag(flags, FLAG_SHOW_MUTE)) {
       layoutTitle();
       invalidate();
     }
@@ -787,10 +815,10 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
 
   public MediaViewThumbLocation getThumbLocation () {
     MediaViewThumbLocation location = new MediaViewThumbLocation();
-    location.set(avatarReceiver.getLeft(), avatarReceiver.getTop(), avatarReceiver.getRight(), avatarReceiver.getBottom());
-    location.setClip(0, Math.max(-avatarReceiver.getTop(), 0), 0, Math.max(0, avatarReceiver.getBottom() - calculateHeaderHeight()));
-    int radius = avatarReceiver.getRadius();
-    location.setColorId(R.id.theme_color_headerBackground);
+    location.set(receiver.getLeft(), receiver.getTop(), receiver.getRight(), receiver.getBottom());
+    location.setClip(0, Math.max(-receiver.getTop(), 0), 0, Math.max(0, receiver.getBottom() - calculateHeaderHeight()));
+    float radius = receiver.getDisplayRadius();
+    location.setColorId(ColorId.headerBackground);
     location.setRoundings(radius, radius, radius, radius);
     return location;
   }
@@ -843,45 +871,22 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
       final float textScaleFactor = MathUtils.fromTo(1f + scaleFactor * .1f, avatarTextScale, avatarExpandFactor);
 
       layoutReceiver();
-      if (avatar != null) {
-        if (avatarReceiver.needPlaceholder()) {
-          avatarReceiver.drawPlaceholderRounded(c, avatarReceiver.getRadius(), Theme.headerPlaceholderColor());
-        }
-        avatarReceiver.draw(c, avatarFull != null ? avatarExpandFactor : 0f);
-        if (avatarExpandFactor > 0f) {
-          getTopShadow().setAlpha((int) (255f * .8f * avatarExpandFactor));
-          getTopShadow().draw(c);
+      if (receiver.needPlaceholder()) {
+        receiver.drawPlaceholderRounded(c, receiver.getDisplayRadius(), Theme.headerPlaceholderColor());
+      }
+      receiver.draw(c);
+      if (avatarExpandFactor > 0f && receiver.getRequestedPlaceholder() == null) {
+        getTopShadow().setAlpha((int) (255f * .8f * avatarExpandFactor));
+        getTopShadow().draw(c);
 
-          c.save();
-          int headerHeight = calculateHeaderHeight();
-          int shadowTop = headerHeight - getBottomShadowSize();
-          // c.clipRect(0, Math.max(shadowTop, getTopShadow().getBounds().bottom), getMeasuredWidth(), headerHeight);
-          c.translate(0, Math.max(shadowTop, getTopShadow().getBounds().bottom - Screen.dp(28f)));
-          getBottomShadow().setAlpha((int) (255f * .8f * avatarExpandFactor));
-          getBottomShadow().draw(c);
-          c.restore();
-        }
-      } else if (avatarPlaceholder != null) {
-        int cx = avatarReceiver.centerX();
-        int cy = avatarReceiver.centerY();
-        int fromColor = avatarPlaceholder.getColor();
-        int toColorId = Theme.avatarSmallToBig(avatarPlaceholder.metadata.colorId);
-        avatarReceiver.drawPlaceholderRounded(c, avatarReceiver.getRadius(), toColorId != 0 ? ColorUtils.fromToArgb(fromColor, Theme.getColor(toColorId), avatarExpandFactor) : fromColor);
-
-        float baseRadius = Screen.dp(getBaseAvatarRadiusDp());
-        float placeholderScale = avatarReceiver.getWidth() / 2f / baseRadius;
         c.save();
-        c.scale(placeholderScale, placeholderScale, cx, cy);
-        avatarPlaceholder.draw(c, cx, cy, 1f - avatarExpandFactor, avatarReceiver.getWidth() / 2, false);
+        int headerHeight = calculateHeaderHeight();
+        int shadowTop = headerHeight - getBottomShadowSize();
+        // c.clipRect(0, Math.max(shadowTop, getTopShadow().getBounds().bottom), getMeasuredWidth(), headerHeight);
+        c.translate(0, Math.max(shadowTop, getTopShadow().getBounds().bottom - Screen.dp(28f)));
+        getBottomShadow().setAlpha((int) (255f * .8f * avatarExpandFactor));
+        getBottomShadow().draw(c);
         c.restore();
-
-        if (avatarPlaceholderDrawable != null && avatarExpandFactor > 0f) {
-          placeholderScale = (avatarReceiver.getWidth() / 2f / ((float) getMeasuredWidth() / 2f));
-          c.save();
-          c.scale(placeholderScale, placeholderScale, cx, cy);
-          Drawables.draw(c, avatarPlaceholderDrawable, cx - avatarPlaceholderDrawable.getMinimumWidth() / 2, cy - avatarPlaceholderDrawable.getMinimumHeight() / 2, Paints.getPorterDuffPaint(ColorUtils.alphaColor(avatarExpandFactor * .3f, Color.WHITE)));
-          c.restore();
-        }
       }
 
       float baseTextLeft = innerLeftMargin + Screen.dp(4f) + Screen.dp(getBaseAvatarRadiusDp()) * 2 + Screen.dp(9f);
@@ -919,11 +924,22 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
             trimmedTitle.draw(c, 0, 0, null, 1f - avatarExpandFactor);
           }
           trimmedTitleExpanded.draw(c, 0, 0, null, avatarExpandFactor);
+          trimmedTitleClickRect.set(0, 0, trimmedTitleExpanded.getWidth(), trimmedTitleExpanded.getHeight());
         } else {
           trimmedTitle.draw(c, 0, 0, null, 1f);
+          trimmedTitleClickRect.set(0, 0, trimmedTitle.getWidth(), trimmedTitle.getHeight());
         }
 
-        float baseIconLeft = trimmedTitle.getWidth() + (showLock ? Screen.dp(16f) : 0);
+        trimmedTitleClickRect.left *= textScaleFactor;
+        trimmedTitleClickRect.top *= textScaleFactor;
+        trimmedTitleClickRect.right *= textScaleFactor;
+        trimmedTitleClickRect.bottom *= textScaleFactor;
+        trimmedTitleClickRect.offset(baseTextLeft, baseTitleTop);
+        trimmedTitleClickRect.inset(-Screen.dp(8), -Screen.dp(8));
+
+        float baseIconLeft = trimmedTitle.getWidth()
+          + (showLock ? Screen.dp(16f) : 0)
+          + (emojiStatusHelper.needDrawEmojiStatus() ? emojiStatusHelper.getWidth() + Screen.dp(6) : 0);
         float toIconLeft = trimmedTitleExpanded != null ? trimmedTitleExpanded.getLastLineWidth() : baseIconLeft;
         float iconLeft = baseIconLeft + (toIconLeft - baseIconLeft) * avatarExpandFactor;
         float iconTop = trimmedTitleExpanded != null ? (trimmedTitleExpanded.getHeight() - trimmedTitle.getHeight()) * avatarExpandFactor : 0;
@@ -949,11 +965,31 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
         if (showMute) {
           float muteAlpha = (1f - this.muteFadeFactor) * iconAlpha;
           Drawable drawable = getSparseDrawable(R.drawable.deproko_baseline_notifications_off_24, 0);
-          Drawables.draw(c, drawable, baseIconLeft + iconsAdded, trimmedTitle.getHeight() / 2f - drawable.getMinimumHeight() / 2f, PorterDuffPaint.get(R.id.theme_color_headerText, muteAlpha * .4f));
+          Drawables.draw(c, drawable, baseIconLeft + iconsAdded, trimmedTitle.getHeight() / 2f - drawable.getMinimumHeight() / 2f, PorterDuffPaint.get(ColorId.headerText, muteAlpha * .4f));
           iconLeft += drawable.getMinimumWidth();
         }
 
         c.restore();
+        int statusDrawLeft = (int) (baseTextLeft + (trimmedTitle.getWidth() + Screen.dp(6)) * textScaleFactor) + (showLock ? Screen.dp(16f) : 0);
+        int statusDrawTop = (int) baseTitleTop;
+        if (trimmedTitleExpanded != null && avatarExpandFactor > 0f) {
+          if (avatarExpandFactor < 1f) {
+            emojiStatusHelper.draw(c, statusDrawLeft, statusDrawTop, 1f - avatarExpandFactor, textScaleFactor);
+          }
+          int statusDrawLeft2 = (int) (baseTextLeft + (trimmedTitleExpanded.getLastLineWidth() + Screen.dp(6)) * textScaleFactor) + (showLock ? Screen.dp(16f) : 0);
+          int statusDrawTop2 = (int) (baseTitleTop + (trimmedTitleExpanded.getNextLineHeight() - trimmedTitleExpanded.getLineHeight(trimmedTitleExpanded.getLineCount() - 1)) * textScaleFactor);
+          emojiStatusHelper.draw(c, statusDrawLeft2, statusDrawTop2, avatarExpandFactor, textScaleFactor);
+        } else {
+          emojiStatusHelper.draw(c, statusDrawLeft, statusDrawTop, 1f, textScaleFactor);
+        }
+
+        emojiStatusClickRect.set(
+          emojiStatusHelper.getLastDrawX(),
+          emojiStatusHelper.getLastDrawY(),
+          emojiStatusHelper.getLastDrawX() + emojiStatusHelper.getWidth() * textScaleFactor,
+          emojiStatusHelper.getLastDrawY() + emojiStatusHelper.getWidth() * textScaleFactor
+        );
+        emojiStatusClickRect.inset(-Screen.dp(8), -Screen.dp(8));
       }
 
       if (trimmedSubtitle != null) {
@@ -977,22 +1013,22 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
           float top = baseSubtitleTop - Screen.dp(13f) * textAlpha;
           int statusTextColor;
           float darkness = Theme.getDarkFactor();
-          int knownThemeColorId = 0;
+          int knownColorId = 0;
           if (darkness == 0f) {
             if (this instanceof ChatHeaderView) {
               statusTextColor = Theme.headerTextColor();
-              knownThemeColorId = R.id.theme_color_headerText;
+              knownColorId = ColorId.headerText;
             } else {
               statusTextColor = ColorUtils.color(0xff, (subtitleColor & 0x00ffffff));
             }
           } else if (darkness == 1f) {
             statusTextColor = Theme.chatListActionColor();
-            knownThemeColorId = R.id.theme_color_chatListAction;
+            knownColorId = ColorId.chatListAction;
           } else {
             statusTextColor = ColorUtils.fromToArgb(this instanceof ChatHeaderView ? Theme.headerTextColor() : ColorUtils.color(0xff, (subtitleColor & 0x00ffffff)), Theme.chatListActionColor(), darkness);
-            knownThemeColorId = R.id.theme_color_chatListAction;
+            knownColorId = ColorId.chatListAction;
           }
-          DrawAlgorithms.drawStatus(c, state, baseTextLeft, top + text.getLineHeight() / 2f, ColorUtils.alphaColor(statusVisibility, statusTextColor), this, statusVisibility == 1f ? knownThemeColorId : 0);
+          DrawAlgorithms.drawStatus(c, state, baseTextLeft, top + text.getLineHeight() / 2f, ColorUtils.alphaColor(statusVisibility, statusTextColor), this, statusVisibility == 1f ? knownColorId : 0);
           text.draw(c, (int) baseTextLeft, (int) top, null, statusVisibility);
         }
       }
@@ -1039,27 +1075,118 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   }
 
   private boolean checkCaught (float x, float y, boolean set) {
-    if ((avatar == null && (flags & FLAG_ALLOW_EMPTY_CLICK) == 0) || callback == null) {
+    if ((receiver.getRequestedPlaceholder() != null && (flags & FLAG_ALLOW_EMPTY_CLICK) == 0) || callback == null) {
       if (set) {
         flags &= ~FLAG_CAUGHT;
       }
       return false;
     }
 
-    boolean caught = y < calculateHeaderHeight() && avatarReceiver.isInsideReceiver(x, y);
+    boolean caught = y < calculateHeaderHeight() && receiver.isInsideReceiver(x, y);
     if (set) {
       this.flags = BitwiseUtils.setFlag(this.flags, FLAG_CAUGHT, caught);
     }
     return caught;
   }
 
+  private Future<ViewController.Options> titleOptionsBuilder;
+  private OptionDelegate titleOptionsDelegate;
+
+  public void setAllowTitleClick (long chatId) {
+    final ViewController.Options.Builder builder = new ViewController.Options.Builder();
+
+    builder.info(Lang.boldify(title));
+    builder.item(new ViewController.OptionItem(R.id.btn_copyText, Lang.getString(R.string.CopyDisplayName), ViewController.OptionColor.NORMAL, R.drawable.baseline_content_copy_24));
+
+    final String username = chatId != 0 ? tdlib.chatUsername(chatId) : null;
+    if (!StringUtils.isEmpty(username)) {
+      builder.item(new ViewController.OptionItem(R.id.btn_copyUsername, Lang.getString(R.string.CopyUsername), ViewController.OptionColor.NORMAL, R.drawable.baseline_content_copy_24));
+    }
+
+    setAllowTitleClick(builder::build, (itemView, id) -> {
+      if (id == R.id.btn_copyText) {
+        UI.copyText(title, R.string.CopiedDisplayName);
+      } else if (id == R.id.btn_copyUsername) {
+        UI.copyText('@' + username, R.string.CopiedUsername);
+      }
+      return true;
+    });
+  }
+
+  public void setAllowTitleClick (Future<ViewController.Options> titleOptionsBuilder, OptionDelegate titleOptionsDelegate) {
+    this.titleOptionsBuilder = titleOptionsBuilder;
+    this.titleOptionsDelegate = titleOptionsDelegate;
+    this.flags = BitwiseUtils.setFlag(flags, FLAG_ALLOW_TITLE_CLICK, true);
+  }
+
+  @Override
+  public boolean needLongPress (float x, float y) {
+    return super.needLongPress(x, y) || !isCollapsed() && (emojiStatusClickRect.contains(x, y) || BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TITLE_CLICK) && trimmedTitleClickRect.contains(x, y));
+  }
+
+  @Override
+  public boolean onLongPressRequestedAt (View view, float x, float y) {
+    if (!isCollapsed() && emojiStatusClickRect.contains(x, y)) {
+      TdApi.Sticker sticker = emojiStatusHelper.getSticker();
+      if (sticker == null) {
+        return false;
+      }
+
+      emojiStatusPreviewObj = new TGStickerObj(tdlib, sticker, null, sticker.fullType);
+      ignoreNextStickerChanges = false;
+      context().openStickerPreview(tdlib, this, this, emojiStatusPreviewObj, (int) emojiStatusClickRect.centerX(), (int) emojiStatusClickRect.centerY(), (int) emojiStatusClickRect.width(), Screen.currentHeight(), true);
+      scheduleButtons();
+      return true;
+    }
+
+    if (BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TITLE_CLICK) && trimmedTitleClickRect.contains(x, y)) {
+      onTitleClick();
+      return true;
+    }
+
+    return super.onLongPressRequestedAt(view, x, y);
+  }
+
+  @Override
+  public void onLongPressFinish (View view, float x, float y) {
+    super.onLongPressFinish(view, x, y);
+    if (!ignoreNextStickerChanges) {
+      closePreview();
+    }
+  }
+
+  @Override
+  public void onLongPressCancelled (View view, float x, float y) {
+    super.onLongPressCancelled(view, x, y);
+    if (!ignoreNextStickerChanges) {
+      closePreview();
+    }
+  }
+
   @Override
   public boolean needClickAt (View view, float x, float y) {
-    return (super.needClickAt(view, x, y) && y < calculateHeaderHeight()) || checkCaught(x, y, false);
+    return (super.needClickAt(view, x, y) && y < calculateHeaderHeight())
+      || !isCollapsed() && (
+        BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TITLE_CLICK) && trimmedTitleClickRect.contains(x, y)
+        || emojiStatusClickRect.contains(x, y)
+      )
+      || checkCaught(x, y, false);
   }
 
   @Override
   public void onClickAt (View view, float x, float y) {
+    if (!isCollapsed()) {
+      if (emojiStatusClickRect.contains(x, y)) {
+        emojiStatusHelper.performClick(view);
+        return;
+      }
+
+      if (BitwiseUtils.hasFlag(flags, FLAG_ALLOW_TITLE_CLICK) && trimmedTitleClickRect.contains(x, y)) {
+        onTitleClick();
+        return;
+      }
+    }
+
     if ((flags & FLAG_PHOTO_OPEN_DISABLED) == 0) {
       checkCaught(x, y, true);
       if ((flags & FLAG_CAUGHT) != 0) {
@@ -1084,8 +1211,8 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   public void modifyMediaArguments (Object cause, MediaViewController.Args args) {
     args.delegate = new MediaViewDelegate() {
       @Override
-      public MediaViewThumbLocation getTargetLocation (int index, MediaItem item) {
-        if (index == 0) {
+      public MediaViewThumbLocation getTargetLocation (int indexInStack, MediaItem item) {
+        if (indexInStack == 0) {
           return getThumbLocation();
         }
         return null;
@@ -1103,11 +1230,11 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   @Override
   public boolean needsForceTouch (BaseView v, float x, float y) {
     int bound = Screen.dp(6f);
-    return avatarReceiver != null && (previewProfilePhoto != null || previewChatPhoto != null) && x >= avatarReceiver.getLeft() - bound && x < avatarReceiver.getRight() + bound && y >= avatarReceiver.getTop() - bound && y < avatarReceiver.getBottom() + bound;
+    return (receiver.getRequestedChatPhoto() != null || receiver.getRequestedProfilePhoto() != null || receiver.getRequestedChatPhotoInfo() != null) && x >= receiver.getLeft() - bound && x < receiver.getRight() + bound && y >= receiver.getTop() - bound && y < receiver.getBottom() + bound;
   }
 
-  public Receiver getAvatarReceiver () {
-    return avatarReceiver;
+  public AvatarReceiver getAvatarReceiver () {
+    return receiver;
   }
 
   @Override
@@ -1119,10 +1246,12 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   public ViewController<?> createForceTouchPreview (BaseView v, float x, float y) {
     SimpleMediaViewController.Args args = null;
 
-    if (previewChatPhoto != null) {
-      args = new SimpleMediaViewController.Args(previewChatPhoto);
-    } else if (previewProfilePhoto != null) {
-      args = new SimpleMediaViewController.Args(previewProfilePhoto);
+    TdApi.ProfilePhoto profilePhoto = receiver.getRequestedProfilePhoto();
+    TdApi.ChatPhotoInfo chatPhotoInfo = receiver.getRequestedChatPhotoInfo();
+    if (profilePhoto != null) {
+      args = new SimpleMediaViewController.Args(profilePhoto, receiver.getRequestedUserId());
+    } else if (chatPhotoInfo != null) {
+      args = new SimpleMediaViewController.Args(chatPhotoInfo, receiver.getRequestedChatId());
     }
 
     if (args != null) {
@@ -1177,5 +1306,120 @@ public class ComplexHeaderView extends BaseView implements RtlCheckListener, Str
   @Override
   public boolean canAnimate () {
     return true;
+  }
+
+
+  private CancellableRunnable scheduledButtons;
+
+  private void cancelScheduledButtons () {
+    if (scheduledButtons != null) {
+      scheduledButtons.cancel();
+      scheduledButtons = null;
+    }
+  }
+
+  public void scheduleButtons () {
+    cancelScheduledButtons();
+    scheduledButtons = new CancellableRunnable() {
+      @Override
+      public void act () {
+        openScheduledButtons();
+      }
+    };
+    scheduledButtons.removeOnCancel(UI.getAppHandler());
+    UI.post(scheduledButtons, 1000L);
+  }
+
+  private void openScheduledButtons () {
+    UI.forceVibrate(this, false);
+    openStickerMenu();
+  }
+
+  private void openStickerMenu () {
+    ignoreNextStickerChanges = true;
+    context().openStickerMenu(this, emojiStatusPreviewObj);
+  }
+
+  public String getTitle () {
+    return title;
+  }
+
+  private TGStickerObj emojiStatusPreviewObj;
+  private boolean ignoreNextStickerChanges;
+
+  private void onTitleClick () {
+    if (titleOptionsBuilder == null || titleOptionsDelegate == null) {
+      return;
+    }
+
+    final PopupLayout layout = parent.showOptions(titleOptionsBuilder.getValue(), titleOptionsDelegate, null);
+    patchOptions(layout, emojiStatusHelper.getSticker());
+  }
+
+  private void patchOptions (PopupLayout layout, TdApi.Sticker sticker) {
+    if (sticker == null) {
+      return;
+    }
+
+    OptionsLayout optionsLayout = (OptionsLayout) layout.getChildAt(1);
+    optionsLayout.setInfo(null, null, false);
+
+    final long[] sets = new long[]{ sticker.setId };
+
+    EmojiStatusInfoView view = new EmojiStatusInfoView(context(), parent, tdlib);
+    view.update(sticker.id, sticker.setId, title, new ClickableSpan() {
+      @Override
+      public void onClick (@NonNull View widget) {
+        tdlib.ui().showStickerSets(parent, sets, true, null);
+        layout.hideWindow(true);
+      }
+    }, false);
+
+    optionsLayout.addView(view, 2);
+  }
+
+  /* Emoji Status Preview */
+
+  @Override
+  public StickerPreviewView.MenuStickerPreviewCallback getMenuStickerPreviewCallback () {
+    return ComplexHeaderView.this;
+  }
+
+  @Override
+  public int getThemedColorId () {
+    return ColorId.iconActive;
+  }
+
+  @Override
+  public void closePreviewIfNeeded () {
+    if (ignoreNextStickerChanges) {
+      ignoreNextStickerChanges = false;
+      closePreview();
+    }
+  }
+
+  private void closePreview () {
+    ignoreNextStickerChanges = false;
+    cancelScheduledButtons();
+    ((BaseActivity) getContext()).closeStickerPreview();
+  }
+
+  @Override
+  public void buildMenuStickerPreview (ArrayList<StickerPreviewView.MenuItem> menuItems, @NonNull TGStickerObj sticker) {
+    menuItems.add(new StickerPreviewView.MenuItem(
+      StickerPreviewView.MenuItem.MENU_ITEM_TEXT,
+      Lang.getString(R.string.ViewPackPreview).toUpperCase(),
+      R.id.btn_view,
+      ColorId.textNeutral
+    ));
+  }
+
+  @Override
+  public void onMenuStickerPreviewClick (View v, ViewController<?> context, @NonNull TGStickerObj sticker, @Nullable StickerSmallView stickerSmallView) {
+    final int id = v.getId();
+    if (id == R.id.btn_view) {
+      tdlib.ui().showStickerSet(context, sticker.getStickerSetId(), null);
+      closePreviewIfNeeded();
+    }
   }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,8 @@ import android.view.inputmethod.InputConnection;
 
 import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
+
+import me.vkryl.core.lambda.Destroyable;
 
 @TargetApi(Build.VERSION_CODES.KITKAT)
 public class EmojiUtils {
@@ -75,8 +77,15 @@ public class EmojiUtils {
       end = Math.min(end, editable.length());
 
       inputConnection.beginBatchEdit();
+      Destroyable[] spansToDestroy = editable.getSpans(start, end, Destroyable.class);
       editable.delete(start, end);
       inputConnection.endBatchEdit();
+
+      if (spansToDestroy != null) {
+        for (Destroyable destroyable : spansToDestroy) {
+          destroyable.performDestroy();
+        }
+      }
       return true;
     }
 

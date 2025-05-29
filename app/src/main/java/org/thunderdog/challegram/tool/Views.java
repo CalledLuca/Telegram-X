@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.text.Editable;
-import android.text.InputFilter;
+import android.text.Layout;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -38,6 +38,7 @@ import android.view.ViewParent;
 import android.view.animation.Interpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 
@@ -49,23 +50,23 @@ import androidx.recyclerview.widget.RecyclerView;
 import org.drinkmore.Tracer;
 import org.thunderdog.challegram.Log;
 import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.U;
 import org.thunderdog.challegram.core.DiffMatchPatch;
 import org.thunderdog.challegram.core.Lang;
 import org.thunderdog.challegram.navigation.ViewController;
 import org.thunderdog.challegram.support.ViewTranslator;
+import org.thunderdog.challegram.theme.ColorId;
 import org.thunderdog.challegram.theme.Theme;
-import org.thunderdog.challegram.theme.ThemeColorId;
+import org.thunderdog.challegram.util.TextSelection;
 import org.thunderdog.challegram.util.WebViewHolder;
 import org.thunderdog.challegram.util.text.Text;
 import org.thunderdog.challegram.widget.AttachDelegate;
-import org.thunderdog.challegram.widget.EditText;
 import org.thunderdog.challegram.widget.NoScrollTextView;
 
 import java.lang.reflect.Field;
 import java.util.LinkedList;
 
 import me.vkryl.android.AnimatorUtils;
-import me.vkryl.android.text.CodePointCountFilter;
 import me.vkryl.android.widget.FrameLayoutFix;
 import me.vkryl.core.BitwiseUtils;
 import me.vkryl.core.lambda.Destroyable;
@@ -86,22 +87,6 @@ public class Views {
   public static void setScrollBarPosition (View view) {
     if (view != null) {
       view.setVerticalScrollbarPosition(Lang.rtl() ? View.SCROLLBAR_POSITION_LEFT : View.SCROLLBAR_POSITION_RIGHT);
-    }
-  }
-
-  public static void setSelection (android.widget.EditText editText, int selection) {
-    if (editText != null) {
-      try {
-        editText.setSelection(selection);
-      } catch (Throwable ignored) { }
-    }
-  }
-
-  public static void setSelection (android.widget.EditText editText, int selectionStart, int selectionEnd) {
-    if (editText != null) {
-      try {
-        editText.setSelection(selectionStart, selectionEnd);
-      } catch (Throwable ignored) { }
     }
   }
 
@@ -157,7 +142,7 @@ public class Views {
     }
   }
 
-  public static ImageView newImageButton (Context context, @DrawableRes int icon, @ThemeColorId int colorId, @Nullable ViewController<?> themeProvider) {
+  public static ImageView newImageButton (Context context, @DrawableRes int icon, @ColorId int colorId, @Nullable ViewController<?> themeProvider) {
     ImageView imageView = new ImageView(context);
     imageView.setScaleType(ImageView.ScaleType.CENTER);
     imageView.setImageResource(icon);
@@ -184,16 +169,42 @@ public class Views {
     }
   }
 
+  @Nullable
+  public static TextSelection getSelection (android.widget.TextView editText) {
+    TextSelection selection = new TextSelection();
+    if (getSelection(editText, selection)) {
+      return selection;
+    }
+    return null;
+  }
+
+  public static boolean getSelection (android.widget.TextView editText, TextSelection selection) {
+    int start = editText.getSelectionStart();
+    int end = editText.getSelectionEnd();
+    if (end < 0) {
+      end = start;
+    }
+    if (start < 0) {
+      return false;
+    }
+    if (start <= end) {
+      selection.set(start, end);
+    } else {
+      // some IMEs may incorrectly set Selection.END before Selection.START
+      selection.set(end, start);
+    }
+    return true;
+  }
+
   public static void setSingleLine (android.widget.EditText editText, boolean singleLine) {
-    int savedCursorStart = editText.getSelectionStart();
-    int savedCursorEnd = editText.getSelectionEnd();
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      if (editText.isSingleLine() == singleLine)
+        return;
+    }
+    TextSelection selection = getSelection(editText);
     editText.setSingleLine(singleLine);
-    if (savedCursorEnd != 0 || savedCursorStart != 0) {
-      try {
-        editText.setSelection(savedCursorStart, savedCursorEnd);
-      } catch (Throwable t) {
-        Log.w("Cannot move cursor", t);
-      }
+    if (selection != null) {
+      selection.apply(editText);
     }
   }
 
@@ -221,14 +232,6 @@ public class Views {
       i++;
     }
     return top;
-  }
-
-  public static void setLengthLimit (EditText editText, final int maxLength, boolean calculateByCodePoints) {
-    if (editText != null) {
-      editText.setFilters(new InputFilter[] {
-         calculateByCodePoints ? new CodePointCountFilter(maxLength) : new InputFilter.LengthFilter(maxLength)
-      });
-    }
   }
 
   public static final int TEXT_FLAG_BOLD = 0x01;
@@ -832,6 +835,16 @@ public class Views {
     return false;
   }
 
+  public static void setLayoutHeight (View view, int height) {
+    if (view != null) {
+      ViewGroup.LayoutParams params = view.getLayoutParams();
+      if (params != null && params.height != height) {
+        params.height = height;
+        view.setLayoutParams(params);
+      }
+    }
+  }
+
   public static void setTopMargin (View view, int margin) {
     if (view != null) {
       ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
@@ -860,6 +873,46 @@ public class Views {
         view.setLayoutParams(params);
       }
     }
+  }
+
+  public static void setLeftMargin (View view, int margin) {
+    if (view != null) {
+      ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
+      if (params.leftMargin != margin) {
+        params.leftMargin = margin;
+        view.setLayoutParams(params);
+      }
+    }
+  }
+
+  public static int getLeftMargin (View view) {
+    if (view != null) {
+      ViewGroup.LayoutParams params = view.getLayoutParams();
+      if (params instanceof ViewGroup.MarginLayoutParams) {
+        return ((ViewGroup.MarginLayoutParams) params).leftMargin;
+      }
+    }
+    return 0;
+  }
+
+  public static int getTopMargin (View view) {
+    if (view != null) {
+      ViewGroup.LayoutParams params = view.getLayoutParams();
+      if (params instanceof ViewGroup.MarginLayoutParams) {
+        return ((ViewGroup.MarginLayoutParams) params).topMargin;
+      }
+    }
+    return 0;
+  }
+
+  public static int getRightMargin (View view) {
+    if (view != null) {
+      ViewGroup.LayoutParams params = view.getLayoutParams();
+      if (params instanceof ViewGroup.MarginLayoutParams) {
+        return ((ViewGroup.MarginLayoutParams) params).rightMargin;
+      }
+    }
+    return 0;
   }
 
   public static int getBottomMargin (View view) {
@@ -926,5 +979,77 @@ public class Views {
     if (flags != newFlags) {
       view.setPaintFlags(newFlags);
     }
+  }
+
+  public static int getRecyclerFirstElementTop (RecyclerView recyclerView) {
+    return getRecyclerViewElementTop(recyclerView, 0, 0);
+  }
+
+  public static int getRecyclerFirstElementTop (RecyclerView recyclerView, int valueIfPositionNotFound) {
+    return getRecyclerViewElementTop(recyclerView, 0, valueIfPositionNotFound);
+  }
+
+  public static int getRecyclerViewElementTop (RecyclerView recyclerView, int position) {
+    return getRecyclerViewElementTop(recyclerView, position, 0);
+  }
+
+  public static int getRecyclerViewElementTop (RecyclerView recyclerView, int position, int valueIfPositionNotFound) {
+    if (recyclerView == null || recyclerView.getLayoutManager() == null) {
+      return valueIfPositionNotFound;
+    }
+
+    View view = recyclerView.getLayoutManager().findViewByPosition(position);
+    if (view != null) {
+      return view.getTop() + recyclerView.getTop();
+    }
+
+    return valueIfPositionNotFound;
+  }
+
+  public static void getCharacterCoordinates(TextView textView, int offset, int[] coordinates) {
+    if (coordinates.length != 2)
+      throw new IllegalArgumentException();
+    coordinates[0] = coordinates[1] = 0;
+
+    Editable editable = textView.getEditableText();
+    Layout layout = textView.getLayout();
+
+    if (layout != null) {
+      int line = layout.getLineForOffset(offset);
+      int lineStartOffset = layout.getLineStart(line);
+      int xPos = (int) U.measureEmojiText(editable.subSequence(lineStartOffset, offset), layout.getPaint());
+      int yPos = layout.getLineBaseline(line) - textView.getScrollY();
+      coordinates[0] = xPos;
+      coordinates[1] = yPos;
+    }
+  }
+
+  public static int findFirstCompletelyVisibleItemPositionWithOffset (LinearLayoutManager manager, int topOffset) {
+    int i = manager.findFirstCompletelyVisibleItemPosition();
+    if (i == -1) {
+      i = manager.findFirstVisibleItemPosition();
+    }
+
+    View v = manager.findViewByPosition(i);
+    while (v != null) {
+      if (v.getTop() >= topOffset) {
+        return i;
+      }
+      v = manager.findViewByPosition(++i);
+    }
+
+    return -1;
+  }
+
+  public static int getLayoutGravity (@Nullable ViewGroup.LayoutParams params) {
+    if (params instanceof FrameLayout.LayoutParams) {
+      int gravity = ((FrameLayout.LayoutParams) params).gravity;
+      return gravity < 0 ? Gravity.TOP | Gravity.START : gravity;
+    }
+    if (params instanceof LinearLayout.LayoutParams) {
+      int gravity = ((LinearLayout.LayoutParams) params).gravity;
+      return gravity < 0 ? Gravity.NO_GRAVITY : gravity;
+    }
+    return Gravity.NO_GRAVITY;
   }
 }

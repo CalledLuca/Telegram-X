@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,18 +18,18 @@ import android.text.SpannableStringBuilder;
 
 import androidx.annotation.Nullable;
 
-import org.drinkless.td.libcore.telegram.TdApi;
+import org.drinkless.tdlib.TdApi;
 import org.thunderdog.challegram.R;
-import org.thunderdog.challegram.component.dialogs.ChatView;
 import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.core.Lang;
-import org.thunderdog.challegram.loader.ImageFile;
+import org.thunderdog.challegram.loader.AvatarReceiver;
 import org.thunderdog.challegram.telegram.Tdlib;
-import org.thunderdog.challegram.tool.Strings;
+import org.thunderdog.challegram.util.text.Highlight;
 
-import me.vkryl.core.StringUtils;
 import me.vkryl.core.BitwiseUtils;
-import me.vkryl.td.ChatId;
+import me.vkryl.core.StringUtils;
+import tgx.td.ChatId;
+import tgx.td.Td;
 
 public class TGFoundChat {
   private static final int FLAG_SECRET = 1;
@@ -37,6 +37,7 @@ public class TGFoundChat {
   private static final int FLAG_SELF = 1 << 2;
   private static final int FLAG_USE_TME = 1 << 3;
   private static final int FLAG_FORCE_USERNAME = 1 << 4;
+  private static final int FLAG_NO_ANONYMOUS_BADGE = 1 << 5;
 
   private int flags;
 
@@ -46,14 +47,11 @@ public class TGFoundChat {
   private long userId;
 
 
-  private @Nullable TdApi.Chat chatTitleSource;
   private CharSequence title;
+  private Highlight titleHighlight;
   private String singleLineTitle;
 
   private String forcedSubtitle;
-
-  private ImageFile avatar;
-  private AvatarPlaceholder.Metadata avatarPlaceholderMetadata;
 
   public TGFoundChat (Tdlib tdlib) {
     long userId = tdlib.myUserId();
@@ -63,7 +61,31 @@ public class TGFoundChat {
     this.userId = userId;
     this.flags |= FLAG_SELF;
     setTitleImpl(Lang.getString(R.string.Saved), null);
-    this.avatarPlaceholderMetadata = tdlib.cache().selfPlaceholderMetadata();
+  }
+
+  public TGFoundChat (Tdlib tdlib, TdApi.MessageSender sender, boolean isGlobal) {
+    this.tdlib = tdlib;
+    this.chatList = null;
+    switch (sender.getConstructor()) {
+      case TdApi.MessageSenderUser.CONSTRUCTOR: {
+        TdApi.MessageSenderUser user = (TdApi.MessageSenderUser) sender;
+        this.chatId = 0;
+        this.userId = user.userId;
+        setUser(tdlib.cache().userStrict(user.userId), null);
+        break;
+      }
+      case TdApi.MessageSenderChat.CONSTRUCTOR: {
+        TdApi.MessageSenderChat chat = (TdApi.MessageSenderChat) sender;
+        this.chatId = chat.chatId;
+        this.userId = ChatId.toUserId(chat.chatId);
+        setChat(tdlib.chatStrict(chat.chatId), null, isGlobal);
+        break;
+      }
+      default: {
+        Td.assertMessageSender_439d4c9c();
+        throw Td.unsupported(sender);
+      }
+    }
   }
 
   public TGFoundChat (Tdlib tdlib, TdApi.ChatList chatList, long chatId, boolean isGlobal) {
@@ -118,7 +140,7 @@ public class TGFoundChat {
   }
 
   public boolean needForceUsername () {
-    return BitwiseUtils.getFlag(flags, FLAG_FORCE_USERNAME);
+    return BitwiseUtils.hasFlag(flags, FLAG_FORCE_USERNAME);
   }
 
   public TGFoundChat setForcedSubtitle (String forcedSubtitle) {
@@ -132,6 +154,11 @@ public class TGFoundChat {
 
   public TGFoundChat setNoUnread () {
     this.flags |= FLAG_NO_UNREAD;
+    return this;
+  }
+
+  public TGFoundChat setNoAnonymousBadge () {
+    this.flags |= FLAG_NO_ANONYMOUS_BADGE;
     return this;
   }
 
@@ -174,19 +201,13 @@ public class TGFoundChat {
     flags = BitwiseUtils.setFlag(flags, FLAG_SELF, tdlib.isSelfChat(chat.id));
     this.flags = flags;
     this.userId = TD.getUserId(chat.type);
-    this.avatarPlaceholderMetadata = (flags & FLAG_SELF) != 0 ? tdlib.cache().selfPlaceholderMetadata() : tdlib.chatPlaceholderMetadata(chat, true);
     updateChat(chat);
   }
 
   private void updateUsername (TdApi.Chat chat) {
-    if (!isGlobal)
-      return;
     String username = tdlib.chatUsername(chat.id);
 
-    SpannableStringBuilder fullUsername = new SpannableStringBuilder();
     StringBuilder rawUsername = new StringBuilder();
-    StringBuilder additionalInfo = new StringBuilder();
-
     if (!StringUtils.isEmpty(username)) {
       if ((flags & FLAG_USE_TME) != 0) {
         rawUsername.append('/');
@@ -195,7 +216,9 @@ public class TGFoundChat {
       }
       rawUsername.append(username);
     }
-    if (chat.type.getConstructor() == TdApi.ChatTypeSupergroup.CONSTRUCTOR) {
+
+    SpannableStringBuilder additionalInfo = new SpannableStringBuilder();
+    if (isGlobal && chat.type.getConstructor() == TdApi.ChatTypeSupergroup.CONSTRUCTOR) {
       long supergroupId = ChatId.toSupergroupId(chat.id);
       TdApi.SupergroupFullInfo supergroupFull = tdlib.cache().supergroupFull(supergroupId);
       int memberCount = supergroupFull != null ? supergroupFull.memberCount : 0;
@@ -206,39 +229,60 @@ public class TGFoundChat {
         }
       }
       if (memberCount != 0) {
-        additionalInfo.append(Lang.plural(TD.isChannel(chat.type) ? Config.CHANNEL_MEMBER_STRING : R.string.xMembers, memberCount));
+        additionalInfo.append(Lang.pluralBold(TD.isChannel(chat.type) ? Config.CHANNEL_MEMBER_STRING : R.string.xMembers, memberCount));
       }
     }
 
-    fullUsername.append(Strings.highlightWords(rawUsername.toString(), highlight, 1, null));
+    SpannableStringBuilder fullUsername = new SpannableStringBuilder();
+    fullUsername.append(rawUsername);
+    this.usernameHighlight = Highlight.valueOf(fullUsername.toString(), highlight);
+    if (this.usernameHighlight != null && !this.usernameHighlight.isEmpty()) {
+      Highlight.Part part = this.usernameHighlight.parts.get(0);
+      if (part.start == 1) {
+        // Force highlight @ or /.
+        this.usernameHighlight.parts.add(0, new Highlight.Part(0, 1, part.missingCount + (part.end - part.start)));
+      }
+    }
     if (additionalInfo.length() > 0) {
       if (fullUsername.length() > 0) {
         fullUsername.append(", ");
       }
-      fullUsername.append(additionalInfo.toString());
+      fullUsername.append(additionalInfo);
     }
-    if (fullUsername.length() == 0) {
+    if (isGlobal && fullUsername.length() == 0) {
       fullUsername.append(tdlib.status().chatStatus(chatId));
     }
     this.username = fullUsername;
+    checkHighlights();
+  }
+
+  private void checkHighlights () {
+    if (this.usernameHighlight != null && this.titleHighlight != null) {
+      int usernameHighlight = this.usernameHighlight.getMaxSize();
+      int titleHighlight = this.titleHighlight.getMaxSize();
+      if (titleHighlight > usernameHighlight) {
+        this.usernameHighlight = null;
+      } else if (usernameHighlight > titleHighlight) {
+        this.titleHighlight = null;
+      }
+    }
   }
 
   private void setUser (TdApi.User user, String highlight) {
     if ((flags & FLAG_SELF) != 0) {
-      this.avatarPlaceholderMetadata = tdlib.cache().selfPlaceholderMetadata();
-      this.title = Strings.highlightWords(Lang.getString(R.string.SavedMessages), highlight, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
+      this.title = Lang.getString(R.string.SavedMessages);
     } else {
-      this.avatarPlaceholderMetadata = tdlib.cache().userPlaceholderMetadata(user, true);
-      this.title = Strings.highlightWords(TD.getUserName(user), highlight, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
+      this.title = TD.getUserName(user);
     }
-    setPhoto(user.profilePhoto != null ? user.profilePhoto.small : null);
+    this.titleHighlight = Highlight.valueOf(this.title.toString(), highlight);
+    checkHighlights();
   }
 
   private void updateUser (TdApi.User user) {
     if (!isSelfChat()) {
-      this.avatarPlaceholderMetadata = tdlib.cache().userPlaceholderMetadata(user, true);
-      this.title = Strings.highlightWords(TD.getUserName(user), highlight, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
-      setPhoto(user.profilePhoto != null ? user.profilePhoto.small : null);
+      this.title = TD.getUserName(user);
+      this.titleHighlight = Highlight.valueOf(this.title.toString(), highlight);
+      checkHighlights();
     }
   }
 
@@ -252,6 +296,16 @@ public class TGFoundChat {
 
   public long getUserId () {
     return userId;
+  }
+
+  public void requestAvatar (AvatarReceiver receiver, @AvatarReceiver.Options int options) {
+    if (chatId != 0) {
+      receiver.requestChat(tdlib, chatId, options);
+    } else if (userId != 0) {
+      receiver.requestUser(tdlib, userId, options);
+    } else {
+      receiver.clear();
+    }
   }
 
   public TdApi.MessageSender getSenderId () {
@@ -290,8 +344,6 @@ public class TGFoundChat {
     setTitleImpl(tdlib.chatTitle(chat), chat);
     this.needMuteIcon = tdlib.chatNeedsMuteIcon(chatId);
     this.notificationsEnabled = tdlib.chatNotificationsEnabled(chatId);
-    this.avatarPlaceholderMetadata = isSelfChat ? tdlib.cache().selfPlaceholderMetadata() : tdlib.chatPlaceholderMetadata(chat, true);
-    setPhoto(!isSelfChat && chat.photo != null ? chat.photo.small : null);
   }
 
   public void updateMuted () {
@@ -311,24 +363,10 @@ public class TGFoundChat {
     return (flags & FLAG_NO_UNREAD) != 0 ? 0 : chat != null ? (chat.unreadCount > 0 ? chat.unreadCount : chat.isMarkedAsUnread ? Tdlib.CHAT_MARKED_AS_UNREAD : 0) : 0;
   }
 
-  public void setPhoto (TdApi.File photo) {
-    if (photo != null) {
-      this.avatar = new ImageFile(tdlib, photo);
-      this.avatar.setSize(ChatView.getDefaultAvatarCacheSize());
-    } else {
-      this.avatar = null;
-    }
-  }
-
   private void setTitleImpl (String title, @Nullable TdApi.Chat chat) {
-    if (!isGlobal && !StringUtils.isEmpty(highlight) && !StringUtils.equalsOrBothEmpty(this.title, title)) {
-      this.title = Strings.highlightWords(title, highlight, 0, InlineResultEmojiSuggestion.SPECIAL_SPLITTERS);
-      this.chatTitleSource = null;
-    } else {
-      this.title = title;
-      this.chatTitleSource = (flags & FLAG_SELF) == 0 ? chat : null;
-    }
-    this.avatarPlaceholderMetadata = (flags & FLAG_SELF) != 0 ? tdlib.cache().selfPlaceholderMetadata() : chat != null ? tdlib.chatPlaceholderMetadata(chat, true) : null;
+    this.title = title;
+    this.titleHighlight = Highlight.valueOf(title, highlight);
+    checkHighlights();
     if ((flags & FLAG_SELF) != 0) {
       this.singleLineTitle = Lang.getString(R.string.Saved);
     } else if (chat != null) {
@@ -340,9 +378,14 @@ public class TGFoundChat {
   }
 
   private CharSequence username;
+  private Highlight usernameHighlight;
 
   public CharSequence getUsername () {
     return username;
+  }
+
+  public Highlight getUsernameHighlight () {
+    return usernameHighlight;
   }
 
   public boolean isGlobal () {
@@ -374,7 +417,11 @@ public class TGFoundChat {
   }
 
   public CharSequence getTitle () {
-    return chatTitleSource != null ? tdlib.chatTitle(chatTitleSource) : title;
+    return title;
+  }
+
+  public Highlight getTitleHighlight () {
+    return titleHighlight;
   }
 
   public String getFullTitle () {
@@ -385,10 +432,6 @@ public class TGFoundChat {
     return StringUtils.isEmpty(singleLineTitle) ? title : singleLineTitle;
   }
 
-  public ImageFile getAvatar () {
-    return avatar;
-  }
-
   public boolean isSecret () {
     return (flags & FLAG_SECRET) != 0;
   }
@@ -397,7 +440,15 @@ public class TGFoundChat {
     return (flags & FLAG_SELF) != 0;
   }
 
-  public AvatarPlaceholder.Metadata getAvatarPlaceholderMetadata () {
-    return avatarPlaceholderMetadata;
+  public @Nullable TdApi.MessageSender getMessageSenderId () {
+    return chat != null ? chat.messageSenderId : null;
+  }
+
+  public boolean isAnonymousAdmin () {
+    if (BitwiseUtils.hasFlag(flags, FLAG_NO_ANONYMOUS_BADGE)) {
+      return false;
+    }
+    TdApi.ChatMemberStatus status = tdlib.chatStatus(getChatId());
+    return status != null && Td.isAnonymous(status);
   }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,13 +18,23 @@
 
 #define JNI_FUNC(RETURN_TYPE, NAME, ...)                              \
   extern "C" {                                                        \
-  JNIEXPORT RETURN_TYPE                                               \
-      Java_org_thunderdog_challegram_N_##NAME( \
+  JNIEXPORT RETURN_TYPE JNICALL                                       \
+      Java_org_thunderdog_challegram_N_##NAME(                        \
           JNIEnv *env, jclass clazz, ##__VA_ARGS__);                  \
   }                                                                   \
-  JNIEXPORT RETURN_TYPE                                               \
-      Java_org_thunderdog_challegram_N_##NAME( \
+  JNIEXPORT RETURN_TYPE JNICALL                                       \
+      Java_org_thunderdog_challegram_N_##NAME(                        \
           JNIEnv *env, jclass clazz, ##__VA_ARGS__)
+
+#define JNI_OBJECT_FUNC(RETURN_TYPE, CLASS_NAME, NAME, ...)           \
+  extern "C" {                                                        \
+  JNIEXPORT RETURN_TYPE JNICALL                                       \
+      Java_org_thunderdog_challegram_##CLASS_NAME##_##NAME(           \
+          JNIEnv *env, jobject thiz, ##__VA_ARGS__);                  \
+  }                                                                   \
+  JNIEXPORT RETURN_TYPE JNICALL                                       \
+      Java_org_thunderdog_challegram_##CLASS_NAME##_##NAME(           \
+          JNIEnv *env, jobject thiz, ##__VA_ARGS__)
 
 void onFatalError (JNIEnv *env, const std::string &message, int cause);
 

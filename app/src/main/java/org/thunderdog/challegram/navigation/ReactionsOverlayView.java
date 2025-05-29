@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,28 +14,36 @@ package org.thunderdog.challegram.navigation;
 
 import android.content.Context;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.util.Log;
+import android.graphics.drawable.Drawable;
 import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.Nullable;
 
+import org.thunderdog.challegram.R;
+import org.thunderdog.challegram.component.emoji.AnimatedEmojiDrawable;
+import org.thunderdog.challegram.component.emoji.AnimatedEmojiEffect;
 import org.thunderdog.challegram.component.sticker.TGStickerObj;
-import org.thunderdog.challegram.data.TD;
+import org.thunderdog.challegram.config.Config;
 import org.thunderdog.challegram.loader.ImageFile;
 import org.thunderdog.challegram.loader.ImageReceiver;
 import org.thunderdog.challegram.loader.gif.GifFile;
 import org.thunderdog.challegram.loader.gif.GifReceiver;
+import org.thunderdog.challegram.theme.ColorId;
+import org.thunderdog.challegram.theme.PorterDuffColorId;
+import org.thunderdog.challegram.theme.Theme;
+import org.thunderdog.challegram.tool.Drawables;
 import org.thunderdog.challegram.tool.Paints;
+import org.thunderdog.challegram.tool.Views;
 
 import java.util.ArrayList;
 
 import me.vkryl.android.AnimatorUtils;
 import me.vkryl.android.animator.FactorAnimator;
+import me.vkryl.core.ColorUtils;
 import me.vkryl.core.lambda.Destroyable;
 
 public class ReactionsOverlayView extends ViewGroup {
@@ -95,11 +103,6 @@ public class ReactionsOverlayView extends ViewGroup {
     }
   }
 
-  public void addOverlay (TGStickerObj stickerObj, Rect position) {
-    ReactionInfo info = new ReactionInfo(this).setSticker(stickerObj).setPosition(position);
-    addOverlay(info);
-  }
-
   public void addOverlay (ReactionInfo info) {
     info.setRemoveListener(() -> this.removeOverlay(info));
     activePopups.add(info);
@@ -131,7 +134,16 @@ public class ReactionsOverlayView extends ViewGroup {
     private final ImageReceiver imageReceiver;
     private final GifReceiver gifReceiver;
     private GifFile animation;
+    private @Nullable Drawable drawable;
+    private float displayScale;
     private Runnable removeRunnable;
+    private boolean useDefaultSprayAnimation;
+    @Nullable
+    private AnimatedEmojiEffect animatedEmojiEffect;
+
+    private @PorterDuffColorId int repaintingColorIdStart = ColorId.iconActive;
+    private @PorterDuffColorId int repaintingColorIdEnd = ColorId.iconActive;
+    private boolean needThemedColorFilter;
 
     // animation
     private static final int POSITION_ANIMATOR = 0;
@@ -160,15 +172,25 @@ public class ReactionsOverlayView extends ViewGroup {
       gifReceiver = new GifReceiver(parentView);
     }
 
-    public ReactionInfo setSticker (TGStickerObj sticker) {
-      return setSticker(sticker, true);
+    public ReactionInfo setUseDefaultSprayAnimation (boolean useDefaultSprayAnimation) {
+      this.useDefaultSprayAnimation = useDefaultSprayAnimation;
+      return this;
     }
 
-    public ReactionInfo setSticker (TGStickerObj sticker, boolean animated) {
+    public ReactionInfo setSticker (TGStickerObj sticker, boolean isPlayOnce) {
+      if (sticker.isDefaultPremiumStar()) {
+        displayScale = sticker.getDisplayScale();
+        needThemedColorFilter = true;
+        drawable = Drawables.get(R.drawable.baseline_premium_star_28).mutate();
+        parentView.invalidate();
+        return this;
+      }
       ImageFile imageFile = sticker.getImage();
       animation = sticker.getPreviewAnimation();
+      displayScale = sticker.getDisplayScale();
+      needThemedColorFilter |= sticker.needThemedColorFilter();
       if (animation != null) {
-        if (animated) {
+        if (isPlayOnce) {
           animation.setPlayOnce(true);
           animation.setLooped(false);
         }
@@ -179,6 +201,16 @@ public class ReactionsOverlayView extends ViewGroup {
       return this;
     }
 
+    public ReactionInfo setEmojiStatusEffect (TGStickerObj sticker) {
+      if (sticker != null) {
+        AnimatedEmojiDrawable d = new AnimatedEmojiDrawable(parentView);
+        d.setSticker(sticker, true);
+        this.animatedEmojiEffect = AnimatedEmojiEffect.createFrom(d, false);
+        this.needThemedColorFilter |= sticker.needThemedColorFilter();
+      }
+      return this;
+    }
+
     public ReactionInfo setAnimatedPosition (Rect startPosition, Rect finishPosition, AnimatedPositionProvider animatedPositionProvider, long duration) {
       this.animatedPositionProvider = animatedPositionProvider;
       this.startPosition = startPosition;
@@ -186,6 +218,12 @@ public class ReactionsOverlayView extends ViewGroup {
       this.duration = duration;
       this.positionAnimator = new FactorAnimator(POSITION_ANIMATOR, this, AnimatorUtils.DECELERATE_INTERPOLATOR, duration, 0f);
       return setPosition(new Rect(startPosition));
+    }
+
+    public ReactionInfo setRepaintingColorIds (@PorterDuffColorId int colorStart, @PorterDuffColorId int colorEnd) {
+      repaintingColorIdStart = colorStart;
+      repaintingColorIdEnd = colorEnd;
+      return this;
     }
 
     public ReactionInfo setAnimatedPosition (Point startPosition, Point finishPosition, int size, AnimatedPositionProvider animatedPositionProvider, long duration) {
@@ -218,6 +256,13 @@ public class ReactionsOverlayView extends ViewGroup {
     public ReactionInfo setPosition (Rect rect) {
       position = rect;
       gifReceiver.setBounds(rect.left, rect.top, rect.right, rect.bottom);
+      imageReceiver.setBounds(rect.left, rect.top, rect.right, rect.bottom);
+      if (drawable != null) {
+        drawable.setBounds(rect.left, rect.top, rect.right, rect.bottom);
+      }
+      if (animatedEmojiEffect != null) {
+        animatedEmojiEffect.setBounds(rect.left, rect.top, rect.right, rect.bottom);
+      }
       return this;
     }
 
@@ -254,11 +299,57 @@ public class ReactionsOverlayView extends ViewGroup {
         animatedPositionOffsetProvider.getOffset(animationOffsetPoint);
       }
 
-      canvas.save();
+      int saveCount = Views.save(canvas);
       canvas.translate(scrollOffsetX + controllerTranslationX + animationOffsetPoint.x, scrollOffsetY + animationOffsetPoint.y);
+      if (displayScale != 1f) {
+        canvas.scale(displayScale, displayScale, gifReceiver.centerX(), gifReceiver.centerY());
+      }
+      if (Config.DEBUG_REACTIONS_ANIMATIONS) {
+        canvas.drawRect(gifReceiver.getLeft(), gifReceiver.getTop(), gifReceiver.getRight(), gifReceiver.getBottom(), Paints.fillingPaint(0xaaff0000));
+      }
+
+      if (needThemedColorFilter) {
+        float factor = positionAnimator != null ? positionAnimator.getFactor() : 1f;
+        if (factor == 1f || factor == 0f) {
+          @PorterDuffColorId int colorId = factor == 0f ? repaintingColorIdStart : repaintingColorIdEnd;
+          imageReceiver.setThemedPorterDuffColorId(colorId);
+          gifReceiver.setThemedPorterDuffColorId(colorId);
+          if (animatedEmojiEffect != null) {
+            animatedEmojiEffect.setThemedPorterDuffColorId(colorId);
+          }
+        } else {
+          int color = ColorUtils.fromToArgb(Theme.getColor(repaintingColorIdStart), Theme.getColor(repaintingColorIdEnd), factor);
+          imageReceiver.setPorterDuffColorFilter(color);
+          gifReceiver.setPorterDuffColorFilter(color);
+          if (animatedEmojiEffect != null) {
+            animatedEmojiEffect.setThemedPorterDuffColorId(color);
+          }
+        }
+      } else {
+        imageReceiver.disablePorterDuffColorFilter();
+        gifReceiver.disablePorterDuffColorFilter();
+        if (animatedEmojiEffect != null) {
+          animatedEmojiEffect.disablePorterDuffColorFilter();
+        }
+      }
+
+      if (gifReceiver.needPlaceholder() || Config.DEBUG_REACTIONS_ANIMATIONS) {
+        imageReceiver.draw(canvas);
+      }
       gifReceiver.draw(canvas);
       //canvas.drawRect(position, Paints.strokeBigPaint(Color.RED));
-      canvas.restore();
+      if (drawable != null) {
+        drawable.setColorFilter(Paints.whitePorterDuffPaint().getColorFilter());
+        drawable.draw(canvas);
+      }
+      if (animatedEmojiEffect != null) {
+        canvas.save();
+        canvas.translate(imageReceiver.getLeft(), imageReceiver.getTop());
+        animatedEmojiEffect.draw(canvas);
+        canvas.restore();
+      }
+
+      Views.restore(canvas, saveCount);
     }
 
     public void attach () {
@@ -267,6 +358,9 @@ public class ReactionsOverlayView extends ViewGroup {
       if (positionAnimator != null) {
         positionAnimator.animateTo(1f);
       }
+      if (animatedEmojiEffect != null) {
+        animatedEmojiEffect.setView(parentView);
+      }
     }
 
     public void detach () {
@@ -274,6 +368,9 @@ public class ReactionsOverlayView extends ViewGroup {
       gifReceiver.detach();
       if (positionAnimator != null) {
         positionAnimator.cancel();
+      }
+      if (animatedEmojiEffect != null) {
+        animatedEmojiEffect.removeView();
       }
     }
 
@@ -314,6 +411,9 @@ public class ReactionsOverlayView extends ViewGroup {
     public void performDestroy () {
       imageReceiver.destroy();
       gifReceiver.destroy();
+      if (animatedEmojiEffect != null) {
+        animatedEmojiEffect.performDestroy();
+      }
     }
   }
 

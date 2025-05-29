@@ -1,6 +1,6 @@
 /*
  * This file is a part of Telegram X
- * Copyright © 2014-2022 (tgx-android@pm.me)
+ * Copyright © 2014 (tgx-android@pm.me)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,14 +18,14 @@ import androidx.annotation.ColorInt;
 
 public interface ThemeDelegate {
   @ThemeId int getId ();
-  @ColorInt int getColor (@ThemeColorId int colorId);
+  @ColorInt int getColor (@ColorId int colorId);
 
   String getDefaultWallpaper ();
-  float getProperty (@ThemeProperty int propertyId);
+  float getProperty (@PropertyId int propertyId);
   default boolean isDark () {
-    return getProperty(ThemeProperty.DARK) == 1f;
+    return getProperty(PropertyId.DARK) == 1f;
   }
   default boolean needLightStatusBar () {
-    return getProperty(ThemeProperty.LIGHT_STATUS_BAR) == 1f;
+    return getProperty(PropertyId.LIGHT_STATUS_BAR) == 1f;
   }
 }
